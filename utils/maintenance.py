@@ -37,9 +37,10 @@ def cleanup_temp_files():
 
 
 def archive_old_requests(db_manager):
-    """Bascule les demandes résolues ou abandonnées de plus de 7 jours dans la table archives."""
+    """Archive les demandes anciennes avec transaction atomique sécurisée."""
     try:
-        with db_manager.get_cursor() as cursor:
+        with db_manager.transaction() as cursor:
+            # 1. Copie vers les archives
             archive_query = """
                 INSERT INTO archives (
                     original_id, user_id, prenom, nom, age, localisation,
@@ -56,6 +57,7 @@ def archive_old_requests(db_manager):
             cursor.execute(archive_query)
             archived_count = cursor.rowcount
 
+            # 2. Suppression de la table active
             if archived_count > 0:
                 delete_query = """
                     DELETE FROM demandes
@@ -63,12 +65,12 @@ def archive_old_requests(db_manager):
                     AND statut IN ('✅ Réussie', '❌ Abandonnée')
                 """
                 cursor.execute(delete_query)
-                logger.info("📦 %d demandes archivées et purgées de la table active", archived_count)
+                logger.info("📦 %d demandes archivées et purgées (transaction validée)", archived_count)
             else:
                 logger.info("📦 Aucune demande à archiver")
 
     except Exception as exc:
-        logger.error("Erreur archivage automatique: %s", exc, exc_info=True)
+        logger.error("Erreur lors de l'archivage (rollback automatique exécuté) : %s", exc, exc_info=True)
 
 
 def check_storage_usage() -> float:

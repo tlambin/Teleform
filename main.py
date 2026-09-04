@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 
 from config import Config
-from database import get_db_manager
+from database import DatabaseManager
 from handlers.admin_handlers import AdminHandlers
 from handlers.owner_handlers import OwnerHandlers
 from handlers.user_handlers import UserHandlers
@@ -220,7 +220,8 @@ if __name__ == "__main__":
         check_log_permissions()
 
         logger.info("1. Initialisation de la base de données...")
-        db_manager = get_db_manager()
+        config = Config()
+        db_manager = DatabaseManager(config)
         db_manager.create_tables()
         logger.info("✅ Base de données initialisée")
 

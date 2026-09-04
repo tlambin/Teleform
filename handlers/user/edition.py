@@ -179,7 +179,7 @@ class EditionManager:
             )
 
     async def handle_confirm_delete(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        """Supprime la demande et ses dépendances après confirmation."""
+        """Supprime la demande et ses dépendances après confirmation via transaction atomique."""
         query = update.callback_query
         if not query:
             return
@@ -197,12 +197,13 @@ class EditionManager:
             return
 
         try:
-            with self.db_manager.get_cursor() as cursor:
-                # Nettoyage préventif des suivis associés
+            with self.db_manager.transaction() as cursor:
+                # 1. Nettoyage des suivis associés
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
+                # 2. Suppression de la demande principale
                 cursor.execute("DELETE FROM demandes WHERE id = %s", (demande_id,))
 
-            logger.info("Demande #%s supprimée par l'utilisateur %s", demande_id, query.from_user.id)
+            logger.info("Demande #%s et ses liaisons supprimées par l'utilisateur %s", demande_id, query.from_user.id)
             await query.edit_message_text(
                 f"✅ <b>Demande n°{demande.get('request_number', demande_id)} supprimée avec succès.</b>",
                 parse_mode="HTML",

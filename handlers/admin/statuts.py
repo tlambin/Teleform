@@ -47,13 +47,11 @@ class StatutsManager:
 
             keyboard = []
             for idx, statut in enumerate(self.statuts_disponibles):
-                # Marqueur visuel sur le statut actuellement sélectionné
                 label = f"• {statut} •" if statut == demande["statut"] else statut
                 keyboard.append([
                     InlineKeyboardButton(label, callback_data=f"set_status_{demande_id}_{idx}")
                 ])
 
-            # Bouton de retour cohérent avec le support d'affichage
             return_callback = f"voir_photo_{demande_id}" if is_photo_message else f"retour_texte_{demande_id}"
             keyboard.append([
                 InlineKeyboardButton("🔙 Annuler", callback_data=return_callback)
@@ -83,7 +81,7 @@ class StatutsManager:
             logger.error("Erreur affichage menu changement statut: %s", exc, exc_info=True)
 
     async def set_status_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Applique le nouveau statut en base et notifie le demandeur."""
+        """Applique le nouveau statut en base de façon atomique et notifie le demandeur."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -101,15 +99,15 @@ class StatutsManager:
                 return
 
             nouveau_statut = self.statuts_disponibles[status_index]
+            admin_alias = self.db_manager.get_admin_alias(admin_id)
 
-            with self.db_manager.get_cursor() as cursor:
-                admin_alias = self.db_manager.get_admin_alias(admin_id)
-
+            # Transaction atomique : vérification, mise à jour du statut et synchronisation du suivi
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
                     SELECT d.*, u.username, u.first_name AS user_first_name
                     FROM demandes d
-                    JOIN users u ON d.user_id = u.user_id
+                    LEFT JOIN users u ON d.user_id = u.user_id
                     WHERE d.id = %s
                     """,
                     (demande_id,),
@@ -124,6 +122,7 @@ class StatutsManager:
                 prenom = demande["prenom"]
                 req_num = demande.get("request_number", demande_id)
 
+                # 1. Mise à jour dans la table des demandes
                 cursor.execute(
                     """
                     UPDATE demandes
@@ -133,7 +132,18 @@ class StatutsManager:
                     (nouveau_statut, admin_id, demande_id),
                 )
 
-            # Notification au demandeur si le statut a réellement changé
+                # 2. Inscription automatique dans les demandes suivies si le statut devient "En cours"
+                if "En cours" in nouveau_statut:
+                    cursor.execute(
+                        """
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_prise_en_charge)
+                        VALUES (%s, %s, NOW())
+                        ON DUPLICATE KEY UPDATE date_prise_en_charge = NOW()
+                        """,
+                        (demande_id, admin_id),
+                    )
+
+            # Notification au demandeur si le statut a changé
             if old_status != nouveau_statut:
                 try:
                     await self.alias_manager.send_status_notification(
@@ -148,7 +158,7 @@ class StatutsManager:
                 except Exception as notif_err:
                     logger.warning("Échec notification demandeur: %s", notif_err)
 
-            # Rafraîchissement de la vue
+            # Rafraîchissement de la vue admin
             demande["statut"] = nouveau_statut
             if query.message and query.message.photo:
                 await self._update_photo_caption(query, demande, nouveau_statut)
@@ -173,7 +183,7 @@ class StatutsManager:
             f"📍 <b>Localisation :</b> {demande['localisation']}",
             f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
             f"📊 <b>Statut :</b> <code>{nouveau_statut}</code>",
-            f"🙋 <b>Demandeur :</b> {user_display}"
+            f"🙋 <b>Demandeur :</b> {user_display}",
         ]
 
         reseaux = []
@@ -196,7 +206,7 @@ class StatutsManager:
                 InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande['id']}"),
                 InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
             ],
-            [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")]
+            [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")],
         ]
         if demande.get("photo_id"):
             keyboard[0].insert(0, InlineKeyboardButton("📷 Photo", callback_data=f"voir_photo_{demande['id']}"))
@@ -227,7 +237,7 @@ class StatutsManager:
                 InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
                 InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
             ],
-            [InlineKeyboardButton("📄 Mode Texte", callback_data=f"retour_texte_{demande['id']}")]
+            [InlineKeyboardButton("📄 Mode Texte", callback_data=f"retour_texte_{demande['id']}")],
         ])
 
         await query.edit_message_caption(
