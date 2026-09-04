@@ -1,203 +1,169 @@
-"""Gestion contrôle bot selon architecture modulaire"""
+"""Module de gestion et de contrôle opérationnel du bot par le propriétaire."""
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+from utils.validators import convert_utc_to_paris
 
 logger = logging.getLogger(__name__)
 
+
 class BotManager:
-    """Gestionnaire contrôle bot - Module Owner"""
-    
-    def __init__(self, db_manager, config):
-        """Initialisation BotManager"""
+    """Gestionnaire d'état opérationnel (actif, suspendu, maintenance)."""
+
+    def __init__(self, db_manager, config, interface_manager=None):
         self.db_manager = db_manager
         self.config = config
-        
-        logger.info("BotManager initialisé - Architecture modulaire")
+        self.interface = interface_manager
+        logger.info("BotManager initialisé")
+
+    def set_interface_manager(self, interface_manager):
+        """Injecte l'InterfaceManager si nécessaire."""
+        self.interface = interface_manager
 
     async def bot_on(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Active le bot globalement"""
+        """Active l'acceptation globale des demandes."""
         query = update.callback_query
-        await query.answer()
-        
+        user = update.effective_user
+        if not query or not user or not self.config.is_owner(user.id):
+            return
+
         try:
-            # Mettre à jour le statut en base
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute("""
-                    UPDATE bot_settings 
-                    SET bot_active = TRUE, updated_at = NOW() 
-                    WHERE id = 1
-                """)
-            
-            logger.info(f"Bot activé par owner {update.effective_user.id}")
-            
-            await query.edit_message_text(
-                "🟢 <b>Bot activé</b>\n\n"
-                "✅ Le bot est maintenant actif pour tous les utilisateurs.\n"
-                "📊 Toutes les fonctionnalités sont disponibles.\n\n"
-                "Les utilisateurs peuvent créer des demandes et utiliser toutes les commandes.",
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔴 Désactiver", callback_data="bot_off")],
-                    [InlineKeyboardButton("🛠️ Maintenance", callback_data="bot_maintenance")],
-                    [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
-                ])
+            self.db_manager.set_bot_active(True)
+            logger.info("Bot activé par le propriétaire %s", user.id)
+
+            msg = (
+                "🟢 <b>Bot opérationnel</b>\n\n"
+                "✅ Les utilisateurs peuvent à nouveau créer des demandes et naviguer librement.\n"
+                "📊 Toutes les commandes sont actives."
             )
-            
-        except Exception as e:
-            logger.error(f"Erreur activation bot: {e}")
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔴 Désactiver", callback_data="bot_off")],
+                [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
+                [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
+            ])
+
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
+
+        except Exception as exc:
+            logger.error("Erreur activation bot: %s", exc, exc_info=True)
             await query.edit_message_text(
-                "❌ Erreur lors de l'activation du bot.",
+                "❌ Erreur technique lors de l'activation.",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
                 ]])
             )
 
     async def bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Désactive le bot globalement"""
+        """Désactive la prise de demandes avec message d'information."""
         query = update.callback_query
-        await query.answer()
-        
+        user = update.effective_user
+        if not query or not user or not self.config.is_owner(user.id):
+            return
+
         try:
-            # Mettre à jour le statut en base
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute("""
-                    UPDATE bot_settings 
-                    SET bot_active = FALSE, updated_at = NOW() 
-                    WHERE id = 1
-                """)
-            
-            logger.info(f"Bot désactivé par owner {update.effective_user.id}")
-            
-            await query.edit_message_text(
-                "🔴 <b>Bot désactivé</b>\n\n"
-                "⏸️ Le bot est maintenant inactif pour les utilisateurs normaux.\n"
-                "🔒 Seuls les administrateurs et le propriétaire peuvent l'utiliser.\n\n"
-                "Les utilisateurs recevront un message indiquant que le service est temporairement indisponible.",
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🟢 Activer", callback_data="bot_on")],
-                    [InlineKeyboardButton("🛠️ Maintenance", callback_data="bot_maintenance")],
-                    [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
-                ])
+            self.db_manager.set_bot_active(False)
+            logger.info("Demandes suspendues par le propriétaire %s", user.id)
+
+            msg = (
+                "🔴 <b>Demandes suspendues</b>\n\n"
+                "⏸️ Le service de création de demandes est désormais désactivé.\n"
+                "🔒 Les administrateurs conservent leurs accès pour traiter les demandes en cours."
             )
-            
-        except Exception as e:
-            logger.error(f"Erreur désactivation bot: {e}")
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🟢 Réactiver", callback_data="bot_on")],
+                [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
+                [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
+            ])
+
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
+
+        except Exception as exc:
+            logger.error("Erreur désactivation bot: %s", exc, exc_info=True)
             await query.edit_message_text(
-                "❌ Erreur lors de la désactivation du bot.",
+                "❌ Erreur technique lors de la désactivation.",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
                 ]])
             )
 
     async def bot_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Active le mode maintenance"""
+        """Active l'état de maintenance restreint."""
         query = update.callback_query
-        await query.answer()
-        
+        user = update.effective_user
+        if not query or not user or not self.config.is_owner(user.id):
+            return
+
         try:
-            # Mettre à jour le statut en base
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute("""
-                    UPDATE bot_settings 
-                    SET maintenance_mode = TRUE, updated_at = NOW() 
-                    WHERE id = 1
-                """)
-            
-            logger.info(f"Mode maintenance activé par owner {update.effective_user.id}")
-            
-            await query.edit_message_text(
-                "🛠️ <b>Mode maintenance activé</b>\n\n"
-                "⚙️ Le bot est en cours de maintenance.\n"
-                "🔧 Seul le propriétaire peut l'utiliser actuellement.\n\n"
-                "Les utilisateurs et administrateurs recevront un message de maintenance.",
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🟢 Activer", callback_data="bot_on")],
-                    [InlineKeyboardButton("🔴 Désactiver", callback_data="bot_off")],
-                    [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
-                ])
+            self.db_manager.set_config_value("maintenance_mode", "true")
+            self.db_manager.set_bot_active(False)
+            logger.info("Mode maintenance enclenché par %s", user.id)
+
+            msg = (
+                "🛠️ <b>Mode maintenance actif</b>\n\n"
+                "⚙️ Le bot est verrouillé pour des interventions techniques.\n"
+                "Seul le compte propriétaire est habilité à exécuter des actions."
             )
-            
-        except Exception as e:
-            logger.error(f"Erreur mode maintenance: {e}")
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🟢 Réactiver le service", callback_data="bot_on")],
+                [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
+            ])
+
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
+
+        except Exception as exc:
+            logger.error("Erreur passage en mode maintenance: %s", exc, exc_info=True)
             await query.edit_message_text(
-                "❌ Erreur lors de l'activation du mode maintenance.",
+                "❌ Erreur lors de l'activation de la maintenance.",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
                 ]])
             )
 
     async def get_bot_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche le statut actuel du bot"""
+        """Affiche l'état courant du service et des paramètres."""
+        user = update.effective_user
+        if not user or not self.config.is_owner(user.id):
+            return
+
         try:
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT bot_active, maintenance_mode, updated_at 
-                    FROM bot_settings 
-                    WHERE id = 1
-                """)
-                status = cursor.fetchone()
+            is_active = self.db_manager.is_bot_active()
+            is_maint = self.db_manager.get_config_value("maintenance_mode", "false") == "true"
 
-            if not status:
-                # Créer un enregistrement par défaut si aucun n'existe
-                with self.db_manager.get_cursor() as cursor:
-                    cursor.execute("""
-                        INSERT INTO bot_settings (id, bot_active, maintenance_mode) 
-                        VALUES (1, TRUE, FALSE)
-                    """)
-                status = {'bot_active': True, 'maintenance_mode': False, 'updated_at': None}
-
-            # Déterminer le statut
-            if status['maintenance_mode']:
-                status_text = "🛠️ **Maintenance**"
-                status_desc = "Le bot est en maintenance. Seul le propriétaire peut l'utiliser."
-            elif status['bot_active']:
-                status_text = "🟢 **Actif**"
-                status_desc = "Le bot fonctionne normalement pour tous les utilisateurs."
+            if is_maint:
+                badge = "🛠️ <b>Maintenance</b>"
+                detail = "Accès restreint au propriétaire."
+            elif is_active:
+                badge = "🟢 <b>Actif</b>"
+                detail = "Toutes les fonctions sont opérationnelles pour les utilisateurs."
             else:
-                status_text = "🔴 **Inactif**"
-                status_desc = "Le bot est désactivé. Seuls les admins et le propriétaire peuvent l'utiliser."
+                badge = "🔴 <b>Suspendu</b>"
+                detail = "Les utilisateurs ne peuvent plus soumettre de formulaires."
 
-            last_update = ""
-            if status['updated_at']:
-                last_update = f"\n🕐 **Dernière modification :** {status['updated_at'].strftime('%d/%m/%Y à %H:%M')}"
-
-            message = (
-                f"📊 **Statut du Bot**\n\n"
-                f"**État actuel :** {status_text}\n\n"
-                f"{status_desc}{last_update}"
+            text = (
+                "📊 <b>Statut Opérationnel du Bot</b>\n\n"
+                f"• <b>État :</b> {badge}\n"
+                f"• <b>Détails :</b> {detail}"
             )
 
-            keyboard = [
-                [InlineKeyboardButton("🟢 Activer", callback_data="bot_on"),
-                 InlineKeyboardButton("🔴 Désactiver", callback_data="bot_off")],
-                [InlineKeyboardButton("🛠️ Maintenance", callback_data="bot_maintenance")],
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🟢 Activer", callback_data="bot_on"),
+                    InlineKeyboardButton("🔴 Couper", callback_data="bot_off")
+                ],
+                [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
                 [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
-            ]
+            ])
 
             if update.callback_query:
-                query = update.callback_query
-                await query.answer()
-                await query.edit_message_text(
-                    message,
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            else:
-                await update.message.reply_text(
-                    message,
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                
-        except Exception as e:
-            logger.error(f"Erreur statut bot: {e}")
-            error_msg = "❌ Erreur lors de la récupération du statut"
-            
+                await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+            elif update.message:
+                await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+        except Exception as exc:
+            logger.error("Erreur extraction statut bot: %s", exc, exc_info=True)
+            err = "❌ Impossible de lire le statut du bot."
             if update.callback_query:
-                await update.callback_query.edit_message_text(error_msg)
-            else:
-                await update.message.reply_text(error_msg)
+                await update.callback_query.edit_message_text(err)
+            elif update.message:
+                await update.message.reply_text(err)

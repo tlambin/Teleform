@@ -1,253 +1,237 @@
-# handlers/admin/statuts.py
-"""Module de gestion des statuts selon administration_système"""
+"""Module de gestion et de mise à jour des statuts des demandes par les administrateurs."""
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+from utils.validators import convert_utc_to_paris
 from .alias import AliasManager
 
 logger = logging.getLogger(__name__)
 
+
 class StatutsManager:
-    """Gestionnaire des changements de statuts selon [source 4]"""
+    """Gestionnaire des transitions d'états des demandes et des notifications associées."""
 
     def __init__(self, db_manager, config, statuts_disponibles):
         self.db_manager = db_manager
         self.config = config
         self.statuts_disponibles = statuts_disponibles
         self.alias_manager = AliasManager(db_manager, config)
+        logger.info("StatutsManager initialisé")
 
     async def show_status_change_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Menu changement statut"""
+        """Affiche la liste des statuts disponibles sous forme de boutons."""
         query = update.callback_query
+        if not query or not update.effective_user:
+            return
 
-        if not self.config.is_admin(query.from_user.id):
-            await query.answer("❌ Accès non autorisé")
+        if not self.config.is_admin(update.effective_user.id):
             return
 
         try:
-            # RÉCUPÉRER info demande
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT request_number, prenom, nom, statut
+                cursor.execute(
+                    """
+                    SELECT request_number, prenom, nom, statut, photo_id
                     FROM demandes WHERE id = %s
-                """, (demande_id,))
-
+                    """,
+                    (demande_id,),
+                )
                 demande = cursor.fetchone()
 
-                if not demande:
-                    await query.answer("❌ Demande non trouvée")
-                    return
+            if not demande:
+                return
 
-                nom_complet = f"{demande['prenom']} {demande['nom'] or ''}".strip()
+            nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+            is_photo_message = bool(query.message and query.message.photo)
 
-            # Menu statut
             keyboard = []
-            for i, statut in enumerate(self.statuts_disponibles):
+            for idx, statut in enumerate(self.statuts_disponibles):
+                # Marqueur visuel sur le statut actuellement sélectionné
+                label = f"• {statut} •" if statut == demande["statut"] else statut
                 keyboard.append([
-                    InlineKeyboardButton(statut, callback_data=f"set_status_{demande_id}_{i}")
+                    InlineKeyboardButton(label, callback_data=f"set_status_{demande_id}_{idx}")
                 ])
 
+            # Bouton de retour cohérent avec le support d'affichage
+            return_callback = f"voir_photo_{demande_id}" if is_photo_message else f"retour_texte_{demande_id}"
             keyboard.append([
-                InlineKeyboardButton("🔙 Retour", callback_data=f"voir_photo_{demande_id}")
+                InlineKeyboardButton("🔙 Annuler", callback_data=return_callback)
             ])
 
-            message = (
+            text = (
                 f"📊 <b>Changer le Statut</b>\n\n"
-                f"📝 <b>Demande #{demande['request_number']}</b> - {nom_complet}\n"
-                f"📊 <b>Statut actuel :</b> {demande['statut']}\n\n"
-                f"Sélectionnez le nouveau statut :"
+                f"📝 <b>Demande #{demande.get('request_number', demande_id)}</b> - {nom_complet}\n"
+                f"Statut actuel : <code>{demande['statut']}</code>\n\n"
+                "Sélectionnez le nouveau statut ci-dessous :"
             )
 
-            # ✅ MODIFICATION selon type selon [source 1]
-            if hasattr(query.message, 'photo') and query.message.photo:
-                # Photo → editMessageCaption selon [source 1]
+            if is_photo_message:
                 await query.edit_message_caption(
-                    caption=message,
-                    parse_mode='HTML',
-                    reply_markup=InlineKeyboardMarkup(keyboard)
+                    caption=text,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
                 )
             else:
-                # Texte → editMessageText
                 await query.edit_message_text(
-                    text=message,
-                    parse_mode='HTML',
-                    reply_markup=InlineKeyboardMarkup(keyboard)
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
                 )
 
-        except Exception as e:
-            logger.error(f"Erreur menu statut photo/texte: {e}")
-            await query.answer("❌ Erreur affichage menu statut")
+        except Exception as exc:
+            logger.error("Erreur affichage menu changement statut: %s", exc, exc_info=True)
 
     async def set_status_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Application changement statut]"""
+        """Applique le nouveau statut en base et notifie le demandeur."""
         query = update.callback_query
-        admin_user_id = query.from_user.id
+        if not query or not update.effective_user:
+            return
 
-        if not self.config.is_admin(admin_user_id):
-            await query.answer("❌ Accès non autorisé")
+        admin_id = update.effective_user.id
+        if not self.config.is_admin(admin_id):
             return
 
         try:
-            parts = query.data.split('_')
-            demande_id = int(parts[2])        # "set_status_123_2" → parts[2] = "123"
-            status_index = int(parts[3])      # "set_status_123_2" → parts[3] = "2"
+            parts = query.data.split("_")
+            demande_id = int(parts[2])
+            status_index = int(parts[3])
 
-            # VÉRIFICATION
             if status_index >= len(self.statuts_disponibles):
-                await query.answer("❌ Index statut invalide")
                 return
 
             nouveau_statut = self.statuts_disponibles[status_index]
 
             with self.db_manager.get_cursor() as cursor:
-                admin_alias = await self.alias_manager.get_admin_alias(admin_user_id)
+                admin_alias = self.db_manager.get_admin_alias(admin_id)
 
-                # Récupérer les infos de la demande
-                cursor.execute("""
-                    SELECT d.*, u.username, u.first_name as user_first_name
+                cursor.execute(
+                    """
+                    SELECT d.*, u.username, u.first_name AS user_first_name
                     FROM demandes d
                     JOIN users u ON d.user_id = u.user_id
                     WHERE d.id = %s
-                """, (demande_id,))
+                    """,
+                    (demande_id,),
+                )
                 demande = cursor.fetchone()
 
                 if not demande:
-                    await query.answer("❌ Demande non trouvée")
                     return
 
-                old_status = demande['statut']
-                user_id_demande = demande['user_id']
-                prenom = demande['prenom']
-                request_number = demande['request_number']
+                old_status = demande["statut"]
+                user_id_demande = demande["user_id"]
+                prenom = demande["prenom"]
+                req_num = demande.get("request_number", demande_id)
 
-                # Mettre à jour le statut
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE demandes
-                    SET statut = %s, admin_en_charge = %s, date_modification = CURRENT_TIMESTAMP
+                    SET statut = %s, admin_en_charge = %s, date_modification = NOW()
                     WHERE id = %s
-                """, (nouveau_statut, admin_user_id, demande_id))
+                    """,
+                    (nouveau_statut, admin_id, demande_id),
+                )
 
-                if cursor.rowcount > 0:
-                    # NOTIFICATION
+            # Notification au demandeur si le statut a réellement changé
+            if old_status != nouveau_statut:
+                try:
                     await self.alias_manager.send_status_notification(
-                        context, user_id_demande, request_number, prenom, old_status, nouveau_statut, admin_alias
+                        context,
+                        user_id_demande,
+                        req_num,
+                        prenom,
+                        old_status,
+                        nouveau_statut,
+                        admin_alias,
                     )
+                except Exception as notif_err:
+                    logger.warning("Échec notification demandeur: %s", notif_err)
 
-                    # CACHE
-                    self.db_manager.clear_cache()
+            # Rafraîchissement de la vue
+            demande["statut"] = nouveau_statut
+            if query.message and query.message.photo:
+                await self._update_photo_caption(query, demande, nouveau_statut)
+            else:
+                await self._update_existing_text_message(query, demande, nouveau_statut)
 
-                    # CONFIRMATION
-                    if hasattr(query.message, 'photo') and query.message.photo:
-                        # 📷 MESSAGE PHOTO OUVERT → Modifier directement
-                        await self._update_photo_caption(query, demande, nouveau_statut, request_number)
-                    else:
-                        # 📝 MESSAGE TEXTE → Modifier directement selon [source 1]
-                        await self._update_existing_text_message(query, demande, nouveau_statut, request_number)
+        except Exception as exc:
+            logger.error("Erreur mise à jour statut demande: %s", exc, exc_info=True)
 
-                else:
-                    await query.answer("❌ Demande non trouvée")
+    async def _update_existing_text_message(self, query, demande: dict, nouveau_statut: str):
+        """Actualise le corps du message texte après transition d'état."""
+        priorite_icon = "💎" if demande.get("prioritaire") else "📝"
+        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
+        montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
+        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+        user_display = f"@{demande['username']}" if demande.get("username") else (demande.get("user_first_name") or f"User {demande['user_id']}")
+        date_str = str(demande.get("date_creation", ""))[:16]
 
-        except (IndexError, ValueError) as e:
-            logger.error(f"Erreur parsing callback statut adapté {query.data}: {e}")
-            await query.answer("❌ Erreur format callback")
-        except Exception as e:
-            logger.error(f"Erreur application statut adapté: {e}")
-            await query.answer("❌ Erreur lors de la mise à jour")
+        lines = [
+            f"💌 <b>Demande #{demande.get('request_number', demande['id'])}</b>\n",
+            f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
+            f"📍 <b>Localisation :</b> {demande['localisation']}",
+            f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
+            f"📊 <b>Statut :</b> <code>{nouveau_statut}</code>",
+            f"🙋 <b>Demandeur :</b> {user_display}"
+        ]
 
-    async def _update_existing_text_message(self, query, demande, nouveau_statut, request_number):
-        """Met à jour le message texte existant selon [source 1]"""
-        from utils.validators import convert_utc_to_paris
+        reseaux = []
+        if demande.get("instagram"):
+            reseaux.append(f"📷 <a href='https://instagram.com/{demande['instagram']}'>@{demande['instagram']}</a>")
+        if demande.get("snapchat"):
+            reseaux.append(f"👻 <a href='https://snapchat.com/add/{demande['snapchat']}'>{demande['snapchat']}</a>")
+        if reseaux:
+            lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
 
-        priorite_icon = "💎" if demande['prioritaire'] else "📝"
-        montant_text = f" - {demande['montant']:.2f}€" if demande['prioritaire'] else ""
+        if demande.get("details"):
+            det = demande["details"]
+            det_court = (det[:150] + "...") if len(det) > 150 else det
+            lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
 
-        nom_complet = demande['prenom']
-        if demande['nom']:
-            nom_complet += f" {demande['nom']}"
+        lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
 
-        date_paris = convert_utc_to_paris(demande['date_creation'])
-        user_display = f"@{demande['username']}" if demande['username'] else demande['user_first_name']
-
-        # ✅ MESSAGE MODIFIÉ avec nouveau statut selon [source 1]
-        message = (
-            f"{priorite_icon} <b>#{demande['request_number']}</b> - {nom_complet}\n"
-            f"🎂 {demande['age']} ans - 📍 {demande['localisation']}\n"
-            f"📱 Instagram: {demande['instagram'] or 'Non renseigné'}\n"
-            f"👻 Snapchat: {demande['snapchat'] or 'Non renseigné'}\n"
-            f"<b>{nouveau_statut}</b>{montant_text}\n"
-            f"👤 Demandeur: {user_display}\n"
-            f"📅 <b>Date:</b> {date_paris.strftime('%d/%m/%Y %H:%M')}"
-        )
-
-        if demande['details']:
-            details_court = demande['details'][:100] + "..." if len(demande['details']) > 100 else demande['details']
-            message += f"\n💬 <b>Détails:</b> {details_court}"
-
-        keyboard = InlineKeyboardMarkup([
+        keyboard = [
             [
-                InlineKeyboardButton("📷 PHOTO", callback_data=f"voir_photo_{demande['id']}"),
-                InlineKeyboardButton("🔄 STATUT", callback_data=f"change_status_{demande['id']}")
+                InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande['id']}"),
+                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
             ],
-            [
-                InlineKeyboardButton("💬 CONTACTER", callback_data=f"contacter_{demande['id']}")
-            ]
-        ])
+            [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")]
+        ]
+        if demande.get("photo_id"):
+            keyboard[0].insert(0, InlineKeyboardButton("📷 Photo", callback_data=f"voir_photo_{demande['id']}"))
 
         await query.edit_message_text(
-            text=message,
-            parse_mode='HTML',
-            reply_markup=keyboard
+            text="\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            disable_web_page_preview=True,
         )
 
-        await query.answer(f"✅ Statut demande #{request_number} → {nouveau_statut}")
-
-    async def _update_photo_caption(self, query, demande, nouveau_statut, request_number):
-        """Modifie caption photo avec nouveau statut selon [source 1]"""
-        from utils.validators import convert_utc_to_paris
-
-        priorite_icon = "💎" if demande['prioritaire'] else "📝"
-        montant_text = f" - {demande['montant']:.2f}€" if demande['prioritaire'] else ""
-
-        nom_complet = demande['prenom']
-        if demande['nom']:
-            nom_complet += f" {demande['nom']}"
-
-        date_paris = convert_utc_to_paris(demande['date_creation'])
-        user_display = f"@{demande['username']}" if demande['username'] else demande['user_first_name']
+    async def _update_photo_caption(self, query, demande: dict, nouveau_statut: str):
+        """Actualise la légende de l'image après transition d'état."""
+        priorite_icon = "💎" if demande.get("prioritaire") else "📝"
+        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
+        montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
+        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
 
         caption = (
-            f"📷 <b>PHOTO DEMANDE</b>\n\n"
-            f"{priorite_icon} <b>#{demande['request_number']}</b> - {nom_complet}\n"
-            f"🎂 {demande['age']} ans - 📍 {demande['localisation']}\n"
-            f"📱 Instagram: {demande['instagram'] or 'Non renseigné'}\n"
-            f"👻 Snapchat: {demande['snapchat'] or 'Non renseigné'}\n"
-            f"<b>{nouveau_statut}</b>{montant_text}\n"
-            f"👤 Demandeur: {user_display}\n"
-            f"📅 <b>Date:</b> {date_paris.strftime('%d/%m/%Y %H:%M')}"
+            f"📷 <b>Photo de la demande #{demande.get('request_number', demande['id'])}</b>\n\n"
+            f"👤 {nom_complet} ({demande['age']} ans) | {demande['localisation']}\n"
+            f"🎯 {priorite_icon} {type_str}{montant_str}\n"
+            f"📊 Statut : <code>{nouveau_statut}</code>"
         )
-
-        if demande['details']:
-            details_court = demande['details'][:100] + "..." if len(demande['details']) > 100 else demande['details']
-            caption += f"\n💬 <b>Détails:</b> {details_court}"
 
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🔄 STATUT", callback_data=f"change_status_{demande['id']}"),
-                InlineKeyboardButton("💬 CONTACTER", callback_data=f"contacter_{demande['id']}")
-            ]
+                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
+                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
+            ],
+            [InlineKeyboardButton("📄 Mode Texte", callback_data=f"retour_texte_{demande['id']}")]
         ])
 
-        try:
-            await query.edit_message_caption(
-                caption=caption,
-                parse_mode='HTML',
-                reply_markup=keyboard
-            )
-
-            await query.answer(f"✅ Statut demande #{request_number} → {nouveau_statut}")
-
-        except Exception as e:
-            logger.error(f"Erreur modification caption: {e}")
-            await query.answer("❌ Erreur mise à jour caption")
-
+        await query.edit_message_caption(
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )

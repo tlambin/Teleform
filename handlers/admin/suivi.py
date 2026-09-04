@@ -1,193 +1,209 @@
-# handlers/admin/suivi.py
-"""Module de gestion du suivi des demandes selon organisation_du_code [source 3]"""
+"""Module de gestion des demandes prises en charge par les administrateurs."""
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from utils.validators import convert_utc_to_paris
 
 logger = logging.getLogger(__name__)
 
+
 class SuiviManager:
-    """Gestionnaire du suivi des demandes selon hiérarchie_administrative [source 6]"""
+    """Gestionnaire des demandes suivies par l'administrateur connecté."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
+        logger.info("SuiviManager initialisé")
 
     async def suivre_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Permet à un admin de suivre une demande"""
+        """Assigne une demande disponible à l'administrateur connecté."""
         query = update.callback_query
-        user_id = query.from_user.id
+        if not query or not update.effective_user:
+            return
 
+        user_id = update.effective_user.id
         if not self.config.is_admin(user_id):
-            await query.answer("❌ Accès non autorisé")
             return
 
         try:
-            demande_id = int(query.data.split('_')[-1])  # "suivre_demande_123" → 123
-        except (IndexError, ValueError) as e:
-            logger.error(f"Erreur parsing callback {query.data}: {e}")
-            await query.answer("❌ Erreur format callback")
+            demande_id = int(query.data.split("_")[-1])
+        except (IndexError, ValueError) as exc:
+            logger.error("Erreur extraction demande_id depuis %s: %s", query.data, exc)
             return
 
         try:
             with self.db_manager.get_cursor() as cursor:
-                # Vérifier si déjà suivi
-                cursor.execute("""
-                    SELECT id FROM demandes_suivi
-                    WHERE demande_id = %s AND admin_id = %s
-                """, (demande_id, user_id))
-
+                cursor.execute(
+                    "SELECT id FROM demandes_suivi WHERE demande_id = %s AND admin_id = %s",
+                    (demande_id, user_id),
+                )
                 if cursor.fetchone():
-                    await query.answer("❤️️ Vous suivez déjà cette demande")
                     return
 
-                # Ajouter suivi
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi)
                     VALUES (%s, %s, NOW())
-                """, (demande_id, user_id))
+                    """,
+                    (demande_id, user_id),
+                )
 
-                # Changer statut demande selon workflow
-                cursor.execute("""
+                # Mise à jour du statut et de l'administrateur référent
+                cursor.execute(
+                    """
                     UPDATE demandes
-                    SET statut = '⏳ En attente', admin_en_charge = %s
+                    SET statut = '⏳ En attente', admin_en_charge = %s, date_modification = NOW()
                     WHERE id = %s AND statut = '📨 Reçue'
-                """, (user_id, demande_id))
+                    """,
+                    (user_id, demande_id),
+                )
 
-                # Récupérer numéro demande pour confirmation
-                cursor.execute("SELECT request_number FROM demandes WHERE id = %s", (demande_id,))
-                result = cursor.fetchone()
+            # Rafraîchit l'affichage en basculant directement sur les demandes suivies
+            await self.show_demandes_suivies(update, context)
 
-                if result:
-                    await query.answer(f"✅ Demande #{result['request_number']} ajoutée à vos suivis")
-                else:
-                    await query.answer("✅ Demande ajoutée à vos suivis")
-
-        except Exception as e:
-            logger.error(f"Erreur suivi demande {demande_id}: {e}")
-            await query.answer("❌ Erreur lors du suivi de la demande")
+        except Exception as exc:
+            logger.error("Erreur prise en charge demande %s: %s", demande_id, exc, exc_info=True)
 
     async def show_demandes_suivies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche demandes suivies - Messages séparés"""
-        query = update.callback_query
-        user_id = query.from_user.id
+        """Point d'entrée pour afficher la première page des demandes suivies."""
+        await self.show_demandes_suivies_page(update, context, page=0)
 
-        if not self.config.is_admin(user_id, secure_mode=True):
-            await query.answer("❌ Accès non autorisé")
+    async def show_demandes_suivies_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+        """Affiche les demandes suivies avec pagination dynamique sur un seul message éditable."""
+        query = update.callback_query
+        if not query or not update.effective_user:
             return
+
+        user_id = update.effective_user.id
 
         try:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT d.*, u.username, u.first_name as user_first_name,
+                cursor.execute(
+                    """
+                    SELECT d.*, u.username, u.first_name AS user_first_name,
                            ds.date_suivi, ds.notes_admin
                     FROM demandes d
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
                     JOIN users u ON d.user_id = u.user_id
                     WHERE ds.admin_id = %s
                     ORDER BY ds.date_suivi DESC
-                    LIMIT 15
-                """, (user_id,))
-
+                    """,
+                    (user_id,),
+                )
                 demandes = cursor.fetchall()
 
-            await query.answer("🔄 Chargement de vos demandes suivies...")
-
             if not demandes:
-                message = (
-                    "💌 <b>Mes Demandes Suivies :</b>\n\n"
-                    "❤️️ Vous ne suivez aucune demande actuellement."
+                msg = (
+                    "💌 <b>Mes Demandes Suivies</b>\n\n"
+                    "❤️ Vous ne suivez aucune demande actuellement.\n"
+                    "Consultez les demandes disponibles pour en prendre en charge."
                 )
-                keyboard = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📮 Disponibles", callback_data="demandes_disponibles"),
-                    InlineKeyboardButton("🔙 Retour", callback_data="start_menu")
-                ]])
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
-                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")],
+                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                ])
+                await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
                 return
 
-            # EN-TÊTE
-            header_message = f"📋 <b>Mes Demandes Suivies :</b>\n ({len(demandes)} demandes)\n"
-            header_keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔄 Actualiser", callback_data="demandes_suivies")
-            ]])
+            total = len(demandes)
+            page = max(0, min(page, total - 1))
+            demande = demandes[page]
 
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=header_message,
-                parse_mode='HTML',
-                reply_markup=header_keyboard
+            message = self._format_suivi_card(demande, page, total)
+            keyboard = self._build_suivi_keyboard(demande, page, total)
+
+            await query.edit_message_text(
+                message,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+                disable_web_page_preview=True
             )
 
-            # UN MESSAGE PAR DEMANDE SUIVIE
-            for demande in demandes:
-                priorite_icon = "💎" if demande['prioritaire'] else "📝"
-                montant_text = f" - {demande['montant']:.2f}€" if demande['prioritaire'] else ""
-
-                nom_complet = demande['prenom']
-                if demande['nom']:
-                    nom_complet += f" {demande['nom']}"
-
-                date_paris = convert_utc_to_paris(demande['date_creation'])
-                date_suivi = convert_utc_to_paris(demande['date_suivi'])
-
-                user_display = f"@{demande['username']}" if demande['username'] else demande['user_first_name']
-
-                message = (
-                    f"{priorite_icon} <b>#{demande['request_number']}</b> - {nom_complet}\n"
-                    f"🎂 {demande['age']} ans - 📍 {demande['localisation']}\n"
-                    f"📷 Instagram: {demande['instagram'] or 'Non renseigné'}\n"
-                    f"👻 Snapchat: {demande['snapchat'] or 'Non renseigné'}\n"
-                    f"{demande['statut']}{montant_text}\n"
-                    f"👤 Demandeur: {user_display}\n"
-                    f"📅 <b>Créée le :</b> {date_paris.strftime('%d/%m/%Y %H:%M')}\n"
-                    f"💌️ <b>Suivie depuis le :</b> {date_suivi.strftime('%d/%m/%Y %H:%M')}"
-                )
-
-                if demande['notes_admin']:
-                    notes_court = demande['notes_admin'][:80] + "..." if len(demande['notes_admin']) > 80 else demande['notes_admin']
-                    message += f"\n📝 <b>Mes notes:</b> {notes_court}"
-
-                keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("📷 PHOTO", callback_data=f"voir_photo_{demande['id']}"),
-                        InlineKeyboardButton("🔄 STATUT", callback_data=f"change_status_{demande['id']}")
-                    ],
-                    [
-                        InlineKeyboardButton("💬 CONTACTER", callback_data=f"contacter_{demande['id']}")
-                    ]
-                ])
-
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
-                )
-
-            # NAVIGATION EN BAS
-            navigation_message = "🧭 <b>Barre de Navigation</b>"
-            navigation_keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📮 Disponibles", callback_data="demandes_disponibles"),
-                InlineKeyboardButton("🔙 Retour", callback_data="start_menu")
-            ]])
-
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=navigation_message,
-                parse_mode='HTML',
-                reply_markup=navigation_keyboard
+        except Exception as exc:
+            logger.error("Erreur affichage demandes suivies: %s", exc, exc_info=True)
+            await query.edit_message_text(
+                "❌ Une erreur est survenue lors du chargement de vos suivis.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Retour", callback_data="start_menu")
+                ]])
             )
 
-        except Exception as e:
-            logger.error(f"Erreur affichage demandes suivies: {e}")
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="❌ Erreur lors de l'affichage des demandes suivies"
-            )
+    def _format_suivi_card(self, demande: dict, page: int, total: int) -> str:
+        """Formate la fiche d'une demande suivie."""
+        priorite_icon = "💎" if demande.get("prioritaire") else "📝"
+        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
+        montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
+        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+
+        demandeur = f"@{demande['username']}" if demande.get("username") else (demande.get("user_first_name") or f"User {demande['user_id']}")
+        date_crea_str = str(demande.get("date_creation", ""))[:16]
+        date_suivi_str = str(demande.get("date_suivi", ""))[:16]
+
+        lines = [
+            f"💌 <b>Demande suivie #{demande.get('request_number', demande['id'])}</b> ({page + 1}/{total})\n",
+            f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
+            f"📍 <b>Localisation :</b> {demande['localisation']}",
+            f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
+            f"📊 <b>Statut :</b> <code>{demande.get('statut')}</code>",
+            f"🙋 <b>Demandeur :</b> {demandeur}"
+        ]
+
+        reseaux = []
+        if demande.get("instagram"):
+            reseaux.append(f"📷 <a href='https://instagram.com/{demande['instagram']}'>@{demande['instagram']}</a>")
+        if demande.get("snapchat"):
+            reseaux.append(f"👻 <a href='https://snapchat.com/add/{demande['snapchat']}'>{demande['snapchat']}</a>")
+        if reseaux:
+            lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
+
+        if demande.get("details"):
+            det = demande["details"]
+            det_court = (det[:150] + "...") if len(det) > 150 else det
+            lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
+
+        if demande.get("notes_admin"):
+            lines.append(f"📝 <b>Note privée :</b> <i>{demande['notes_admin']}</i>")
+
+        lines.append(f"\n📅 <i>Créée le {date_crea_str} | Suivie le {date_suivi_str}</i>")
+        return "\n".join(lines)
+
+    def _build_suivi_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
+        """Construit le clavier d'actions (statut, photo, contact) et de pagination."""
+        demande_id = demande["id"]
+        buttons = []
+
+        # Actions principales
+        action_row = [
+            InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande_id}")
+        ]
+        if demande.get("photo_id"):
+            action_row.append(InlineKeyboardButton("📷 Photo", callback_data=f"voir_photo_{demande_id}"))
+
+        buttons.append(action_row)
+
+        # Contact direct du demandeur
+        buttons.append([
+            InlineKeyboardButton("💬 Contacter le demandeur", callback_data=f"contacter_{demande_id}")
+        ])
+
+        # Pagination
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"suivi_prev_{page}"))
+        if page < total - 1:
+            nav_row.append(InlineKeyboardButton("Suivante ➡️", callback_data=f"suivi_next_{page}"))
+
+        if nav_row:
+            buttons.append(nav_row)
+
+        # Raccourcis globaux
+        buttons.append([
+            InlineKeyboardButton("🔄 Actualiser", callback_data="demandes_suivies"),
+            InlineKeyboardButton("📮 Disponibles", callback_data="demandes_disponibles")
+        ])
+        buttons.append([
+            InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
+        ])
+
+        return InlineKeyboardMarkup(buttons)

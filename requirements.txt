@@ -1,11 +1,9 @@
-python-telegram-bot
-python-dotenv
-mysql-connector-python
-Pillow
-requests
-psutil          # Pour surveillance des processus
-pytz            # Pour gestion timezone
-
-# Optionnelles
-httpx           # Pour de meilleures performances réseau
-aiofiles        # Pour la gestion asynchrone des fichiers
+python-telegram-bot[job-queue]>=22.8
+python-dotenv>=1.0.1
+mysql-connector-python>=8.3.0
+Pillow>=10.4.0
+requests>=2.32.0
+psutil>=6.0.0
+pytz>=2024.2
+httpx>=0.27.0
+aiofiles>=24.1.0

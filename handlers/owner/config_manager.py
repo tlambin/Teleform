@@ -1,294 +1,185 @@
-"""Gestionnaire configuration selon architecture modulaire"""
+"""Module de gestion des paramètres de configuration dynamique du bot."""
 
 import logging
-import json
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
+
 class ConfigManager:
-    """Gestionnaire configuration - Module admin"""
-    
+    """Gestionnaire de configuration globale synchronisé avec la table config."""
+
+    DEFAULT_SETTINGS = {
+        "bot_active": "true",
+        "maintenance_mode": "false",
+        "max_requests_per_user": "3",
+        "allow_priority_requests": "true",
+        "admin_notifications": "true",
+        "max_request_age_days": "30",
+    }
+
     def __init__(self, db_manager, config):
-        """Initialisation ConfigManager"""
         self.db_manager = db_manager
         self.config = config
-        
-        # Configuration par défaut
-        self.default_settings = {
-            'bot_maintenance': False,
-            'max_requests_per_user': 10,
-            'allow_priority_requests': True,
-            'auto_approve_requests': False,
-            'notification_channel': None,
-            'welcome_message': "👋 Bienvenue ! Utilisez /start pour commencer.",
-            'max_request_age_days': 30
-        }
-        
-        logger.info("ConfigManager initialisé - Module configuration")
+        logger.info("ConfigManager initialisé")
 
     async def show_config_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche le menu de configuration"""
+        """Affiche le menu récapitulatif des configurations courantes."""
+        user = update.effective_user
+        if not user or not self.config.is_owner(user.id):
+            if update.callback_query:
+                await update.callback_query.answer("❌ Accès réservé au propriétaire.", show_alert=True)
+            elif update.message:
+                await update.message.reply_text("❌ Accès non autorisé.")
+            return
+
         try:
-            current_config = await self._get_current_config()
-            
+            current_config = self._get_current_config()
             message = self._format_config_message(current_config)
             keyboard = self._create_config_keyboard()
-            
+
             if update.callback_query:
                 await update.callback_query.edit_message_text(
-                    message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
+                    message, parse_mode="HTML", reply_markup=keyboard
                 )
-            else:
+            elif update.message:
                 await update.message.reply_text(
-                    message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
+                    message, parse_mode="HTML", reply_markup=keyboard
                 )
-                
-        except Exception as e:
-            logger.error(f"Erreur affichage menu configuration: {e}")
-            await self._send_error_message(update, "❌ Erreur lors de la récupération de la configuration")
+
+        except Exception as exc:
+            logger.error("Erreur affichage menu configuration: %s", exc, exc_info=True)
+            await self._send_error_message(update, "❌ Erreur lors de la récupération de la configuration.")
 
     async def toggle_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Active/désactive le mode maintenance"""
-        try:
-            query = update.callback_query
-            await query.answer()
-            
-            current_status = await self._get_config_value('bot_maintenance', False)
-            new_status = not current_status
-            
-            await self._set_config_value('bot_maintenance', new_status)
-            
-            status_text = "activé" if new_status else "désactivé"
-            await query.edit_message_text(
-                f"🛠️ <b>Mode maintenance {status_text}</b>\n\n"
-                f"Le bot est maintenant {'en maintenance' if new_status else 'opérationnel'}.",
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour configuration", callback_data="admin_config")
-                ]])
-            )
-            
-            logger.info(f"Mode maintenance {status_text} par admin {query.from_user.id}")
-            
-        except Exception as e:
-            logger.error(f"Erreur toggle maintenance: {e}")
-            await self._send_error_message(update, "❌ Erreur lors de la modification du mode maintenance")
+        """Bascule l'état du mode maintenance."""
+        query = update.callback_query
+        user = update.effective_user
+        if not query or not user or not self.config.is_owner(user.id):
+            return
 
-    async def show_limits_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche la configuration des limites"""
         try:
-            query = update.callback_query
-            await query.answer()
-            
-            max_requests = await self._get_config_value('max_requests_per_user', 10)
-            max_age = await self._get_config_value('max_request_age_days', 30)
-            
-            message = (
-                "⚙️ <b>Configuration Limites</b>\n\n"
-                f"📊 <b>Max demandes par utilisateur :</b> {max_requests}\n"
-                f"📅 <b>Âge max des demandes (jours) :</b> {max_age}\n\n"
-                "Utilisez les boutons ci-dessous pour modifier :"
-            )
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("📊 Modifier max demandes", callback_data="config_max_requests"),
-                    InlineKeyboardButton("📅 Modifier âge max", callback_data="config_max_age")
-                ],
-                [InlineKeyboardButton("🔙 Retour configuration", callback_data="admin_config")]
-            ]
-            
+            current = self.is_maintenance_mode()
+            new_val = not current
+            self.set_setting("maintenance_mode", "true" if new_val else "false")
+            if new_val:
+                self.set_setting("bot_active", "false")
+
+            status_str = "activé" if new_val else "désactivé"
+            logger.info("Maintenance %s par le propriétaire %s", status_str, user.id)
+
             await query.edit_message_text(
-                message,
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                f"🛠️ <b>Mode maintenance {status_str}</b>\n\n"
+                f"Le service est désormais {'restreint au propriétaire' if new_val else 'disponible selon les paramètres standards'}.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Retour Configuration", callback_data="parametres")
+                ]]),
             )
-            
-        except Exception as e:
-            logger.error(f"Erreur affichage limites: {e}")
-            await self._send_error_message(update, "❌ Erreur lors de l'affichage des limites")
+
+        except Exception as exc:
+            logger.error("Erreur bascule mode maintenance: %s", exc)
+            await self._send_error_message(update, "❌ Erreur lors de la mise à jour de la maintenance.")
 
     async def toggle_priority_requests(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Active/désactive les demandes prioritaires"""
+        """Autorise ou interdit la soumission de demandes prioritaires."""
+        query = update.callback_query
+        user = update.effective_user
+        if not query or not user or not self.config.is_owner(user.id):
+            return
+
         try:
-            query = update.callback_query
-            await query.answer()
-            
-            current_status = await self._get_config_value('allow_priority_requests', True)
-            new_status = not current_status
-            
-            await self._set_config_value('allow_priority_requests', new_status)
-            
-            status_text = "activées" if new_status else "désactivées"
+            current = self.is_priority_allowed()
+            new_val = not current
+            self.set_setting("allow_priority_requests", "true" if new_val else "false")
+
+            status_str = "autorisées" if new_val else "désactivées"
             await query.edit_message_text(
-                f"💎 <b>Demandes prioritaires {status_text}</b>\n\n"
-                f"Les demandes prioritaires sont maintenant {'autorisées' if new_status else 'interdites'}.",
-                parse_mode='HTML',
+                f"💎 <b>Demandes prioritaires {status_str}</b>\n\n"
+                f"Les demandes avec pourboire ou urgence sont dorénavant {'acceptées' if new_val else 'refusées'}.",
+                parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour configuration", callback_data="admin_config")
-                ]])
+                    InlineKeyboardButton("🔙 Retour Configuration", callback_data="parametres")
+                ]]),
             )
-            
-            logger.info(f"Demandes prioritaires {status_text} par admin {query.from_user.id}")
-            
-        except Exception as e:
-            logger.error(f"Erreur toggle priority requests: {e}")
-            await self._send_error_message(update, "❌ Erreur lors de la modification des demandes prioritaires")
 
-    async def _get_current_config(self) -> dict:
-        """Récupère la configuration actuelle"""
-        try:
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute("SELECT setting_key, setting_value FROM bot_settings")
-                settings = cursor.fetchall()
-                
-                config = self.default_settings.copy()
-                for setting in settings:
-                    key = setting['setting_key']
-                    value = setting['setting_value']
-                    
-                    # Conversion des types
-                    if value == 'true':
-                        config[key] = True
-                    elif value == 'false':
-                        config[key] = False
-                    elif value.isdigit():
-                        config[key] = int(value)
-                    else:
-                        config[key] = value
-                
-                return config
-                
-        except Exception as e:
-            logger.error(f"Erreur récupération configuration: {e}")
-            return self.default_settings.copy()
+        except Exception as exc:
+            logger.error("Erreur bascule demandes prioritaires: %s", exc)
+            await self._send_error_message(update, "❌ Erreur lors du réglage des demandes prioritaires.")
 
-    async def _get_config_value(self, key: str, default=None):
-        """Récupère une valeur de configuration spécifique"""
-        try:
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute(
-                    "SELECT setting_value FROM bot_settings WHERE setting_key = %s",
-                    (key,)
-                )
-                result = cursor.fetchone()
-                
-                if result:
-                    value = result['setting_value']
-                    # Conversion des types
-                    if value == 'true':
-                        return True
-                    elif value == 'false':
-                        return False
-                    elif value.isdigit():
-                        return int(value)
-                    else:
-                        return value
-                else:
-                    return default if default is not None else self.default_settings.get(key)
-                    
-        except Exception as e:
-            logger.error(f"Erreur récupération config {key}: {e}")
-            return default if default is not None else self.default_settings.get(key)
+    def get_setting(self, key: str, default=None):
+        """Récupère une valeur de configuration depuis la table config."""
+        val = self.db_manager.get_config_value(key)
+        if val is None:
+            return default if default is not None else self.DEFAULT_SETTINGS.get(key)
+        return val
 
-    async def _set_config_value(self, key: str, value):
-        """Définit une valeur de configuration"""
-        try:
-            with self.db_manager.get_cursor() as cursor:
-                # Conversion en string pour stockage
-                if isinstance(value, bool):
-                    str_value = 'true' if value else 'false'
-                else:
-                    str_value = str(value)
-                
-                cursor.execute("""
-                    INSERT INTO bot_settings (setting_key, setting_value, updated_at)
-                    VALUES (%s, %s, NOW())
-                    ON DUPLICATE KEY UPDATE 
-                    setting_value = VALUES(setting_value),
-                    updated_at = NOW()
-                """, (key, str_value))
-                
-                logger.info(f"Configuration mise à jour: {key} = {value}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Erreur mise à jour config {key}: {e}")
-            return False
+    def set_setting(self, key: str, value):
+        """Met à jour une clé de configuration avec invalidation automatique du cache."""
+        str_val = "true" if value is True else ("false" if value is False else str(value))
+        return self.db_manager.set_config_value(key, str_val)
 
-    def _format_config_message(self, config: dict) -> str:
-        """Formate le message de configuration"""
-        maintenance_status = "🔴 Activé" if config.get('bot_maintenance', False) else "🟢 Désactivé"
-        priority_status = "✅ Autorisées" if config.get('allow_priority_requests', True) else "❌ Interdites"
-        
-        message = (
-            "⚙️ <b>Configuration du Bot</b>\n\n"
-            f"🛠️ <b>Mode maintenance :</b> {maintenance_status}\n"
-            f"💎 <b>Demandes prioritaires :</b> {priority_status}\n"
-            f"📊 <b>Max demandes/utilisateur :</b> {config.get('max_requests_per_user', 10)}\n"
-            f"📅 <b>Âge max demandes :</b> {config.get('max_request_age_days', 30)} jours\n\n"
-            "Utilisez les boutons ci-dessous pour modifier la configuration :"
+    def is_maintenance_mode(self) -> bool:
+        """Indique si la maintenance technique est active."""
+        return self.get_setting("maintenance_mode", "false").lower() == "true"
+
+    def is_priority_allowed(self) -> bool:
+        """Indique si les demandes prioritaires sont activées."""
+        return self.get_setting("allow_priority_requests", "true").lower() == "true"
+
+    def get_max_requests_per_user(self) -> int:
+        """Retourne le quota maximal de demandes actives autorisé par utilisateur."""
+        val = self.get_setting("max_requests_per_user", "3")
+        return int(val) if str(val).isdigit() else 3
+
+    def _get_current_config(self) -> dict:
+        """Lit l'ensemble des réglages applicatifs."""
+        raw = self.db_manager.get_all_config()
+        cfg = self.DEFAULT_SETTINGS.copy()
+        for k, v in raw.items():
+            cfg[k] = v
+        return cfg
+
+    def _format_config_message(self, cfg: dict) -> str:
+        """Formate le récapitulatif des réglages pour l'Owner."""
+        is_maint = cfg.get("maintenance_mode", "false").lower() == "true"
+        is_prio = cfg.get("allow_priority_requests", "true").lower() == "true"
+        is_active = cfg.get("bot_active", "true").lower() == "true"
+
+        maint_badge = "🔴 Activé" if is_maint else "🟢 Désactivé"
+        prio_badge = "✅ Autorisées" if is_prio else "❌ Désactivées"
+        active_badge = "🟢 Ouvert" if is_active else "🔴 Suspendu"
+
+        return (
+            "⚙️ <b>Paramètres Généraux du Système</b>\n\n"
+            f"• <b>Service global :</b> {active_badge}\n"
+            f"• <b>Mode maintenance :</b> {maint_badge}\n"
+            f"• <b>Demandes prioritaires :</b> {prio_badge}\n"
+            f"• <b>Max demandes/utilisateur :</b> {cfg.get('max_requests_per_user', '3')}\n"
+            f"• <b>Rétention archives :</b> {cfg.get('max_request_age_days', '30')} jours\n\n"
+            "Sélectionnez un paramètre pour modifier son état :"
         )
-        
-        return message
 
-    def _create_config_keyboard(self):
-        """Crée le clavier de configuration"""
+    def _create_config_keyboard(self) -> InlineKeyboardMarkup:
+        """Génère le clavier de contrôle de configuration."""
         keyboard = [
             [
-                InlineKeyboardButton("🛠️ Mode maintenance", callback_data="config_toggle_maintenance"),
-                InlineKeyboardButton("💎 Demandes prioritaires", callback_data="config_toggle_priority")
+                InlineKeyboardButton("🛠️ Maintenance", callback_data="config_toggle_maintenance"),
+                InlineKeyboardButton("💎 Prioritaires", callback_data="config_toggle_priority"),
             ],
             [
-                InlineKeyboardButton("📊 Limites", callback_data="config_limits"),
-                InlineKeyboardButton("📝 Messages", callback_data="config_messages")
-            ],
-            [
-                InlineKeyboardButton("🔄 Actualiser", callback_data="admin_config"),
-                InlineKeyboardButton("🏠 Menu admin", callback_data="admin_menu")
+                InlineKeyboardButton("🔙 Menu Owner", callback_data="gerer_bot")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
 
-    async def _send_error_message(self, update: Update, message: str):
-        """Envoie un message d'erreur"""
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 Retour", callback_data="admin_menu")
+    async def _send_error_message(self, update: Update, text: str):
+        """Envoie un message d'erreur avec retour sécurisé."""
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Menu Owner", callback_data="gerer_bot")
         ]])
-        
         if update.callback_query:
-            await update.callback_query.edit_message_text(
-                message,
-                reply_markup=keyboard
-            )
-        else:
-            await update.message.reply_text(
-                message,
-                reply_markup=keyboard
-            )
-
-    async def get_setting(self, key: str, default=None):
-        """Méthode publique pour récupérer une configuration"""
-        return await self._get_config_value(key, default)
-
-    async def set_setting(self, key: str, value):
-        """Méthode publique pour définir une configuration"""
-        return await self._set_config_value(key, value)
-
-    async def is_maintenance_mode(self) -> bool:
-        """Vérifie si le bot est en mode maintenance"""
-        return await self._get_config_value('bot_maintenance', False)
-
-    async def is_priority_allowed(self) -> bool:
-        """Vérifie si les demandes prioritaires sont autorisées"""
-        return await self._get_config_value('allow_priority_requests', True)
-
-    async def get_max_requests_per_user(self) -> int:
-        """Récupère le nombre maximum de demandes par utilisateur"""
-        return await self._get_config_value('max_requests_per_user', 10)
+            await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+        elif update.message:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)

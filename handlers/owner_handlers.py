@@ -1,754 +1,483 @@
+"""Module de gestion des fonctions réservées au propriétaire (Owner)."""
+
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
-from utils.maintenance import daily_maintenance, check_storage_usage
 from utils.interface_manager import InterfaceManager
+from utils.maintenance import check_storage_usage, daily_maintenance
 
 logger = logging.getLogger(__name__)
 
+
 class OwnerHandlers:
+    """Gestionnaire des opérations système, des statistiques et des droits administrateurs."""
+
+    WAITING_ADMIN_ID = 1
+    WAITING_ADMIN_REMOVE = 2
+    WAITING_CONFIRMATION = 3
+
     def __init__(self, config, db_manager):
         self.config = config
         self.db_manager = db_manager
         self.interface = InterfaceManager(config, db_manager)
-        self.WAITING_ADMIN_ID = "waiting_admin_id"
-        self.WAITING_ADMIN_REMOVE = "waiting_admin_remove"
-        self.WAITING_CONFIRMATION = "waiting_confirmation"
+        logger.info("OwnerHandlers initialisé")
 
     async def run_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Lance une maintenance manuelle - Compatible CallbackQuery et Message"""
-        user_id = update.effective_user.id
-
-        if not self.config.is_owner(user_id):
-            # ✅ Gestion hybride selon type d'update
+        """Déclenche la routine de purge et d'optimisation."""
+        user = update.effective_user
+        if not user or not self.config.is_owner(user.id):
             if update.callback_query:
-                await update.callback_query.answer("❌ Accès non autorisé", show_alert=True)
-            else:
-                await update.message.reply_text("❌ Accès non autorisé")
+                await update.callback_query.answer("❌ Accès réservé au propriétaire.", show_alert=True)
+            elif update.message:
+                await update.message.reply_text("❌ Accès non autorisé.")
             return
 
-        try:
-            # ✅ Message initial selon type d'update
-            if update.callback_query:
-                await update.callback_query.edit_message_text("🔧 Maintenance en cours...")
-            else:
-                await update.message.reply_text("🔧 Maintenance en cours...")
+        target = update.callback_query if update.callback_query else update.message
+        if update.callback_query:
+            await update.callback_query.edit_message_text("🔧 <b>Maintenance en cours...</b>", parse_mode="HTML")
+        else:
+            await update.message.reply_text("🔧 <b>Maintenance en cours...</b>", parse_mode="HTML")
 
-            # ✅ VOTRE LOGIQUE MAINTENANCE EXACTE (inchangée)
+        try:
             storage_before = check_storage_usage()
             daily_maintenance(self.db_manager)
             storage_after = check_storage_usage()
 
-            # Statistiques de la maintenance (votre code exact)
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("SELECT COUNT(*) as count FROM demandes")
-                demandes_count = cursor.fetchone()['count']
+                cursor.execute("SELECT COUNT(*) AS count FROM demandes")
+                demandes_count = cursor.fetchone()["count"]
 
-                cursor.execute("SELECT COUNT(*) as count FROM archives")
-                archives_count = cursor.fetchone()['count']
+                cursor.execute("SELECT COUNT(*) AS count FROM archives")
+                archives_count = cursor.fetchone()["count"]
 
+            economie = max(0.0, storage_before - storage_after)
             message = (
-                "✅ <b>Maintenance terminée</b>\n\n"
-                f"💾 <b>Stockage:</b>\n"
-                f"• Avant: {storage_before:.1f} MB\n"
-                f"• Après: {storage_after:.1f} MB\n"
-                f"• Économisé: {storage_before - storage_after:.1f} MB\n\n"
-                f"📊 <b>Base de données:</b>\n"
-                f"• Demandes actives: {demandes_count}\n"
-                f"• Archives: {archives_count}\n\n"
-                f"🧹 Cache vidé et fichiers temporaires nettoyés"
+                "✅ <b>Maintenance terminée avec succès</b>\n\n"
+                "💾 <b>Stockage local :</b>\n"
+                f"• Avant : {storage_before:.1f} Mo\n"
+                f"• Après : {storage_after:.1f} Mo\n"
+                f"• Gain : {economie:.1f} Mo\n\n"
+                "📊 <b>Base de données :</b>\n"
+                f"• Demandes actives : {demandes_count}\n"
+                f"• Demandes archivées : {archives_count}\n\n"
+                "🧹 Cache mémoire purgé et index optimisés."
             )
 
-            # ✅ Résultat final selon type d'update
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")
+            ]])
+
             if update.callback_query:
-                # Pour bouton : ajouter bouton retour
-                keyboard = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
-                ]])
                 await update.callback_query.edit_message_text(
-                    message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
+                    message, parse_mode="HTML", reply_markup=keyboard
                 )
             else:
-                # Pour commande : message simple
-                await update.message.reply_text(message, parse_mode='HTML')
+                await update.message.reply_text(message, parse_mode="HTML", reply_markup=keyboard)
 
-        except Exception as e:
-            logger.error(f"Erreur maintenance manuelle: {e}")
-
-            # ✅ Gestion d'erreur selon type d'update
+        except Exception as exc:
+            logger.error("Erreur maintenance manuelle: %s", exc, exc_info=True)
             if update.callback_query:
-                await update.callback_query.answer("❌ Erreur lors de la maintenance", show_alert=True)
+                await update.callback_query.edit_message_text("❌ Échec lors de la maintenance.")
             else:
-                await update.message.reply_text("❌ Erreur lors de la maintenance")
-
-    async def toggle_bot_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Active/désactive l'acceptation de nouvelles demandes"""
-        user_id = update.effective_user.id
-
-        if not self.config.is_owner(user_id):
-            await update.message.reply_text("❌ Accès non autorisé")
-            return
-
-        try:
-            # ✅ UTILISER nouvelle architecture config unifiée
-            current_status = self.db_manager.is_bot_active()
-            new_status = not current_status
-
-            # Mettre à jour via nouvelle méthode
-            self.db_manager.set_bot_active(new_status)
-
-            status_text = "✅ ACTIVÉES" if new_status else "❌ DÉSACTIVÉES"
-            await update.message.reply_text(
-                f"🔧 <b>Nouvelles demandes {status_text}</b>\n\n"
-                f"Statut précédent : {'Activées' if current_status else 'Désactivées'}\n"
-                f"Nouveau statut : {'Activées' if new_status else 'Désactivées'}",
-                parse_mode='HTML'
-            )
-
-        except Exception as e:
-            logger.error(f"Erreur toggle statut: {e}")
-            await update.message.reply_text("❌ Erreur lors du changement de statut")
+                await update.message.reply_text("❌ Échec lors de la maintenance.")
 
     async def bot_on(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Active les demandes"""
+        """Active l'acceptation globale des nouvelles demandes."""
         query = update.callback_query
-        user_id = query.from_user.id
-
-        await query.answer()
-
-        if not self.config.is_owner(user_id):
-            await query.answer("❌ Accès propriétaire requis", show_alert=True)
+        if not query or not self.config.is_owner(update.effective_user.id):
             return
 
-        try:
-            self.db_manager.set_bot_active(True)
-            await query.answer("✅ Demandes activées !", show_alert=True)
-
-            message, keyboard = self.interface.get_gerer_bot_menu()
-            await query.edit_message_text(message, parse_mode='HTML', reply_markup=keyboard)
-
-        except Exception as e:
-            logger.error(f"Erreur activation: {e}")
-            await query.answer("❌ Erreur", show_alert=True)
+        self.config.enable_demandes()
+        message, keyboard = self.interface.get_gerer_bot_menu()
+        await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
 
     async def bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Interface désactivation avec confirmation"""
+        """Demande confirmation avant de couper la création de demandes."""
         query = update.callback_query
-        user_id = query.from_user.id
-
-        await query.answer()
-
-        if not self.config.is_owner(user_id):
-            await query.answer("❌ Accès propriétaire requis", show_alert=True)
+        if not query or not self.config.is_owner(update.effective_user.id):
             return
 
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("⚠️ CONFIRMER", callback_data="confirm_bot_off"),
+                InlineKeyboardButton("⚠️ Confirmer l'arrêt", callback_data="confirm_bot_off"),
                 InlineKeyboardButton("❌ Annuler", callback_data="cancel_bot_off")
             ]
         ])
-
         await query.edit_message_text(
-            "⚠️ <b>DÉSACTIVATION DES DEMANDES</b>\n\n"
-            "Confirmer la désactivation ?",
-            parse_mode='HTML',
+            "⚠️ <b>Suspension des nouvelles demandes</b>\n\n"
+            "Les utilisateurs ne pourront plus soumettre de formulaires jusqu'à la réactivation.\n"
+            "Confirmez-vous cette action ?",
+            parse_mode="HTML",
             reply_markup=keyboard
         )
 
     async def confirmer_bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Confirme la désactivation"""
+        """Enregistre la coupure des demandes."""
         query = update.callback_query
-        await query.answer()
+        if not query or not self.config.is_owner(update.effective_user.id):
+            return
 
-        try:
-            self.db_manager.set_bot_active(False)
-            await query.answer("🔴 Demandes désactivées !", show_alert=True)
-
-            message, keyboard = self.interface.get_gerer_bot_menu()
-            await query.edit_message_text(message, parse_mode='HTML', reply_markup=keyboard)
-
-        except Exception as e:
-            logger.error(f"Erreur désactivation: {e}")
+        self.config.disable_demandes()
+        message, keyboard = self.interface.get_gerer_bot_menu()
+        await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
 
     async def cancel_bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Annule la désactivation"""
+        """Annule la coupure et revient au menu de gestion."""
         query = update.callback_query
-        await query.answer()
-
+        if not query:
+            return
         message, keyboard = self.interface.get_gerer_bot_menu()
-        await query.edit_message_text(message, parse_mode='HTML', reply_markup=keyboard)
+        await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
 
     async def toggle_demandes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Activer/désactiver les demandes"""
-        user_id = update.effective_user.id
-
-        if user_id != self.config.OWNER_ID:
-            await update.message.reply_text("❌ Accès refusé")
+        """Bascule d'état via commande /toggle_demandes."""
+        if not update.message or not update.effective_user:
             return
 
-        current_state = self.config.are_demandes_enabled()
+        if not self.config.is_owner(update.effective_user.id):
+            await update.message.reply_text("❌ Commande réservée au propriétaire.")
+            return
 
-        if current_state:
+        if self.config.are_demandes_enabled():
             self.config.disable_demandes()
-            await update.message.reply_text(
-                "🚫 **Demandes désactivées**\n\n"
-                "Les utilisateurs ne peuvent plus créer de nouvelles demandes."
-            )
+            await update.message.reply_text("🚫 <b>Service suspendu :</b> Les utilisateurs ne peuvent plus créer de demandes.", parse_mode="HTML")
         else:
             self.config.enable_demandes()
-            await update.message.reply_text(
-                "✅ **Demandes réactivées**\n\n"
-                "Les utilisateurs peuvent à nouveau créer des demandes."
-            )
-
+            await update.message.reply_text("✅ <b>Service actif :</b> Les utilisateurs peuvent à nouveau créer des demandes.", parse_mode="HTML")
 
     async def handle_owner_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Gestionnaire callbacks owner"""
+        """Aiguille les boutons du panneau propriétaire."""
         query = update.callback_query
-        user_id = query.from_user.id
-
-        if not self.config.is_owner(user_id):
-            await query.answer("❌ Accès propriétaire requis", show_alert=True)
+        if not query or not self.config.is_owner(update.effective_user.id):
             return
 
-        if query.data == "bot_on":
+        data = query.data or ""
+        if data == "bot_on":
             await self.bot_on(update, context)
-        elif query.data == "bot_off":
+        elif data == "bot_off":
             await self.bot_off(update, context)
-        elif query.data == "confirm_bot_off":
+        elif data == "confirm_bot_off":
             await self.confirmer_bot_off(update, context)
-        elif query.data == "cancel_bot_off":
+        elif data == "cancel_bot_off":
             await self.cancel_bot_off(update, context)
-        elif query.data == "maintenance":
+        elif data == "maintenance":
             await self.run_maintenance(update, context)
-        elif query.data == "bot_stats":
+        elif data == "bot_stats":
             await self.show_statistics(update, context)
-        else:
-            await query.answer("❌ Action non reconnue")
-            logger.warning(f"Callback owner non géré : {query.data}")
 
     async def admin_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Interface ajout administrateur - Owner uniquement"""
+        """Ouvre le formulaire d'ajout d'administrateur."""
         query = update.callback_query
-        user_id = query.from_user.id
-
-        await query.answer()
-
-        # Vérification permissions propriétaire selon vos intérêts en contrôle d'accès
-        if not self.config.is_owner(user_id):
-            await query.answer("❌ Accès propriétaire requis", show_alert=True)
+        if not query or not self.config.is_owner(update.effective_user.id):
             return ConversationHandler.END
 
         try:
-            # Comptage admins actuels selon le code fourni
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("SELECT COUNT(*) as count FROM admins")
-                admin_count = cursor.fetchone()['count']
+                cursor.execute("SELECT COUNT(*) AS count FROM admins")
+                admin_count = cursor.fetchone()["count"]
 
-            await query.edit_message_text(
-                f"👤 <b>Ajout d'un Administrateur</b>\n\n"
-                f"📊 Admins actuels : {admin_count}\n\n"
-                f"Veuillez saisir :\n"
-                f"• <b>ID Telegram</b> (exemple: 123456789)\n"
-                f"• <b>Username</b> (exemple: johndoe)\n\n"
-                f"⚠️ L'utilisateur doit avoir déjà interagi avec le bot.",
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_add")
-                ]])
+            text = (
+                "👤 <b>Ajout d'un Administrateur</b>\n\n"
+                f"Équipe actuelle : <b>{admin_count}</b> admin(s)\n\n"
+                "Envoyez l'<b>ID Telegram numérique</b> (ex: <code>123456789</code>) "
+                "ou le nom d'utilisateur de la personne.\n\n"
+                "<i>Attention : Le compte doit obligatoirement avoir démarré le bot au moins une fois (/start).</i>"
             )
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_add")
+            ]])
 
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
             return self.WAITING_ADMIN_ID
 
-        except Exception as e:
-            logger.error(f"Erreur ouverture ajout admin pour {user_id}: {e}")
-            await query.edit_message_text(
-                "❌ Erreur lors de l'ouverture de l'ajout d'administrateur",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")
-                ]])
-            )
+        except Exception as exc:
+            logger.error("Erreur interface ajout admin: %s", exc)
             return ConversationHandler.END
 
     async def traiter_admin_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Traite la saisie pour ajouter un admin selon vos intérêts en administration système"""
-        user_id = update.effective_user.id
-        saisie = update.message.text.strip()
+        """Vérifie l'existence de l'utilisateur et lui accorde les privilèges admin."""
+        if not update.message or not update.message.text:
+            return self.WAITING_ADMIN_ID
 
-        # Double vérification propriétaire
+        user_id = update.effective_user.id
         if not self.config.is_owner(user_id):
-            await update.message.reply_text("❌ Accès propriétaire requis")
             return ConversationHandler.END
 
+        saisie = update.message.text.strip().replace("@", "")
+
         try:
-            # Validation entrée selon le code fourni
-            if not saisie:
+            with self.db_manager.get_cursor() as cursor:
+                if saisie.isdigit():
+                    cursor.execute("SELECT * FROM users WHERE user_id = %s", (int(saisie),))
+                else:
+                    cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(%s)", (saisie,))
+                user_data = cursor.fetchone()
+
+            if not user_data:
                 await update.message.reply_text(
-                    "❌ <b>Entrée invalide</b>\n\n"
-                    "Veuillez saisir un ID Telegram ou username valide :",
-                    parse_mode='HTML'
+                    f"❌ L'utilisateur <code>{saisie}</code> n'est pas enregistré dans la base.\n"
+                    "Il doit impérativement lancer /start avec le bot d'abord.",
+                    parse_mode="HTML"
                 )
                 return self.WAITING_ADMIN_ID
 
-            # Déterminer si c'est un ID ou username selon vos intérêts en contrôle d'accès
-            if saisie.isdigit():
-                # ID Telegram numérique
-                target_user_id = int(saisie)
-                search_by = "user_id"
-            else:
-                # Username (sans @)
-                target_user_id = saisie.lower()
-                search_by = "username"
+            target_id = user_data["user_id"]
 
-            # Vérifier si déjà admin selon le code fourni adapté
             with self.db_manager.get_cursor() as cursor:
-                if search_by == "user_id":
-                    cursor.execute("SELECT user_id, alias FROM admins WHERE user_id = %s", (target_user_id,))
-                else:
-                    cursor.execute("SELECT user_id, alias FROM admins WHERE username = %s", (target_user_id,))
-
-                existing_admin = cursor.fetchone()
-                if existing_admin:
-                    await update.message.reply_text(
-                        f"❌ <b>Déjà administrateur</b>\n\n"
-                        f"Cet utilisateur est déjà admin avec l'alias : <b>{existing_admin['alias']}</b>\n\n"
-                        f"Veuillez saisir un autre utilisateur :",
-                        parse_mode='HTML'
-                    )
+                cursor.execute("SELECT alias FROM admins WHERE user_id = %s", (target_id,))
+                if cursor.fetchone():
+                    await update.message.reply_text("⚠️ Cet utilisateur est déjà administrateur.")
                     return self.WAITING_ADMIN_ID
 
-            # Vérifier si utilisateur existe dans le système selon vos intérêts en administration système
-            with self.db_manager.get_cursor() as cursor:
-                if search_by == "user_id":
-                    cursor.execute("SELECT user_id, username, first_name FROM users WHERE user_id = %s", (target_user_id,))
-                else:
-                    cursor.execute("SELECT user_id, username, first_name FROM users WHERE username = %s", (target_user_id,))
+                # Attribution de l'alias initial
+                base_alias = user_data.get("first_name") or user_data.get("username") or f"Admin{target_id}"
+                alias = base_alias[:20]
 
-                user_data = cursor.fetchone()
-                if not user_data:
-                    await update.message.reply_text(
-                        f"❌ <b>Utilisateur introuvable</b>\n\n"
-                        f"L'utilisateur <code>{saisie}</code> n'a jamais interagi avec le bot.\n\n"
-                        f"Il doit d'abord utiliser /start puis vous pourrez l'ajouter.\n\n"
-                        f"Veuillez saisir un autre utilisateur :",
-                        parse_mode='HTML'
-                    )
-                    return self.WAITING_ADMIN_ID
-
-            # Génération alias automatique selon vos intérêts en personnalisation admin
-            base_alias = user_data['first_name'] or user_data['username'] or f"Admin{user_data['user_id']}"
-            alias = base_alias[:15]  # Limiter longueur
-
-            # Vérification unicité alias
-            with self.db_manager.get_cursor() as cursor:
-                counter = 1
-                original_alias = alias
-                while True:
-                    cursor.execute("SELECT user_id FROM admins WHERE alias = %s", (alias,))
-                    if not cursor.fetchone():
-                        break
-                    alias = f"{original_alias}{counter}"
-                    counter += 1
-
-            # Ajout en base selon le code fourni amélioré
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO admins (user_id, alias, first_name, username, date_added, added_by)
                     VALUES (%s, %s, %s, %s, NOW(), %s)
-                """, (
-                    user_data['user_id'],
-                    alias,
-                    user_data['first_name'] or '',
-                    user_data['username'] or '',
-                    user_id
-                ))
+                    """,
+                    (target_id, alias, user_data.get("first_name", ""), user_data.get("username", ""), user_id)
+                )
 
-            # Recharger configuration selon vos intérêts en administration système
-            self.config.load_admins(self.db_manager)
+            self.config.add_admin(target_id)
+            logger.info("Admin ajouté: %s (%s)", target_id, alias)
 
-            # Message succès avec retour navigation selon vos intérêts en conception interface admin
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("👥 Gestion Admins", callback_data="gerer_admins")],
-                [InlineKeyboardButton("🏠 Menu Principal", callback_data="start_menu")]
+                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ])
 
             await update.message.reply_text(
                 f"✅ <b>Administrateur ajouté avec succès !</b>\n\n"
-                f"👤 Utilisateur : {user_data['first_name'] or user_data['username']}\n"
-                f"🆔 ID : <code>{user_data['user_id']}</code>\n"
-                f"🏷️ Alias : <b>{alias}</b>\n\n"
-                f"L'utilisateur peut maintenant utiliser les fonctions d'administration.",
-                parse_mode='HTML',
+                f"👤 <b>Nom :</b> {user_data.get('first_name', '')}\n"
+                f"🆔 <b>ID :</b> <code>{target_id}</code>\n"
+                f"🏷️ <b>Alias attribué :</b> <code>{alias}</code>",
+                parse_mode="HTML",
                 reply_markup=keyboard
             )
-
-            logger.info(f"Admin ajouté par {user_id}: {user_data['user_id']} avec alias {alias}")
             return ConversationHandler.END
 
-        except Exception as e:
-            logger.error(f"Erreur ajout admin par {user_id}: {e}")
-            await update.message.reply_text(
-                "❌ Erreur lors de l'ajout de l'administrateur",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
-                ]])
-            )
+        except Exception as exc:
+            logger.error("Erreur enregistrement admin: %s", exc, exc_info=True)
+            await update.message.reply_text("❌ Une erreur technique est survenue lors de l'ajout.")
             return ConversationHandler.END
 
     async def cancel_admin_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Annulation ajout administrateur"""
+        """Annule l'ajout d'administrateur."""
         query = update.callback_query
-        await query.answer()
-
-        # Retour menu gestion admins selon vos intérêts en conception interface admin
-        message, keyboard = self.interface.get_gerer_admins_menu()
-
-        await query.edit_message_text(
-            message,
-            parse_mode='HTML',
-            reply_markup=keyboard
-        )
-
+        if query:
+            message, keyboard = self.interface.get_gerer_admins_menu()
+            await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
         return ConversationHandler.END
 
-    # Constante pour ConversationHandler
-    WAITING_ADMIN_ID = "waiting_admin_id"
-
     async def admin_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Interface suppression administrateur avec liste - Owner uniquement"""
+        """Affiche la liste des administrateurs révocables."""
         query = update.callback_query
-        user_id = query.from_user.id
-
-        await query.answer()
-
-        # Vérification permissions propriétaire selon vos intérêts en contrôle d'accès
-        if not self.config.is_owner(user_id):
-            await query.answer("❌ Accès propriétaire requis", show_alert=True)
+        if not query or not self.config.is_owner(update.effective_user.id):
             return ConversationHandler.END
 
         try:
-            # Récupération liste admins selon les résultats fournis
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT user_id, alias, first_name, username, date_added
                     FROM admins
                     WHERE user_id != %s
                     ORDER BY date_added DESC
-                """, (user_id,))  # Exclure le propriétaire lui-même
-
+                    """,
+                    (update.effective_user.id,)
+                )
                 admins = cursor.fetchall()
 
             if not admins:
                 await query.edit_message_text(
-                    "👥 <b>Suppression d'Administrateur</b>\n\n"
-                    "📭 Aucun administrateur à supprimer.\n"
-                    "Vous êtes le seul administrateur du système.",
-                    parse_mode='HTML',
+                    "👥 <b>Révocation d'Administrateur</b>\n\n"
+                    "Aucun administrateur supplémentaire n'est configuré.",
+                    parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")
                     ]])
                 )
                 return ConversationHandler.END
 
-            # Construction du message avec liste d'admins selon vos intérêts en gestion des utilisateurs
-            message = f"👥 <b>Suppression d'Administrateur</b>\n\n"
-            message += f"📊 Administrateurs supprimables : {len(admins)}\n\n"
-            message += "⚠️ <b>ATTENTION :</b> Cette action est irréversible !\n\n"
+            lines = [
+                "👥 <b>Révocation d'Administrateur</b>\n",
+                f"Administrateurs révocables : <b>{len(admins)}</b>\n"
+            ]
+            for idx, adm in enumerate(admins, 1):
+                user_desc = f"@{adm['username']}" if adm.get("username") else adm.get("first_name", "")
+                date_str = str(adm.get("date_added", ""))[:10]
+                lines.append(f"{idx}. <b>{adm['alias']}</b> ({user_desc}) — ID: <code>{adm['user_id']}</code> [{date_str}]")
 
-            for i, admin in enumerate(admins, 1):
-                username_info = f"@{admin['username']}" if admin['username'] else admin['first_name']
-                date_str = admin['date_added'].strftime('%d/%m/%Y')
-                message += f"{i}. <b>{admin['alias']}</b> - {username_info}\n"
-                message += f"   📅 Ajouté le {date_str} - ID: <code>{admin['user_id']}</code>\n\n"
+            lines.append("\nEnvoyez le <b>numéro</b> de l'administrateur à révoquer :")
 
-            message += "Saisissez le <b>numéro</b> de l'admin à supprimer :"
+            context.user_data["admins_list"] = admins
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_remove")
+            ]])
 
-            # Stocker la liste des admins pour la sélection
-            context.user_data['admins_list'] = admins
-
-            await query.edit_message_text(
-                message,
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_remove")
-                ]])
-            )
-
+            await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
             return self.WAITING_ADMIN_REMOVE
 
-        except Exception as e:
-            logger.error(f"Erreur ouverture suppression admin pour {user_id}: {e}")
-            await query.edit_message_text(
-                "❌ Erreur lors de l'ouverture de la suppression d'administrateur",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")
-                ]])
-            )
+        except Exception as exc:
+            logger.error("Erreur ouverture suppression admin: %s", exc, exc_info=True)
             return ConversationHandler.END
 
     async def traiter_admin_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Traite la sélection d'admin à supprimer selon les bonnes pratiques"""
-        user_id = update.effective_user.id
+        """Valide le choix de l'administrateur à supprimer et demande confirmation."""
+        if not update.message or not update.message.text:
+            return self.WAITING_ADMIN_REMOVE
+
+        if not self.config.is_owner(update.effective_user.id):
+            return ConversationHandler.END
+
         choix = update.message.text.strip()
+        admins_list = context.user_data.get("admins_list", [])
 
-        # Double vérification propriétaire selon vos intérêts en contrôle d'accès
-        if not self.config.is_owner(user_id):
-            await update.message.reply_text("❌ Accès propriétaire requis")
-            return ConversationHandler.END
+        if not choix.isdigit():
+            await update.message.reply_text("❌ Veuillez saisir un numéro valide de la liste :")
+            return self.WAITING_ADMIN_REMOVE
 
-        try:
-            # Validation choix numérique
-            if not choix.isdigit():
-                await update.message.reply_text(
-                    "❌ <b>Choix invalide</b>\n\n"
-                    "Veuillez saisir un numéro valide de la liste :",
-                    parse_mode='HTML'
-                )
-                return self.WAITING_ADMIN_REMOVE
+        idx = int(choix) - 1
+        if idx < 0 or idx >= len(admins_list):
+            await update.message.reply_text(f"❌ Numéro invalide. Choisissez entre 1 et {len(admins_list)} :")
+            return self.WAITING_ADMIN_REMOVE
 
-            choix_num = int(choix)
-            admins_list = context.user_data.get('admins_list', [])
+        selected = admins_list[idx]
+        context.user_data["admin_to_remove"] = selected
 
-            if choix_num < 1 or choix_num > len(admins_list):
-                await update.message.reply_text(
-                    f"❌ <b>Numéro invalide</b>\n\n"
-                    f"Veuillez choisir entre 1 et {len(admins_list)} :",
-                    parse_mode='HTML'
-                )
-                return self.WAITING_ADMIN_REMOVE
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⚠️ Confirmer la révocation", callback_data="confirm_admin_remove"),
+                InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_remove")
+            ]
+        ])
 
-            # Récupérer l'admin sélectionné selon les résultats fournis
-            admin_selected = admins_list[choix_num - 1]
-
-            # Protection supplémentaire selon vos intérêts en contrôle d'accès
-            if admin_selected['user_id'] == user_id:
-                await update.message.reply_text(
-                    "❌ <b>Auto-suppression interdite</b>\n\n"
-                    "Vous ne pouvez pas vous supprimer vous-même.\n"
-                    "Veuillez choisir un autre administrateur :",
-                    parse_mode='HTML'
-                )
-                return self.WAITING_ADMIN_REMOVE
-
-            # Stocker admin à supprimer pour confirmation
-            context.user_data['admin_to_remove'] = admin_selected
-
-            # Demande de confirmation selon les bonnes pratiques
-            username_info = f"@{admin_selected['username']}" if admin_selected['username'] else admin_selected['first_name']
-
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("⚠️ CONFIRMER SUPPRESSION", callback_data="confirm_admin_remove"),
-                    InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_remove")
-                ]
-            ])
-
-            await update.message.reply_text(
-                f"⚠️ <b>CONFIRMATION SUPPRESSION</b>\n\n"
-                f"Êtes-vous sûr de vouloir supprimer :\n\n"
-                f"👤 <b>{admin_selected['alias']}</b>\n"
-                f"📱 {username_info}\n"
-                f"🆔 ID: <code>{admin_selected['user_id']}</code>\n\n"
-                f"⚠️ <b>Cette action est IRRÉVERSIBLE !</b>",
-                parse_mode='HTML',
-                reply_markup=keyboard
-            )
-
-            return self.WAITING_CONFIRMATION
-
-        except Exception as e:
-            logger.error(f"Erreur traitement suppression admin par {user_id}: {e}")
-            await update.message.reply_text(
-                "❌ Erreur lors du traitement de la suppression",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
-                ]])
-            )
-            return ConversationHandler.END
+        await update.message.reply_text(
+            f"⚠️ <b>Confirmation de révocation</b>\n\n"
+            f"Voulez-vous vraiment retirer les droits administrateur à :\n"
+            f"• <b>Alias :</b> {selected['alias']}\n"
+            f"• <b>ID :</b> <code>{selected['user_id']}</code> ?",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        return self.WAITING_CONFIRMATION
 
     async def confirmer_admin_suppression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Exécute la suppression après confirmation selon vos intérêts en administration système"""
+        """Supprime l'administrateur de la base de données et du cache."""
         query = update.callback_query
-        user_id = query.from_user.id
-
-        await query.answer()
-
-        # Triple vérification propriétaire
-        if not self.config.is_owner(user_id):
-            await query.answer("❌ Accès propriétaire requis", show_alert=True)
+        if not query or not self.config.is_owner(update.effective_user.id):
             return ConversationHandler.END
 
+        selected = context.user_data.pop("admin_to_remove", None)
+        context.user_data.pop("admins_list", None)
+
+        if not selected:
+            await query.edit_message_text("❌ Erreur : aucun administrateur sélectionné.")
+            return ConversationHandler.END
+
+        target_id = selected["user_id"]
         try:
-            admin_to_remove = context.user_data.get('admin_to_remove')
-            if not admin_to_remove:
-                await query.edit_message_text("❌ Erreur : administrateur non sélectionné")
-                return ConversationHandler.END
-
-            # Suppression de la base selon les résultats fournis
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("DELETE FROM admins WHERE user_id = %s", (admin_to_remove['user_id'],))
-                rows_affected = cursor.rowcount
+                cursor.execute("DELETE FROM admins WHERE user_id = %s", (target_id,))
 
-            if rows_affected == 0:
-                await query.edit_message_text(
-                    "❌ <b>Échec de suppression</b>\n\n"
-                    "L'administrateur n'a pas pu être supprimé.",
-                    parse_mode='HTML',
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔙 Gestion Admins", callback_data="gerer_admins")
-                    ]])
-                )
-                return ConversationHandler.END
-
-            # Recharger configuration selon vos intérêts en administration système
-            self.config.load_admins(self.db_manager)
-
-            # Message succès selon vos intérêts en gestion des utilisateurs
-            username_info = f"@{admin_to_remove['username']}" if admin_to_remove['username'] else admin_to_remove['first_name']
+            self.config.remove_admin(target_id)
+            logger.info("Admin %s révoqué par le propriétaire", target_id)
 
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("👥 Gestion Admins", callback_data="gerer_admins")],
-                [InlineKeyboardButton("🏠 Menu Principal", callback_data="start_menu")]
+                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ])
-
             await query.edit_message_text(
-                f"✅ <b>Administrateur supprimé avec succès !</b>\n\n"
-                f"👤 <b>{admin_to_remove['alias']}</b>\n"
-                f"📱 {username_info}\n"
-                f"🆔 ID: <code>{admin_to_remove['user_id']}</code>\n\n"
-                f"L'utilisateur n'a plus accès aux fonctions d'administration.",
-                parse_mode='HTML',
+                f"✅ <b>Droits administrateur révoqués pour {selected['alias']}.</b>",
+                parse_mode="HTML",
                 reply_markup=keyboard
             )
-
-            # Nettoyage données temporaires
-            context.user_data.pop('admins_list', None)
-            context.user_data.pop('admin_to_remove', None)
-
-            logger.info(f"Admin supprimé par {user_id}: {admin_to_remove['user_id']} ({admin_to_remove['alias']})")
             return ConversationHandler.END
 
-        except Exception as e:
-            logger.error(f"Erreur confirmation suppression admin par {user_id}: {e}")
-            await query.edit_message_text(
-                "❌ Erreur lors de la suppression de l'administrateur",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
-                ]])
-            )
+        except Exception as exc:
+            logger.error("Erreur révocation admin: %s", exc, exc_info=True)
+            await query.edit_message_text("❌ Échec lors de la révocation en base.")
             return ConversationHandler.END
 
     async def cancel_admin_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Annulation suppression administrateur"""
+        """Annule la procédure de révocation."""
         query = update.callback_query
-        await query.answer()
+        context.user_data.pop("admins_list", None)
+        context.user_data.pop("admin_to_remove", None)
 
-        # Nettoyage données temporaires
-        context.user_data.pop('admins_list', None)
-        context.user_data.pop('admin_to_remove', None)
-
-        # Retour menu gestion admins selon vos intérêts en gestion des utilisateurs
-        message, keyboard = self.interface.get_gerer_admins_menu()
-
-        await query.edit_message_text(
-            message,
-            parse_mode='HTML',
-            reply_markup=keyboard
-        )
-
+        if query:
+            message, keyboard = self.interface.get_gerer_admins_menu()
+            await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
         return ConversationHandler.END
 
-    # Constantes pour ConversationHandler
-    WAITING_ADMIN_REMOVE = "waiting_admin_remove"
-    WAITING_CONFIRMATION = "waiting_confirmation"
-
     async def show_statistics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche les statistiques du bot"""
+        """Affiche les métriques globales du bot, de la base et du stockage local."""
+        query = update.callback_query
+        if not query or not self.config.is_owner(update.effective_user.id):
+            return
+
         try:
             with self.db_manager.get_cursor() as cursor:
-                # Statistiques générales
-                stats_queries = {
-                    'total_demandes': "SELECT COUNT(*) as count FROM demandes",
-                    'total_archives': "SELECT COUNT(*) as count FROM archives",
-                    'total_users': "SELECT COUNT(*) as count FROM users",
-                    'demandes_prioritaires': "SELECT COUNT(*) as count FROM demandes WHERE prioritaire = TRUE",
-                    'montant_total': "SELECT SUM(montant) as total FROM demandes WHERE prioritaire = TRUE"
-                }
+                cursor.execute("SELECT COUNT(*) AS total FROM users")
+                total_users = cursor.fetchone()["total"]
 
-                stats = {}
-                for key, query in stats_queries.items():
-                    cursor.execute(query)
-                    result = cursor.fetchone()
-                    stats[key] = result['count'] if 'count' in result else result['total'] or 0
+                cursor.execute("SELECT COUNT(*) AS total FROM demandes")
+                total_demandes = cursor.fetchone()["total"]
 
-                # Statistiques par statut
-                cursor.execute("""
-                    SELECT statut, COUNT(*) as count
-                    FROM demandes
-                    GROUP BY statut
-                    ORDER BY count DESC
-                """)
-                statuts_stats = cursor.fetchall()
+                cursor.execute("SELECT COUNT(*) AS total FROM archives")
+                total_archives = cursor.fetchone()["total"]
 
-                # Récupérer la taille de la db
-                db_stats = self.db_manager.get_database_size()
+                cursor.execute("SELECT COUNT(*) AS total, COALESCE(SUM(montant), 0) AS montant FROM demandes WHERE prioritaire = TRUE")
+                prio_row = cursor.fetchone()
+                total_prio = prio_row["total"]
+                montant_total = float(prio_row["montant"])
 
-                # Vérifier l'usage du stockage
-                storage_usage = check_storage_usage()
+                cursor.execute("SELECT statut, COUNT(*) AS count FROM demandes GROUP BY statut ORDER BY count DESC")
+                statuts_rows = cursor.fetchall()
 
-                message = (
-                    "📈 <b>Statistiques du bot</b>\n\n"
-                    f"👥 <b>Utilisateurs:</b> {stats['total_users']}\n"
-                    f"📝 <b>Demandes actives:</b> {stats['total_demandes']}\n"
-                    f"📦 <b>Archives:</b> {stats['total_archives']}\n"
-                    f"💎 <b>Prioritaires:</b> {stats['demandes_prioritaires']}\n"
-                    f"💰 <b>Montant total:</b> {stats['montant_total']:.2f}€\n\n"
-                    "📊 <b>Répartition par statut:</b>\n"
-                )
+            db_stats = self.db_manager.get_database_size()
+            storage_usage = check_storage_usage()
 
-                for statut_stat in statuts_stats:
-                    message += f"• {statut_stat['statut']}: {statut_stat['count']}\n"
+            lines = [
+                "📈 <b>Statistiques Générales du Bot</b>\n",
+                f"👥 <b>Utilisateurs enregistrés :</b> {total_users}",
+                f"📝 <b>Demandes en base :</b> {total_demandes}",
+                f"📦 <b>Demandes archivées :</b> {total_archives}",
+                f"💎 <b>Demandes prioritaires :</b> {total_prio}",
+                f"💰 <b>Montant total cumulé :</b> {montant_total:.2f}€\n",
+                "📊 <b>Répartition des statuts :</b>"
+            ]
 
-                message += (
-                    f"\n💾 <b>Stockage:</b> {storage_usage:.1f} MB / 512 MB\n"
-                    f"📊 <b>Usage:</b> {(storage_usage/512)*100:.1f}%"
-                )
+            for s in statuts_rows:
+                lines.append(f"• {s['statut']} : {s['count']}")
 
-                message += (
-                    f"\n💾 <b>Base de données :</b> {db_stats['total_size_mb']} MB"
-                )
-                tables_info = db_stats.get('tables', [])
-                if tables_info and isinstance(tables_info, list):
-                    message += "\n📋 Détail par table :\n"
-                    for table in tables_info:
-                        if isinstance(table, dict) and 'TABLE_NAME' in table:
-                            table_name = table.get('TABLE_NAME', 'Unknown')
-                            size_mb = float(table.get('size_mb', 0))
-                            row_count = table.get('row_count', 0)
-                            message += f" • {table_name} : {size_mb} MB ({row_count} lignes)\n"
-                else:
-                    message += "\n📋 Aucune information de table disponible\n"
+            lines.append(f"\n💾 <b>Disque local :</b> {storage_usage:.1f} Mo / 512 Mo ({(storage_usage/512)*100:.1f}%)")
+            lines.append(f"🗄️ <b>Taille MySQL :</b> {db_stats['total_size_mb']} Mo")
 
-                # (Optionnel) Alerte si proche de la limite PythonAnywhere
-                if db_stats['total_size_mb'] > 400:
-                    message += f"\n⚠️ <b>Attention :</b> Proche de la limite 512 MB"
-                elif db_stats['total_size_mb'] > 300:
-                    message += f"\n🟡 <b>Info :</b> {(db_stats['total_size_mb']/512*100):.1f}% de la limite"
+            tables_info = db_stats.get("tables", [])
+            if tables_info:
+                lines.append("\n📋 <b>Détails des tables :</b>")
+                for tbl in tables_info:
+                    # Lecture robuste des clés peu importe la casse
+                    t_name = tbl.get("table_name") or tbl.get("TABLE_NAME") or "inconnue"
+                    s_mb = tbl.get("size_mb", 0)
+                    r_cnt = tbl.get("row_count", 0)
+                    lines.append(f"• <code>{t_name}</code> : {s_mb} Mo ({r_cnt} lignes)")
 
-                keyboard = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour Paramètres", callback_data="parametres")
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Menu Gestion Bot", callback_data="gerer_bot")
+            ]])
+
+            await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
+
+        except Exception as exc:
+            logger.error("Erreur calcul statistiques: %s", exc, exc_info=True)
+            await query.edit_message_text(
+                "❌ Impossible de charger les statistiques.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
                 ]])
-
-                await update.callback_query.edit_message_text(
-                    message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
-                )
-
-        except Exception as e:
-            logger.error(f"Erreur statistiques: {e}")
-            await update.callback_query.edit_message_text("❌ Erreur lors de la récupération des statistiques")
-
+            )

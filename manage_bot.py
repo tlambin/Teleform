@@ -1,108 +1,151 @@
 #!/usr/bin/env python3
-import sys
-import subprocess
-import psutil
-import time
-import os
+"""Script d'administration et de supervision du processus Telegram Bot."""
 
-def get_bot_status():
-    """Récupère le statut du bot"""
+import logging
+import os
+import signal
+import subprocess
+import sys
+import time
+from typing import Any, Dict
+import psutil
+
+# Détection dynamique de l'emplacement du projet
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
+LOG_FILE = "/tmp/bot_output.log"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("ManageBot")
+
+
+def get_bot_status() -> Dict[str, Any]:
+    """Détecte si le processus du bot est en cours d'exécution."""
     try:
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
-            cmdline = ' '.join(proc.info['cmdline'] or [])
-            if ('main.py' in cmdline and
-                'telegram_bot' in cmdline and
-                'python' in proc.info['name']):
-                runtime = time.time() - proc.info['create_time']
-                return {
-                    'running': True,
-                    'pid': proc.info['pid'],
-                    'runtime': runtime
-                }
-        return {'running': False}
-    except Exception as e:
-        return {'error': str(e)}
+        current_pid = os.getpid()
+        for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+            try:
+                if proc.info["pid"] == current_pid:
+                    continue
+
+                cmdline_list = proc.info.get("cmdline") or []
+                cmdline = " ".join(cmdline_list)
+
+                # Identification précise du script main.py du projet
+                if MAIN_SCRIPT in cmdline or ("main.py" in cmdline and BASE_DIR in cmdline):
+                    runtime = time.time() - proc.info["create_time"]
+                    return {
+                        "running": True,
+                        "pid": proc.info["pid"],
+                        "runtime": runtime,
+                    }
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+        return {"running": False}
+    except Exception as exc:
+        return {"running": False, "error": str(exc)}
+
 
 def start_bot():
-    """Démarre le bot directement avec Python"""
+    """Démarre le bot en arrière-plan avec redirection des flux."""
+    status = get_bot_status()
+    if status.get("running"):
+        print(f"⚠️ Le bot tourne déjà avec le PID {status['pid']}.")
+        return
+
+    if not os.path.exists(MAIN_SCRIPT):
+        print(f"❌ Fichier d'entrée introuvable : {MAIN_SCRIPT}")
+        return
+
     try:
-        # Vérifier si le bot est déjà en cours
-        if get_bot_status()['running']:
-            print("⚠️ Bot déjà en cours d'exécution")
-            return
+        with open(LOG_FILE, "a", encoding="utf-8") as out_file:
+            process = subprocess.Popen(
+                [sys.executable, MAIN_SCRIPT],
+                stdout=out_file,
+                stderr=subprocess.STDOUT,
+                cwd=BASE_DIR,
+                preexec_fn=os.setsid,  # Isole le processus dans sa propre session
+            )
 
-        # Démarrer le bot directement
-        bot_script = '/home/paraworld/telegram_bot/main.py'
+        print(f"🚀 Bot démarré avec le PID : {process.pid}")
+        print(f"📝 Logs dirigés vers : {LOG_FILE}")
 
-        # Utiliser Popen pour démarrer en arrière-plan
-        process = subprocess.Popen([
-            'nohup',
-            'python3.13',
-            bot_script
-        ],
-        stdout=open('/tmp/bot_output.log', 'w'),
-        stderr=subprocess.STDOUT,
-        cwd='/home/paraworld/telegram_bot',
-        preexec_fn=os.setsid  # Créer un nouveau groupe de processus
-        )
-
-        print(f"✅ Bot démarré avec PID: {process.pid}")
-
-        # Attendre un peu pour vérifier que le démarrage s'est bien passé
         time.sleep(3)
-
-        # Vérifier le statut
-        status = get_bot_status()
-        if status['running']:
-            print("🎯 Bot opérationnel")
+        verify = get_bot_status()
+        if verify.get("running"):
+            print("✅ Bot actif et opérationnel.")
         else:
-            print("⚠️ Le bot pourrait avoir des problèmes - Vérifiez les logs")
+            print("⚠️ Échec potentiel lors du démarrage. Consultez les logs :")
+            print(f"   tail -n 20 {LOG_FILE}")
 
-    except Exception as e:
-        print(f"❌ Erreur démarrage: {e}")
+    except Exception as exc:
+        print(f"❌ Erreur lors du lancement : {exc}")
+
 
 def stop_bot():
-    """Arrête le bot"""
+    """Arrête proprement le processus du bot par SIGTERM puis SIGKILL si nécessaire."""
+    status = get_bot_status()
+    if not status.get("running"):
+        print("⚠️ Aucun processus du bot n'est actuellement en cours.")
+        return
+
+    pid = status["pid"]
+    print(f"🛑 Arrêt du bot (PID {pid})...")
+
     try:
-        result = subprocess.run(['pkill', '-f', 'main.py'], capture_output=True)
-        if result.returncode == 0:
-            print("✅ Bot arrêté")
-        else:
-            print("⚠️ Aucun bot en cours ou déjà arrêté")
-    except Exception as e:
-        print(f"❌ Erreur arrêt: {e}")
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(10):
+            time.sleep(0.5)
+            if not psutil.pid_exists(pid):
+                print("✅ Bot arrêté avec succès.")
+                return
+
+        # Forçage si le processus ne répond pas au signal d'arrêt gracieux
+        print("⚠️ Le processus ne répond pas, envoi de SIGKILL...")
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(1)
+        print("✅ Processus arrêté de force.")
+
+    except ProcessLookupError:
+        print("✅ Le bot était déjà arrêté.")
+    except Exception as exc:
+        print(f"❌ Impossible d'arrêter le processus {pid} : {exc}")
+
 
 def restart_bot():
-    """Redémarre le bot"""
-    print("🔄 Redémarrage du bot...")
+    """Effectue un arrêt complet puis un démarrage."""
+    print("🔄 Redémarrage du bot en cours...")
     stop_bot()
-    time.sleep(5)
+    time.sleep(2)
     start_bot()
 
+
 def show_status():
-    """Affiche le statut détaillé"""
+    """Affiche un récapitulatif textuel de l'état du bot."""
     status = get_bot_status()
 
-    if status.get('running'):
-        runtime = status['runtime']
+    if status.get("running"):
+        runtime = status["runtime"]
         hours = int(runtime // 3600)
         minutes = int((runtime % 3600) // 60)
+        seconds = int(runtime % 60)
 
-        print(f"✅ Bot actif")
-        print(f"📊 PID: {status['pid']}")
-        print(f"⏰ Runtime: {hours}h {minutes}m")
-    elif status.get('error'):
-        print(f"❌ Erreur: {status['error']}")
+        print("🟢 Statut : EN COURS D'EXÉCUTION")
+        print(f"📊 PID    : {status['pid']}")
+        print(f"⏰ Uptime : {hours}h {minutes}m {seconds}s")
+    elif status.get("error"):
+        print(f"❌ Erreur lors de l'inspection des processus : {status['error']}")
     else:
-        print("❌ Bot non actif")
+        print("🔴 Statut : ARRÊTÉ")
+
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python3.13 manage_bot.py [start|stop|restart|status]")
+        print(f"Usage: {sys.executable} manage_bot.py [start|stop|restart|status]")
         return
 
     command = sys.argv[1].lower()
-
     if command == "start":
         start_bot()
     elif command == "stop":
@@ -112,7 +155,9 @@ def main():
     elif command == "status":
         show_status()
     else:
-        print("Commande invalide. Utilisez: start, stop, restart, ou status")
+        print(f"❌ Commande '{command}' non reconnue.")
+        print("Commandes valides : start, stop, restart, status")
+
 
 if __name__ == "__main__":
     main()

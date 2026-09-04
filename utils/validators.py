@@ -1,463 +1,286 @@
+"""Module centralisé de validation des entrées et de gestion des formats temporels."""
+
+import logging
+from datetime import datetime
 import re
 from typing import Optional, Tuple
 import pytz
 
+logger = logging.getLogger(__name__)
+
+
 class ValidationError(Exception):
-    """Exception personnalisée pour les erreurs de validation"""
+    """Exception personnalisée levée lors d'un échec de validation métier."""
     pass
 
-def convert_utc_to_paris(utc_datetime):
-    """Convertit datetime UTC vers timezone Paris"""
+
+def convert_utc_to_paris(utc_datetime) -> datetime:
+    """Convertit un datetime (ou chaîne ISO/SQL) UTC vers le fuseau horaire Europe/Paris."""
+    if utc_datetime is None:
+        return datetime.now(pytz.timezone("Europe/Paris"))
+
+    if isinstance(utc_datetime, str):
+        try:
+            utc_datetime = datetime.fromisoformat(utc_datetime)
+        except ValueError:
+            try:
+                utc_datetime = datetime.strptime(utc_datetime[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return datetime.now(pytz.timezone("Europe/Paris"))
+
+    paris_tz = pytz.timezone("Europe/Paris")
     if utc_datetime.tzinfo is None:
-        # Si le datetime est naive (sans timezone), on assume qu'il est en UTC
         utc_datetime = pytz.utc.localize(utc_datetime)
 
-    paris_tz = pytz.timezone('Europe/Paris')
     return utc_datetime.astimezone(paris_tz)
 
+
 class Validators:
-    # ===== VALIDATIONS EXISTANTES AMÉLIORÉES =====
+    """Bibliothèque statique de validation et d'assainissement des données."""
 
     @staticmethod
     def validate_age(age_str: str) -> int:
-        """Valide l'âge avec contraintes renforcées"""
+        """Valide l'âge (doit être un entier entre 18 et 40 ans inclus)."""
         try:
             age = int(age_str.strip())
-            if not 18 <= age <= 40:
-                raise ValidationError("L'âge doit être entre 18 et 40 ans")
+            if not (18 <= age <= 40):
+                raise ValidationError("L'âge doit être compris entre 18 et 40 ans.")
             return age
         except ValueError:
-            raise ValidationError("Veuillez entrer un âge valide (nombre entier)")
+            raise ValidationError("Veuillez entrer un âge valide sous forme de nombre entier.")
 
     @staticmethod
     def validate_amount(amount_str: str) -> float:
-        """Valide le montant pour les demandes prioritaires"""
+        """Valide le montant des demandes prioritaires (entre 5€ et 10 000€)."""
         try:
-            # Remplacer la virgule par un point
-            amount_str = amount_str.replace(',', '.').strip()
+            amount_str = amount_str.replace(",", ".").strip()
             amount = float(amount_str)
 
-            if amount < 5:
-                raise ValidationError("Le montant minimum est de 5€")
-            if amount > 10000:
-                raise ValidationError("Le montant maximum est de 10 000€")
+            if amount < 5.0:
+                raise ValidationError("Le montant minimum pour une demande prioritaire est de 5€.")
+            if amount > 10000.0:
+                raise ValidationError("Le montant maximum autorisé est de 10 000€.")
 
-            # Vérifier qu'il n'y a pas plus de 2 décimales
-            if round(amount, 2) != amount:
-                amount = round(amount, 2)
-
-            return amount
+            return round(amount, 2)
         except ValueError:
-            raise ValidationError("Veuillez entrer un montant valide (ex: 5.50)")
+            raise ValidationError("Format de montant invalide (ex: 15 ou 25.50).")
 
     @staticmethod
     def validate_instagram(username: str) -> Optional[str]:
-        """Valide le nom d'utilisateur Instagram"""
-        if username.lower() in ['/skip', '/', 'skip', 'passer']:
+        """Valide et normalise un nom d'utilisateur Instagram."""
+        if Validators.is_skip_command(username):
             return None
 
-        # Nettoyer l'URL Instagram si fournie
-        if 'instagram.com/' in username:
-            username = username.split('instagram.com/')[-1].split('/')[0]
+        clean_user = username.strip()
+        if "instagram.com/" in clean_user:
+            clean_user = clean_user.split("instagram.com/")[-1].split("/")[0].split("?")[0]
 
-        if username.startswith('@'):
-            username = username[1:]
+        if clean_user.startswith("@"):
+            clean_user = clean_user[1:]
 
-        # CONVERSION AUTOMATIQUE EN MINUSCULES
-        username = username.lower()
+        clean_user = clean_user.lower()
 
-        # Validation regex Instagram améliorée
-        if not re.match(r'^[a-zA-Z0-9._]{1,30}$', username):
-            raise ValidationError("Format Instagram invalide. Utilisez uniquement lettres, chiffres, points et underscores")
+        if not re.match(r"^[a-zA-Z0-9._]{1,30}$", clean_user):
+            raise ValidationError("Format Instagram invalide (1 à 30 lettres, chiffres, points ou underscores).")
 
-        # Vérifier qu'il n'y a pas que des points ou underscores
-        if username.replace('.', '').replace('_', '') == '':
-            raise ValidationError("Le nom d'utilisateur Instagram ne peut pas contenir uniquement des points et underscores")
+        if clean_user.replace(".", "").replace("_", "") == "":
+            raise ValidationError("Le nom Instagram ne peut pas comporter uniquement des caractères de séparation.")
 
-        if '..' in username:
-            raise ValidationError("Le nom d'utilisateur Instagram ne peut pas contenir deux points consécutifs")
+        if ".." in clean_user or clean_user.startswith(".") or clean_user.endswith("."):
+            raise ValidationError("Le nom Instagram ne peut pas contenir de points consécutifs ou en bordure.")
 
-        if username.startswith('.') or username.endswith('.'):
-            raise ValidationError("Le nom d'utilisateur Instagram ne peut pas commencer ou finir par un point")
-
-        return username
+        return clean_user
 
     @staticmethod
     def validate_snapchat(username: str) -> Optional[str]:
-        """Valide le nom d'utilisateur Snapchat"""
-        if username.lower() in ['/skip', '/', 'skip', 'passer']:
+        """Valide et normalise un nom d'utilisateur Snapchat."""
+        if Validators.is_skip_command(username):
             return None
 
-        # CONVERSION AUTOMATIQUE EN MINUSCULES
-        username = username.lower()
+        clean_user = username.strip().lower()
+        if clean_user.startswith("@"):
+            clean_user = clean_user[1:]
 
-        # Validation Snapchat (3-15 caractères, lettres, chiffres, tirets, underscores)
-        if not re.match(r'^[a-zA-Z0-9_-]{3,15}$', username):
-            raise ValidationError("Format Snapchat invalide. 3-15 caractères: lettres, chiffres, tirets, underscores")
+        if not re.match(r"^[a-zA-Z0-9_.-]{3,15}$", clean_user):
+            raise ValidationError("Format Snapchat invalide (3 à 15 caractères : lettres, chiffres, tirets, points).")
 
-        if username.startswith('-') or username.endswith('-'):
-            raise ValidationError("Le nom d'utilisateur Snapchat ne peut pas commencer ou finir par un tiret")
+        if clean_user.startswith("-") or clean_user.endswith("-"):
+            raise ValidationError("Le nom Snapchat ne peut pas commencer ou finir par un tiret.")
 
-        return username
-
-    @staticmethod
-    def validate_text_field(text: str, field_name: str, max_length: int = 100, min_length: int = 0, required: bool = True) -> str:
-        """Valide un champ texte générique avec options étendues"""
-        if not text or not text.strip():
-            if required:
-                raise ValidationError(f"Le champ {field_name} ne peut pas être vide")
-            return text
-
-        text = text.strip()
-
-        if len(text) < min_length:
-            raise ValidationError(f"Le champ {field_name} doit contenir au moins {min_length} caractères")
-
-        if len(text) > max_length:
-            raise ValidationError(f"Le champ {field_name} ne peut pas dépasser {max_length} caractères")
-
-        return text
-
-    @staticmethod
-    def sanitize_filename(filename: str) -> str:
-        """Nettoie un nom de fichier pour la sécurité"""
-        # Supprimer les caractères dangereux
-        filename = re.sub(r'[^\w\s-.]', '', filename)
-        # Limiter la longueur
-        if len(filename) > 100:
-            name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, '')
-            filename = name[:95] + ('.' + ext if ext else '')
-        return filename
-
-    @staticmethod
-    def validate_alias(alias: str) -> Tuple[bool, str]:
-        """Valide le format d'un alias administrateur"""
-        # Vérifier que l'alias n'est pas vide
-        if not alias or not alias.strip():
-            return False, "L'alias ne peut pas être vide"
-
-        alias = alias.strip()
-
-        # Longueur entre 3 et 20 caractères
-        if len(alias) < 3:
-            return False, "L'alias doit contenir au moins 3 caractères"
-
-        if len(alias) > 20:
-            return False, "L'alias ne peut pas dépasser 20 caractères"
-
-        # Seulement lettres, chiffres et underscore
-        if not re.match(r'^[a-zA-Z0-9_]+$', alias):
-            return False, "L'alias ne peut contenir que des lettres, chiffres et underscores"
-
-        # Ne doit pas commencer par un chiffre
-        if alias[0].isdigit():
-            return False, "L'alias ne peut pas commencer par un chiffre"
-
-        return True, ""
-
-    @staticmethod
-    def validate_alias_uniqueness(db_manager, alias: str, exclude_user_id: int = None) -> tuple[bool, str]:
-        """Vérifie l'unicité d'un alias dans toutes les tables"""
-        try:
-            with db_manager.get_cursor() as cursor:
-                # Vérifier dans la table admins
-                if exclude_user_id:
-                    cursor.execute("SELECT user_id FROM admins WHERE alias = %s AND user_id != %s",
-                                  (alias, exclude_user_id))
-                else:
-                    cursor.execute("SELECT user_id FROM admins WHERE alias = %s", (alias,))
-
-                if cursor.fetchone():
-                    return False, "Cet alias est déjà utilisé par un administrateur"
-
-                # Vérifier dans la table owner_config
-                if exclude_user_id:
-                    cursor.execute("SELECT owner_id FROM owner_config WHERE alias = %s AND owner_id != %s",
-                                  (alias, exclude_user_id))
-                else:
-                    cursor.execute("SELECT owner_id FROM owner_config WHERE alias = %s", (alias,))
-
-                if cursor.fetchone():
-                    return False, "Cet alias est déjà utilisé par le propriétaire"
-
-                return True, ""
-
-        except Exception as e:
-            return False, f"Erreur lors de la vérification : {str(e)}"
-
-    @staticmethod
-    def validate_alias_complete(db_manager, alias: str, exclude_user_id: int = None) -> tuple[bool, str]:
-        """Validation complète d'un alias (format + unicité)"""
-        # 1. Validation du format
-        is_format_valid, format_error = Validators.validate_alias(alias)
-        if not is_format_valid:
-            return False, format_error
-
-        # 2. Validation de l'unicité
-        is_unique, uniqueness_error = Validators.validate_alias_uniqueness(db_manager, alias, exclude_user_id)
-        if not is_unique:
-            return False, uniqueness_error
-
-        return True, ""
-
-    # ===== NOUVELLES VALIDATIONS AJOUTÉES =====
+        return clean_user
 
     @staticmethod
     def validate_prenom(prenom: str) -> str:
-        """Valide un prénom"""
+        """Valide le prénom obligatoire."""
         if not prenom or not prenom.strip():
-            raise ValidationError("Le prénom est obligatoire")
+            raise ValidationError("Le prénom est obligatoire.")
 
-        prenom = prenom.strip()
+        p = prenom.strip()
+        if len(p) < 2:
+            raise ValidationError("Le prénom doit contenir au moins 2 caractères.")
+        if len(p) > 50:
+            raise ValidationError("Le prénom ne peut pas excéder 50 caractères.")
 
-        if len(prenom) < 2:
-            raise ValidationError("Le prénom doit contenir au moins 2 caractères")
+        if not re.match(r"^[a-zA-ZÀ-ÿ\s'\-]+$", p):
+            raise ValidationError("Le prénom ne peut contenir que des lettres, tirets ou apostrophes.")
 
-        if len(prenom) > 50:
-            raise ValidationError("Le prénom ne peut pas dépasser 50 caractères")
-
-        # Autoriser lettres, espaces, apostrophes, tirets et caractères accentués
-        if not re.match(r"^[a-zA-ZÀ-ÿ\s'\-]+$", prenom):
-            raise ValidationError("Le prénom ne peut contenir que des lettres, espaces, apostrophes et tirets")
-
-        return prenom
+        return p
 
     @staticmethod
     def validate_nom(nom: str) -> Optional[str]:
-        """Valide un nom de famille (optionnel)"""
+        """Valide le nom de famille facultatif."""
         if not nom or not nom.strip():
-            return None  # Nom optionnel
+            return None
 
-        nom = nom.strip()
+        n = nom.strip()
+        if len(n) > 50:
+            raise ValidationError("Le nom ne peut pas dépasser 50 caractères.")
 
-        if len(nom) > 50:
-            raise ValidationError("Le nom ne peut pas dépasser 50 caractères")
+        if not re.match(r"^[a-zA-ZÀ-ÿ\s'\-]+$", n):
+            raise ValidationError("Le nom ne peut contenir que des lettres, tirets ou apostrophes.")
 
-        if not re.match(r"^[a-zA-ZÀ-ÿ\s'\-]+$", nom):
-            raise ValidationError("Le nom ne peut contenir que des lettres, espaces, apostrophes et tirets")
-
-        return nom
+        return n
 
     @staticmethod
     def validate_localisation(localisation: str) -> str:
-        """Valide une localisation/ville"""
+        """Valide la ville ou région."""
         if not localisation or not localisation.strip():
-            raise ValidationError("La localisation est obligatoire")
+            raise ValidationError("La localisation est obligatoire.")
 
-        localisation = localisation.strip()
+        loc = localisation.strip()
+        if len(loc) < 2:
+            raise ValidationError("La localisation doit contenir au moins 2 caractères.")
+        if len(loc) > 100:
+            raise ValidationError("La localisation ne peut pas dépasser 100 caractères.")
 
-        if len(localisation) < 2:
-            raise ValidationError("La localisation doit contenir au moins 2 caractères")
+        if not re.match(r"^[a-zA-ZÀ-ÿ0-9\s'\-.,()]+$", loc):
+            raise ValidationError("Caractères spéciaux non autorisés dans la localisation.")
 
-        if len(localisation) > 100:
-            raise ValidationError("La localisation ne peut pas dépasser 100 caractères")
-
-        # Autoriser lettres, chiffres, espaces, tirets, apostrophes, points, parenthèses
-        if not re.match(r"^[a-zA-ZÀ-ÿ0-9\s'\-.,()]+$", localisation):
-            raise ValidationError("Localisation invalide - caractères non autorisés")
-
-        return localisation
+        return loc
 
     @staticmethod
     def validate_details(details: str) -> Optional[str]:
-        """Valide les détails d'une demande"""
-        if not details or not details.strip():
-            return None  # Détails optionnels
+        """Valide les détails ou remarques complémentaires."""
+        if not details or not details.strip() or Validators.is_skip_command(details):
+            return None
 
-        details = details.strip()
+        d = details.strip()
+        if len(d) > 1000:
+            raise ValidationError("Le texte de remarques ne peut pas dépasser 1000 caractères.")
 
-        if len(details) > 1000:
-            raise ValidationError("Les détails ne peuvent pas dépasser 1000 caractères")
+        if not any(c.isalnum() for c in d):
+            raise ValidationError("Les remarques doivent comporter au moins un mot compréhensible.")
 
-        # Vérifier qu'il n'y a pas que des caractères spéciaux
-        if not any(c.isalnum() for c in details):
-            raise ValidationError("Les détails doivent contenir au moins un caractère alphanumérique")
-
-        return details
+        return d
 
     @staticmethod
-    def validate_user_id(user_id: str) -> int:
-        """Valide un ID utilisateur Telegram"""
+    def validate_alias(alias: str) -> Tuple[bool, str]:
+        """Valide la structure syntaxique d'un pseudonyme admin."""
+        if not alias or not alias.strip():
+            return False, "L'alias ne peut pas être vide."
+
+        a = alias.strip()
+        if len(a) < 2:
+            return False, "L'alias doit comporter au moins 2 caractères."
+        if len(a) > 30:
+            return False, "L'alias ne peut pas excéder 30 caractères."
+
+        test_str = a.replace(" ", "").replace("-", "").replace("_", "")
+        if not test_str.isalnum():
+            return False, "Caractères autorisés : lettres, chiffres, espaces, tirets et underscores."
+
+        return True, ""
+
+    @staticmethod
+    def validate_alias_uniqueness(db_manager, alias: str, exclude_user_id: int = None) -> Tuple[bool, str]:
+        """Contrôle l'unicité de l'alias contre la table admins et la table config (owner)."""
         try:
-            uid = int(user_id)
-            # Les IDs Telegram sont des entiers positifs entre 1 et 2^63-1
-            if uid <= 0:
-                raise ValidationError("L'ID utilisateur doit être positif")
-            if uid > 9223372036854775807:  # 2^63-1
-                raise ValidationError("ID utilisateur invalide (trop grand)")
-            return uid
-        except ValueError:
-            raise ValidationError("L'ID utilisateur doit être un nombre")
+            # Vérification contre l'alias propriétaire en table config
+            owner_alias = db_manager.get_config_value("owner_alias", "Propriétaire")
+            if owner_alias and owner_alias.lower() == alias.strip().lower():
+                owner_id = db_manager.get_owner_id()
+                if not (exclude_user_id and exclude_user_id == owner_id):
+                    return False, "Cet alias est réservé au compte propriétaire."
 
-    @staticmethod
-    def validate_file_id(file_id: str) -> str:
-        """Valide un file_id Telegram"""
-        if not file_id or not file_id.strip():
-            raise ValidationError("Le file_id ne peut pas être vide")
+            # Vérification dans la table admins
+            with db_manager.get_cursor() as cursor:
+                if exclude_user_id:
+                    cursor.execute(
+                        "SELECT user_id FROM admins WHERE LOWER(alias) = LOWER(%s) AND user_id != %s",
+                        (alias.strip(), exclude_user_id),
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT user_id FROM admins WHERE LOWER(alias) = LOWER(%s)",
+                        (alias.strip(),),
+                    )
 
-        file_id = file_id.strip()
+                if cursor.fetchone():
+                    return False, "Cet alias est déjà utilisé par un autre administrateur."
 
-        # Les file_id Telegram ont généralement entre 20 et 200 caractères
-        if len(file_id) < 10:
-            raise ValidationError("File_id trop court (probablement invalide)")
-
-        if len(file_id) > 255:
-            raise ValidationError("File_id trop long")
-
-        # Les file_id peuvent contenir des caractères alphanumériques et quelques symboles
-        if not re.match(r'^[a-zA-Z0-9_-]+$', file_id):
-            raise ValidationError("File_id contient des caractères invalides")
-
-        return file_id
-
-    @staticmethod
-    def validate_statut_demande(statut: str) -> str:
-        """Valide un statut de demande"""
-        statuts_valides = [
-            '📨 Reçue',
-            'En attente',
-            'En cours',
-            'Réussie',
-            'Difficile',
-            'Abandonnée'
-        ]
-
-        if statut not in statuts_valides:
-            raise ValidationError(f"Statut invalide. Statuts autorisés : {', '.join(statuts_valides)}")
-
-        return statut
-
-    @staticmethod
-    def validate_priority_choice(choice: str) -> bool:
-        """Valide un choix de priorité"""
-        choix_valides = ['priorite_oui', 'priorite_non']
-
-        if choice not in choix_valides:
-            raise ValidationError("Choix de priorité invalide")
-
-        return choice == 'priorite_oui'
-
-    @staticmethod
-    def validate_command_permissions(config, user_id: int, required_level: str) -> bool:
-        """Valide les permissions d'un utilisateur pour une commande"""
-        if required_level == "owner":
-            if not config.is_owner(user_id):
-                raise ValidationError("Seul le propriétaire peut effectuer cette action")
-        elif required_level == "admin":
-            if not config.is_admin(user_id):
-                raise ValidationError("Accès non autorisé - Permission administrateur requise")
-        elif required_level == "user":
-            # Validation basique utilisateur
-            pass
-        else:
-            raise ValidationError("Niveau de permission invalide")
-
-        return True
-
-    # ===== MÉTHODES D'AIDE ET DE RÈGLES =====
-
-    @staticmethod
-    def get_alias_rules() -> str:
-        """Retourne les règles de validation d'alias pour l'affichage"""
-        return (
-            "**Règles d'alias :**\n"
-            "• 3 à 20 caractères\n"
-            "• Lettres, chiffres et underscore uniquement\n"
-            "• Ne peut pas commencer par un chiffre\n"
-            "• Pas d'espaces"
-        )
-
-    @staticmethod
-    def get_validation_rules() -> dict:
-        """Retourne toutes les règles de validation pour l'aide utilisateur"""
-        return {
-            'alias': (
-                "**Règles d'alias :**\n"
-                "• 3 à 20 caractères\n"
-                "• Lettres, chiffres et underscore uniquement\n"
-                "• Ne peut pas commencer par un chiffre\n"
-                "• Pas d'espaces"
-            ),
-            'prenom': (
-                "**Règles prénom :**\n"
-                "• Obligatoire\n"
-                "• 2 à 50 caractères\n"
-                "• Lettres, espaces, apostrophes et tirets uniquement"
-            ),
-            'age': (
-                "**Règles âge :**\n"
-                "• Entre 18 et 40 ans\n"
-                "• Nombre entier uniquement"
-            ),
-            'montant': (
-                "**Règles montant :**\n"
-                "• Entre 5€ et 10 000€\n"
-                "• Maximum 2 décimales\n"
-                "• Format : 123.45 ou 123,45"
-            ),
-            'instagram': (
-                "**Règles Instagram :**\n"
-                "• Optionnel (tapez /skip pour passer)\n"
-                "• 1 à 30 caractères\n"
-                "• Lettres, chiffres, points et underscores"
-            ),
-            'snapchat': (
-                "**Règles Snapchat :**\n"
-                "• Optionnel (tapez /skip pour passer)\n"
-                "• 3 à 15 caractères\n"
-                "• Lettres, chiffres, tirets et underscores"
-            ),
-            'localisation': (
-                "**Règles localisation :**\n"
-                "• Obligatoire\n"
-                "• 2 à 100 caractères\n"
-                "• Lettres, chiffres, espaces et ponctuation de base"
-            )
-        }
-
-    @staticmethod
-    def get_validation_help(field: str = None) -> str:
-        """Retourne l'aide de validation pour un champ spécifique ou tous"""
-        rules = Validators.get_validation_rules()
-
-        if field and field in rules:
-            return rules[field]
-
-        # Retourner l'aide complète
-        help_text = "📋 **Guide de Validation Complet**\n\n"
-        for field_name, rule in rules.items():
-            help_text += f"{rule}\n\n"
-
-        return help_text
+            return True, ""
+        except Exception as exc:
+            logger.error("Erreur contrôle unicité alias: %s", exc)
+            return False, "Erreur technique lors de la vérification de l'alias."
 
     @staticmethod
     def is_skip_command(text: str) -> bool:
-        """Vérifie si l'input est une commande de skip"""
+        """Détecte si la saisie correspond à une intention de passer l'étape."""
         if not text:
             return False
-        return text.lower().strip() in ['/skip', '/', 'skip', 'passer', 'next']
+        return text.lower().strip() in ["/skip", "/", "skip", "passer", "next"]
 
     @staticmethod
     def clean_input(text: str) -> str:
-        """Nettoie un input utilisateur de base"""
+        """Supprime les espaces superflus et les caractères de contrôle invisibles."""
         if not text:
             return ""
-
-        # Supprimer les espaces en début/fin
-        text = text.strip()
-
-        # Supprimer les caractères de contrôle
-        text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\t')
-
-        return text
+        t = text.strip()
+        return "".join(c for c in t if ord(c) >= 32 or c in "\n\t")
 
     @staticmethod
-    def validate_batch(*validations) -> bool:
-        """Exécute plusieurs validations en batch et lève la première erreur rencontrée"""
-        for validation_func, value, *args in validations:
-            try:
-                validation_func(value, *args)
-            except ValidationError:
-                raise  # Re-lever la première erreur rencontrée
-
-        return True
+    def get_validation_help(field: str = None) -> str:
+        """Renvoie le guide de saisie formaté en HTML pour les messages Telegram."""
+        rules = {
+            "prenom": (
+                "<b>Règles pour le prénom :</b>\n"
+                "• Obligatoire (2 à 50 caractères)\n"
+                "• Lettres, espaces, tirets et apostrophes"
+            ),
+            "nom": (
+                "<b>Règles pour le nom :</b>\n"
+                "• Optionnel (max 50 caractères)\n"
+                "• Lettres, espaces, tirets et apostrophes"
+            ),
+            "age": (
+                "<b>Règles pour l'âge :</b>\n"
+                "• Doit être un nombre entier entre 18 et 40 ans"
+            ),
+            "localisation": (
+                "<b>Règles pour la localisation :</b>\n"
+                "• Ville, département ou région (2 à 100 caractères)"
+            ),
+            "montant": (
+                "<b>Règles pour le montant :</b>\n"
+                "• Minimum 5€, maximum 10 000€\n"
+                "• Format numérique (ex : 20 ou 15.50)"
+            ),
+            "instagram": (
+                "<b>Règles Instagram :</b>\n"
+                "• 1 à 30 caractères sans espaces (ex : @pseudo)"
+            ),
+            "snapchat": (
+                "<b>Règles Snapchat :</b>\n"
+                "• 3 à 15 caractères sans espaces"
+            ),
+            "details": (
+                "<b>Règles pour les remarques :</b>\n"
+                "• Maximum 1000 caractères"
+            ),
+            "alias": (
+                "<b>Règles d'alias :</b>\n"
+                "• 2 à 30 caractères\n"
+                "• Lettres, chiffres, espaces et tirets"
+            ),
+        }
+        return rules.get(field, "Veuillez respecter le format attendu.")

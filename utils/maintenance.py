@@ -1,24 +1,30 @@
-import os
+"""Module de maintenance quotidienne, nettoyage des fichiers temporaires et archivage SQL."""
+
 import logging
+import os
 import subprocess
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
-def cleanup_temp_files():
-    """Nettoie les fichiers temporaires"""
-    try:
-        # Nettoyer les logs anciens (garder seulement les 1000 dernières lignes)
-        log_files = ['/tmp/bot.log', '/tmp/bot_console.log', '/tmp/maintenance_task.log']
-        for log_file in log_files:
-            if os.path.exists(log_file):
-                # Garder seulement les 1000 dernières lignes
-                os.system(f"tail -n 1000 {log_file} > {log_file}.tmp && mv {log_file}.tmp {log_file}")
 
-        # Nettoyer les fichiers Python compilés
+def cleanup_temp_files():
+    """Purge les fichiers temporaires, tronque les logs et nettoie le cache bytecode."""
+    try:
+        # Tronquage des logs volumineux (conservation des 1000 dernières lignes)
+        log_files = ["/tmp/bot.log", "/tmp/bot_console.log", "/tmp/maintenance_task.log"]
+        for log_path in log_files:
+            if os.path.exists(log_path):
+                tmp_path = f"{log_path}.tmp"
+                cmd = f"tail -n 1000 {log_path} > {tmp_path} && mv {tmp_path} {log_path}"
+                subprocess.run(cmd, shell=True, capture_output=True)
+
+        home_dir = os.path.expanduser("~")
         cleanup_commands = [
-            "find /home/paraworld -name '*.pyc' -delete 2>/dev/null || true",
-            "find /home/paraworld -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true",
-            "find /tmp -name 'core.*' -delete 2>/dev/null || true"
+            f"find {home_dir} -name '*.pyc' -delete 2>/dev/null || true",
+            f"find {home_dir} -name '__pycache__' -type d -exec rm -rf {{}} + 2>/dev/null || true",
+            "find /tmp -name 'core.*' -delete 2>/dev/null || true",
+            "find /tmp -name '*.tmp' -delete 2>/dev/null || true",
         ]
 
         for cmd in cleanup_commands:
@@ -26,14 +32,14 @@ def cleanup_temp_files():
 
         logger.info("🧹 Nettoyage des fichiers temporaires terminé")
 
-    except Exception as e:
-        logger.error(f"Erreur nettoyage fichiers temporaires: {e}")
+    except Exception as exc:
+        logger.error("Erreur nettoyage fichiers temporaires: %s", exc)
+
 
 def archive_old_requests(db_manager):
-    """Archive les demandes anciennes"""
+    """Bascule les demandes résolues ou abandonnées de plus de 7 jours dans la table archives."""
     try:
         with db_manager.get_cursor() as cursor:
-            # Archiver les demandes terminées de plus de 7 jours
             archive_query = """
                 INSERT INTO archives (
                     original_id, user_id, prenom, nom, age, localisation,
@@ -50,7 +56,6 @@ def archive_old_requests(db_manager):
             cursor.execute(archive_query)
             archived_count = cursor.rowcount
 
-            # Supprimer les demandes archivées
             if archived_count > 0:
                 delete_query = """
                     DELETE FROM demandes
@@ -58,184 +63,183 @@ def archive_old_requests(db_manager):
                     AND statut IN ('✅ Réussie', '❌ Abandonnée')
                 """
                 cursor.execute(delete_query)
-                logger.info(f"📦 {archived_count} demandes archivées et supprimées")
+                logger.info("📦 %d demandes archivées et purgées de la table active", archived_count)
             else:
                 logger.info("📦 Aucune demande à archiver")
 
-    except Exception as e:
-        logger.error(f"Erreur archivage automatique: {e}")
+    except Exception as exc:
+        logger.error("Erreur archivage automatique: %s", exc, exc_info=True)
 
-def check_storage_usage():
-    """Vérifie l'usage du stockage et retourne l'usage en MB"""
+
+def check_storage_usage() -> float:
+    """Retourne l'espace disque consommé dans le répertoire utilisateur en Mo."""
     try:
-        # Vérifier l'espace disque utilisé dans le répertoire home
-        result = subprocess.run(['du', '-sb', os.path.expanduser('~')],
-                              capture_output=True, text=True)
+        home = os.path.expanduser("~")
+        res = subprocess.run(["du", "-sb", home], capture_output=True, text=True)
 
-        if result.returncode == 0:
-            bytes_used = int(result.stdout.split()[0])
+        if res.returncode == 0:
+            bytes_used = int(res.stdout.split()[0])
             mb_used = bytes_used / (1024 * 1024)
 
-            # Alerte si plus de 400MB utilisés (sur 512MB disponibles)
-            if mb_used > 400:
-                logger.warning(f"⚠️ Usage stockage élevé: {mb_used:.1f}MB / 512MB")
+            # Alerte préventive si saturation proche de la limite PythonAnywhere (512 Mo)
+            if mb_used > 400.0:
+                logger.warning("⚠️ Espace disque critique: %.1f Mo / 512 Mo", mb_used)
                 cleanup_temp_files()
 
-            logger.info(f"💾 Usage stockage: {mb_used:.1f}MB / 512MB ({(mb_used/512)*100:.1f}%)")
-            return mb_used
-        else:
-            logger.error(f"Erreur vérification stockage: {result.stderr}")
-            return 0
+            return round(mb_used, 2)
 
-    except Exception as e:
-        logger.error(f"Erreur vérification stockage: {e}")
-        return 0
+        logger.error("Erreur commande 'du': %s", res.stderr)
+        return 0.0
+
+    except Exception as exc:
+        logger.error("Erreur calcul espace disque: %s", exc)
+        return 0.0
+
 
 def optimize_database(db_manager):
-    """Optimise les tables de la base de données"""
+    """Exécute OPTIMIZE TABLE sur les tables existantes et vide le cache mémoire."""
     try:
+        tables = ["demandes", "demandes_suivi", "archives", "users", "admins", "config"]
         with db_manager.get_cursor() as cursor:
-            # Optimiser les tables
-            tables = ['demandes', 'archives', 'users', 'demandes_status']
-            for table in tables:
+            for tbl in tables:
                 try:
-                    cursor.execute(f"OPTIMIZE TABLE {table}")
-                    logger.info(f"✅ Table {table} optimisée")
-                except Exception as e:
-                    logger.warning(f"⚠️ Impossible d'optimiser {table}: {e}")
+                    cursor.execute(f"OPTIMIZE TABLE {tbl}")
+                except Exception as tbl_exc:
+                    logger.warning("Échec optimisation table %s: %s", tbl, tbl_exc)
 
-            # Nettoyer le cache de l'application
-            db_manager.clear_cache()
+        db_manager.clear_cache()
+        logger.info("🔧 Optimisation MySQL et purge du cache applicatif terminées")
 
-            logger.info("🔧 Optimisation DB terminée")
+    except Exception as exc:
+        logger.error("Erreur routine optimisation base de données: %s", exc)
 
-    except Exception as e:
-        logger.error(f"Erreur optimisation DB: {e}")
 
 def cleanup_database(db_manager):
-    """Nettoie les données anciennes de la base de données"""
+    """Purger les archives de plus de 3 mois et les comptes inactifs sans historique."""
     try:
         with db_manager.get_cursor() as cursor:
-            # Nettoyer les archives très anciennes (plus de 3 mois)
-            cursor.execute("""
+            # Purge des archives obsolètes (plus de 90 jours)
+            cursor.execute(
+                """
                 DELETE FROM archives
                 WHERE date_archivage < DATE_SUB(NOW(), INTERVAL 3 MONTH)
-            """)
-            old_archives_deleted = cursor.rowcount
+                """
+            )
+            purged_archives = cursor.rowcount
+            if purged_archives > 0:
+                logger.info("🗑️ %d archives obsolètes supprimées définitivement", purged_archives)
 
-            if old_archives_deleted > 0:
-                logger.info(f"🗑️ {old_archives_deleted} archives anciennes supprimées")
-
-            # Nettoyer les utilisateurs inactifs (plus de 6 mois sans activité)
-            cursor.execute("""
+            # Purge des utilisateurs inactifs sans demande associée
+            cursor.execute(
+                """
                 DELETE u FROM users u
                 LEFT JOIN demandes d ON u.user_id = d.user_id
+                LEFT JOIN archives a ON u.user_id = a.user_id
                 WHERE u.derniere_activite < DATE_SUB(NOW(), INTERVAL 6 MONTH)
-                AND d.user_id IS NULL
-            """)
-            inactive_users_deleted = cursor.rowcount
+                AND d.id IS NULL
+                AND a.id IS NULL
+                """
+            )
+            purged_users = cursor.rowcount
+            if purged_users > 0:
+                logger.info("👥 %d profils orphelins inactifs supprimés", purged_users)
 
-            if inactive_users_deleted > 0:
-                logger.info(f"👥 {inactive_users_deleted} utilisateurs inactifs supprimés")
+    except Exception as exc:
+        logger.error("Erreur nettoyage base de données: %s", exc, exc_info=True)
 
-    except Exception as e:
-        logger.error(f"Erreur nettoyage base de données: {e}")
 
-def get_system_stats(db_manager):
-    """Récupère les statistiques système"""
+def get_system_stats(db_manager) -> Dict:
+    """Retourne les métriques techniques agrégées du système."""
+    stats = {}
     try:
-        stats = {}
+        mb_used = check_storage_usage()
+        stats["storage_mb"] = mb_used
+        stats["storage_percent"] = (mb_used / 512.0) * 100.0
 
-        # Usage disque
-        storage_mb = check_storage_usage()
-        stats['storage_mb'] = storage_mb
-        stats['storage_percent'] = (storage_mb / 512) * 100
+        tmp_dir = "/tmp"
+        if os.path.exists(tmp_dir):
+            stats["tmp_files"] = len([f for f in os.listdir(tmp_dir) if os.path.isfile(os.path.join(tmp_dir, f))])
+        else:
+            stats["tmp_files"] = 0
 
-        # Nombre de fichiers dans /tmp
-        tmp_files = len([f for f in os.listdir('/tmp') if os.path.isfile(os.path.join('/tmp', f))])
-        stats['tmp_files'] = tmp_files
+        # Mesure des logs
+        log_paths = ["/tmp/bot.log", "/tmp/bot_console.log", "/tmp/maintenance_task.log"]
+        total_logs_bytes = sum(os.path.getsize(p) for p in log_paths if os.path.exists(p))
+        stats["logs_mb"] = round(total_logs_bytes / (1024 * 1024), 2)
 
-        # Taille des logs
-        log_files = ['/tmp/bot.log', '/tmp/bot_console.log', '/tmp/maintenance_task.log']
-        total_log_size = 0
-        for log_file in log_files:
-            if os.path.exists(log_file):
-                total_log_size += os.path.getsize(log_file)
-        stats['logs_mb'] = total_log_size / (1024 * 1024)
-
-        # Statistiques DB
         with db_manager.get_cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) as count FROM demandes")
-            stats['demandes_count'] = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(*) AS count FROM demandes")
+            stats["demandes_count"] = cursor.fetchone()["count"]
 
-            cursor.execute("SELECT COUNT(*) as count FROM archives")
-            stats['archives_count'] = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(*) AS count FROM archives")
+            stats["archives_count"] = cursor.fetchone()["count"]
 
-            cursor.execute("SELECT COUNT(*) as count FROM users")
-            stats['users_count'] = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(*) AS count FROM users")
+            stats["users_count"] = cursor.fetchone()["count"]
 
         return stats
 
-    except Exception as e:
-        logger.error(f"Erreur récupération statistiques: {e}")
-        return {}
+    except Exception as exc:
+        logger.error("Erreur compilation statistiques système: %s", exc)
+        return stats
 
-def emergency_cleanup():
-    """Nettoyage d'urgence si l'espace disque est critique"""
+
+def emergency_cleanup(db_manager=None):
+    """Purge immédiate d'urgence en cas de saturation de l'espace disque."""
     try:
-        logger.warning("🚨 Nettoyage d'urgence activé")
+        logger.warning("🚨 Déclenchement du protocole de nettoyage d'urgence")
 
-        # Supprimer tous les fichiers temporaires
         subprocess.run("rm -rf /tmp/*.log.* 2>/dev/null || true", shell=True)
         subprocess.run("find /tmp -name '*.tmp' -delete 2>/dev/null || true", shell=True)
 
-        # Tronquer les logs à 100 lignes
-        log_files = ['/tmp/bot.log', '/tmp/bot_console.log', '/tmp/maintenance_task.log']
-        for log_file in log_files:
-            if os.path.exists(log_file):
-                os.system(f"tail -n 100 {log_file} > {log_file}.tmp && mv {log_file}.tmp {log_file}")
+        # Réduction immédiate des journaux à 100 lignes
+        log_files = ["/tmp/bot.log", "/tmp/bot_console.log", "/tmp/maintenance_task.log"]
+        for lp in log_files:
+            if os.path.exists(lp):
+                subprocess.run(f"tail -n 100 {lp} > {lp}.tmp && mv {lp}.tmp {lp}", shell=True)
 
-        # Nettoyage agressif de la DB
-        cleanup_database()
+        if db_manager:
+            cleanup_database(db_manager)
 
-        logger.info("🚨 Nettoyage d'urgence terminé")
+        logger.info("🚨 Nettoyage d'urgence finalisé")
 
-    except Exception as e:
-        logger.error(f"Erreur nettoyage d'urgence: {e}")
+    except Exception as exc:
+        logger.error("Erreur nettoyage d'urgence: %s", exc)
+
 
 def daily_maintenance(db_manager):
-    """Maintenance quotidienne complète"""
-    logger.info("🔧 === Début maintenance quotidienne ===")
-
+    """Point d'entrée de la routine de maintenance quotidienne globale."""
+    logger.info("🔧 === Démarrage de la maintenance quotidienne ===")
     try:
-        # Vérifier l'usage du stockage
         storage_mb = check_storage_usage()
 
-        # Si l'usage est critique (>90%), nettoyage d'urgence
-        if storage_mb > 460:  # 90% de 512MB
-            emergency_cleanup()
+        if storage_mb > 460.0:  # Dépassé 90% des 512 Mo
+            emergency_cleanup(db_manager)
         else:
-            # Maintenance normale
             cleanup_temp_files()
             archive_old_requests(db_manager)
             cleanup_database(db_manager)
             optimize_database(db_manager)
 
-        # Statistiques finales
-        final_stats = get_system_stats(db_manager)
+        stats = get_system_stats(db_manager)
+        logger.info("📊 === Rapport de maintenance ===")
+        logger.info("💾 Stockage: %.1f Mo (%.1f%%)", stats.get("storage_mb", 0.0), stats.get("storage_percent", 0.0))
+        logger.info("📝 Demandes: %s | Archives: %s | Utilisateurs: %s", stats.get("demandes_count", 0), stats.get("archives_count", 0), stats.get("users_count", 0))
+        logger.info("✅ === Maintenance terminée avec succès ===")
 
-        logger.info("📊 === Statistiques finales ===")
-        logger.info(f"💾 Stockage: {final_stats.get('storage_mb', 0):.1f}MB ({final_stats.get('storage_percent', 0):.1f}%)")
-        logger.info(f"📝 Demandes: {final_stats.get('demandes_count', 0)}")
-        logger.info(f"📦 Archives: {final_stats.get('archives_count', 0)}")
-        logger.info(f"👥 Utilisateurs: {final_stats.get('users_count', 0)}")
-        logger.info(f"📄 Logs: {final_stats.get('logs_mb', 0):.1f}MB")
-        logger.info(f"🗂️ Fichiers tmp: {final_stats.get('tmp_files', 0)}")
+    except Exception as exc:
+        logger.error("Erreur générale routine maintenance: %s", exc, exc_info=True)
 
-        logger.info("✅ === Maintenance quotidienne terminée ===")
-
-    except Exception as e:
-        logger.error(f"❌ Erreur lors de la maintenance: {e}")
 
 if __name__ == "__main__":
-    daily_maintenance()
+    # Permet l'exécution directe en tâche cron planifiée
+    logging.basicConfig(level=logging.INFO)
+    try:
+        from config import Config
+        from database import DatabaseManager
+
+        cfg = Config()
+        db = DatabaseManager(cfg)
+        daily_maintenance(db)
+    except Exception as main_exc:
+        logger.critical("Impossible de démarrer la maintenance autonome: %s", main_exc)

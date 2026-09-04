@@ -1,309 +1,267 @@
 #!/usr/bin/env python3
-# Configuration timezone Paris
-import os
-import time
-os.environ["TZ"] = "Europe/Paris"
-time.tzset()
+"""Tâche planifiée PythonAnywhere : maintenance, keep-alive et surveillance disque."""
 
-"""
-Tâche unifiée pour PythonAnywhere - Combine maintenance, keep-alive et nettoyage
-"""
-import sys
-import os
-import subprocess
-import psutil
 import logging
 from logging.handlers import RotatingFileHandler
+import os
+import signal
+import subprocess
+import sys
 import time
+from typing import Optional, Tuple
+import psutil
 
-# Ajouter le chemin vers votre bot
-sys.path.append('/home/paraworld/telegram_bot')
+# Configuration du fuseau horaire
+os.environ["TZ"] = "Europe/Paris"
+if hasattr(time, "tzset"):
+    time.tzset()
 
-# Configuration du logging
+# Résolution dynamique des chemins
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
+
+MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
+LOG_FILE = "/tmp/maintenance_task.log"
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        RotatingFileHandler(
-            '/tmp/maintenance_task.log',
-            maxBytes=2*1024*1024,
-            backupCount=2
-        ),
-        logging.StreamHandler()
-    ]
+        RotatingFileHandler(LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=2),
+        logging.StreamHandler(),
+    ],
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("MaintenanceTask")
+
 
 class UnifiedMaintenance:
+    """Gestionnaire autonome de supervision du processus bot et d'optimisation stockage."""
+
     def __init__(self, db_manager=None):
-        self.bot_script = '/home/paraworld/telegram_bot/main.py'
-        self.maintenance_flag = '/tmp/last_full_maintenance'
+        self.bot_script = MAIN_SCRIPT
+        self.maintenance_flag = "/tmp/last_full_maintenance"
         self.db_manager = db_manager
 
-    def is_bot_running(self):
-        """Vérifie si le bot est en cours d'exécution avec détection améliorée"""
+    def is_bot_running(self) -> Tuple[bool, Optional[int], Optional[float]]:
+        """Contrôle si le bot Telegram est en cours d'exécution."""
         try:
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time', 'status']):
-                cmdline = ' '.join(proc.info['cmdline'] or [])
-                # Vérification plus spécifique pour éviter les faux positifs
-                if ('main.py' in cmdline and
-                    'telegram_bot' in cmdline and
-                    'python' in proc.info['name'] and
-                    proc.info['status'] == 'running'):
-                    return True, proc.info['pid'], proc.info['create_time']
+            current_pid = os.getpid()
+            for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time", "status"]):
+                try:
+                    if proc.info["pid"] == current_pid:
+                        continue
+
+                    # Évite les processus zombies
+                    if proc.info.get("status") == psutil.STATUS_ZOMBIE:
+                        continue
+
+                    cmdline = " ".join(proc.info.get("cmdline") or [])
+                    if self.bot_script in cmdline or ("main.py" in cmdline and BASE_DIR in cmdline):
+                        return True, proc.info["pid"], proc.info["create_time"]
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+
             return False, None, None
-        except Exception as e:
-            logger.error(f"Erreur vérification processus: {e}")
+        except Exception as exc:
+            logger.error("Erreur inspection processus: %s", exc)
             return False, None, None
 
-    def start_bot(self):
-        """Démarre le bot en arrière-plan"""
+    def start_bot(self) -> bool:
+        """Relance le bot en arrière-plan via sys.executable."""
         try:
-            cmd = f"nohup python3.13 {self.bot_script} > /tmp/bot_output.log 2>&1 &"
+            log_dest = "/tmp/bot_output.log"
+            cmd = f"nohup {sys.executable} {self.bot_script} >> {log_dest} 2>&1 &"
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
             if result.returncode == 0:
-                logger.info("✅ Bot démarré avec succès")
+                logger.info("✅ Bot relancé avec succès.")
                 return True
-            else:
-                logger.error(f"❌ Erreur démarrage: {result.stderr}")
-                return False
 
-        except Exception as e:
-            logger.error(f"Erreur démarrage bot: {e}")
+            logger.error("❌ Échec relance bot : %s", result.stderr)
+            return False
+        except Exception as exc:
+            logger.error("Exception lors du démarrage du bot : %s", exc)
             return False
 
-    def check_storage_usage(self):
-        """Vérifie l'usage du stockage"""
+    def check_storage_usage(self) -> float:
+        """Calcule l'espace disque consommé dans le répertoire utilisateur (Mo)."""
         try:
-            result = subprocess.run(['du', '-sb', os.path.expanduser('~')],
-                                  capture_output=True, text=True)
-
-            if result.returncode == 0:
-                bytes_used = int(result.stdout.split()[0])
-                mb_used = bytes_used / (1024 * 1024)
-                return mb_used
-            return 0
-        except Exception as e:
-            logger.error(f"Erreur vérification stockage: {e}")
-            return 0
+            home = os.path.expanduser("~")
+            res = subprocess.run(["du", "-sb", home], capture_output=True, text=True)
+            if res.returncode == 0:
+                bytes_used = int(res.stdout.split()[0])
+                return round(bytes_used / (1024 * 1024), 2)
+            return 0.0
+        except Exception as exc:
+            logger.error("Erreur mesure disque : %s", exc)
+            return 0.0
 
     def cleanup_caches(self):
-        """Nettoie les caches pour économiser l'espace - NOUVEAU"""
+        """Purge approfondie des caches applicatifs et fichiers temporaires."""
         try:
-            logger.info("🧹 Début nettoyage des caches...")
+            logger.info("🧹 Purge des caches en cours...")
+            home = os.path.expanduser("~")
 
-            # Commandes de nettoyage des caches
-            cleanup_commands = [
-                # Cache pip (souvent le plus volumineux)
-                "pip3.13 cache purge 2>/dev/null || true",
-
-                # Cache général (fichiers anciens de plus de 3 jours)
-                "find ~/.cache -type f -mtime +3 -delete 2>/dev/null || true",
-
-                # Fichiers Python compilés
-                "find ~ -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true",
-                "find ~ -name '*.pyc' -delete 2>/dev/null || true",
-
-                # Cache npm/node si présent
-                "rm -rf ~/.npm/_cacache 2>/dev/null || true",
-
-                # Logs anciens dans .local
-                "find ~/.local -name '*.log' -mtime +7 -delete 2>/dev/null || true",
-
-                # Fichiers temporaires système
-                "find /tmp -user $(whoami) -type f -mtime +1 -delete 2>/dev/null || true"
+            commands = [
+                f"{sys.executable} -m pip cache purge 2>/dev/null || true",
+                f"find {home}/.cache -type f -mtime +3 -delete 2>/dev/null || true",
+                f"find {home} -name '__pycache__' -type d -exec rm -rf {{}} + 2>/dev/null || true",
+                f"find {home} -name '*.pyc' -delete 2>/dev/null || true",
+                f"find {home}/.local -name '*.log' -mtime +7 -delete 2>/dev/null || true",
+                "find /tmp -user $(whoami) -type f -mtime +1 -delete 2>/dev/null || true",
             ]
 
-            space_before = self.check_storage_usage()
-
-            for cmd in cleanup_commands:
+            before = self.check_storage_usage()
+            for cmd in commands:
                 try:
                     subprocess.run(cmd, shell=True, capture_output=True, timeout=30)
                 except subprocess.TimeoutExpired:
-                    logger.warning(f"Timeout pour: {cmd}")
-                except Exception as e:
-                    logger.warning(f"Erreur commande {cmd}: {e}")
+                    logger.warning("Timeout sur commande : %s", cmd)
 
-            space_after = self.check_storage_usage()
-            space_freed = space_before - space_after
-
-            logger.info(f"🧹 Nettoyage caches terminé - {space_freed:.1f}MB libérés")
-
-        except Exception as e:
-            logger.error(f"Erreur nettoyage caches: {e}")
+            after = self.check_storage_usage()
+            logger.info("🧹 Caches nettoyés : %.1f Mo libérés.", max(0.0, before - after))
+        except Exception as exc:
+            logger.error("Erreur nettoyage caches : %s", exc)
 
     def quick_cleanup(self):
-        """Nettoyage rapide quotidien - AMÉLIORÉ"""
+        """Routine quotidienne de purge légère."""
         try:
-            logger.info("🧹 Nettoyage rapide quotidien...")
-
-            # Nettoyer les logs anciens (garde les 3 derniers jours)
-            cleanup_commands = [
+            home = os.path.expanduser("~")
+            commands = [
                 "find /tmp -name '*.log' -mtime +3 -delete 2>/dev/null || true",
-                "find /tmp -name 'bot_*.log.*' -delete 2>/dev/null || true",
-                "find /home/paraworld -name '*.pyc' -delete 2>/dev/null || true",
-                "find /home/paraworld -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true"
+                "find /tmp -name '*.tmp' -delete 2>/dev/null || true",
+                f"find {home} -name '*.pyc' -delete 2>/dev/null || true",
+                f"find {home} -name '__pycache__' -type d -exec rm -rf {{}} + 2>/dev/null || true",
             ]
-
-            for cmd in cleanup_commands:
+            for cmd in commands:
                 subprocess.run(cmd, shell=True, capture_output=True)
-
-            # Nettoyage léger des caches (fichiers récents seulement)
-            light_cache_cleanup = [
-                "find ~/.cache -type f -mtime +1 -size +10M -delete 2>/dev/null || true",
-                "find /tmp -name '*.tmp' -mtime +0 -delete 2>/dev/null || true"
-            ]
-
-            for cmd in light_cache_cleanup:
-                subprocess.run(cmd, shell=True, capture_output=True)
-
-            logger.info("🧹 Nettoyage rapide effectué")
-
-        except Exception as e:
-            logger.error(f"Erreur nettoyage rapide: {e}")
+            logger.info("🧹 Nettoyage rapide effectué.")
+        except Exception as exc:
+            logger.error("Erreur nettoyage rapide : %s", exc)
 
     def full_maintenance(self):
-        """Maintenance complète avec nettoyage approfondi - AMÉLIORÉ"""
+        """Maintenance complète (caches + SQL)."""
         try:
-            logger.info("🔧 Début maintenance complète...")
-
-            # Nettoyage approfondi des caches
+            logger.info("🔧 Exécution maintenance complète...")
             self.cleanup_caches()
 
-            # Maintenance de la base de données
             if self.db_manager:
                 from utils.maintenance import daily_maintenance
                 daily_maintenance(self.db_manager)
 
-            # Marquer la date de dernière maintenance complète
-            with open(self.maintenance_flag, 'w') as f:
+            with open(self.maintenance_flag, "w", encoding="utf-8") as f:
                 f.write(str(time.time()))
 
-            logger.info("🔧 Maintenance complète effectuée")
-
-        except Exception as e:
-            logger.error(f"Erreur maintenance complète: {e}")
+            logger.info("🔧 Maintenance complète finalisée.")
+        except Exception as exc:
+            logger.error("Erreur maintenance complète : %s", exc)
 
     def emergency_cleanup(self):
-        """Nettoyage d'urgence si stockage critique - NOUVEAU"""
+        """Nettoyage d'urgence lors d'une saturation de l'espace disque (>90%)."""
         try:
-            logger.warning("🚨 Nettoyage d'urgence activé!")
+            logger.warning("🚨 Nettoyage d'urgence déclenché !")
+            home = os.path.expanduser("~")
 
-            # Nettoyage agressif
             emergency_commands = [
-                # Vider complètement le cache pip
-                "rm -rf ~/.cache/pip/* 2>/dev/null || true",
-
-                # Supprimer tous les fichiers temporaires
+                f"rm -rf {home}/.cache/pip/* 2>/dev/null || true",
                 "rm -rf /tmp/*.log.* 2>/dev/null || true",
                 "find /tmp -name '*.tmp' -delete 2>/dev/null || true",
-
-                # Nettoyer les caches anciens
-                "find ~/.cache -type f -mtime +0 -delete 2>/dev/null || true",
-
-                # Tronquer les logs à 100 lignes
-                "tail -n 100 /tmp/bot.log > /tmp/bot.log.tmp && mv /tmp/bot.log.tmp /tmp/bot.log 2>/dev/null || true",
-                "tail -n 100 /tmp/bot_console.log > /tmp/bot_console.log.tmp && mv /tmp/bot_console.log.tmp /tmp/bot_console.log 2>/dev/null || true",
-                "tail -n 100 /tmp/maintenance_task.log > /tmp/maintenance_task.log.tmp && mv /tmp/maintenance_task.log.tmp /tmp/maintenance_task.log 2>/dev/null || true"
+                f"find {home}/.cache -type f -mtime +0 -delete 2>/dev/null || true",
             ]
-
             for cmd in emergency_commands:
                 subprocess.run(cmd, shell=True, capture_output=True)
 
-            # Nettoyage de la base de données
+            log_files = ["/tmp/bot.log", "/tmp/bot_output.log", LOG_FILE]
+            for lp in log_files:
+                if os.path.exists(lp):
+                    subprocess.run(f"tail -n 100 {lp} > {lp}.tmp && mv {lp}.tmp {lp}", shell=True)
+
             if self.db_manager:
                 from utils.maintenance import cleanup_database
                 cleanup_database(self.db_manager)
 
-            logger.warning("🚨 Nettoyage d'urgence terminé")
+            logger.warning("🚨 Nettoyage d'urgence terminé.")
+        except Exception as exc:
+            logger.error("Erreur nettoyage urgence : %s", exc)
 
-        except Exception as e:
-            logger.error(f"Erreur nettoyage d'urgence: {e}")
-
-    def should_do_full_maintenance(self):
-        """Détermine si une maintenance complète est nécessaire"""
+    def should_do_full_maintenance(self) -> bool:
+        """Détermine si la maintenance de 48 heures est due."""
+        if not os.path.exists(self.maintenance_flag):
+            return True
         try:
-            if not os.path.exists(self.maintenance_flag):
-                return True
-
-            with open(self.maintenance_flag, 'r') as f:
-                last_maintenance = float(f.read().strip())
-
-            # Maintenance complète toutes les 48 heures
-            return time.time() - last_maintenance > 48 * 3600
-
+            with open(self.maintenance_flag, "r", encoding="utf-8") as f:
+                last_maint = float(f.read().strip())
+            return (time.time() - last_maint) > (48 * 3600)
         except Exception:
             return True
 
     def run(self):
-        """Exécute la maintenance unifiée avec gestion intelligente du stockage"""
-        logger.info("🔧 === Maintenance Task PythonAnywhere ===")
+        """Cycle principal d'exécution."""
+        logger.info("🔧 === Exécution tâche planifiée PythonAnywhere ===")
 
-        # 1. Vérifier le statut du bot
+        # 1. Vérification keep-alive du bot
         running, pid, start_time = self.is_bot_running()
 
         if running:
-            runtime = time.time() - start_time
+            runtime = time.time() - (start_time or time.time())
             hours = int(runtime // 3600)
             minutes = int((runtime % 3600) // 60)
-            logger.info(f"✅ Bot actif (PID: {pid}, Runtime: {hours}h{minutes}m)")
+            logger.info("✅ Bot actif (PID: %s, Uptime: %dh%02dm)", pid, hours, minutes)
 
-            # Redémarrer le bot s'il tourne depuis plus de 12 heures
-            if runtime > 12 * 3600:
-                logger.info("🔄 Redémarrage préventif du bot (>12h)")
-                subprocess.run(['pkill', '-f', 'main.py'], capture_output=True)
-                time.sleep(3)
+            # Redémarrage préventif si le bot tourne en continu depuis plus de 24h
+            if runtime > 24 * 3600:
+                logger.info("🔄 Redémarrage préventif (> 24h d'activité)...")
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    time.sleep(3)
+                except Exception as k_err:
+                    logger.warning("Échec arrêt gracieux : %s", k_err)
                 self.start_bot()
         else:
-            logger.warning("⚠️ Bot non actif - Redémarrage...")
+            logger.warning("⚠️ Bot arrêté — Lancement immédiat...")
             self.start_bot()
 
-        # 2. Vérifier le stockage et décider du type de maintenance
+        # 2. Gestion de l'espace disque
         storage_mb = self.check_storage_usage()
-        storage_percent = (storage_mb / 512) * 100
+        storage_percent = (storage_mb / 512.0) * 100.0
+        logger.info("💾 Disque utilisé : %.1f Mo / 512 Mo (%.1f%%)", storage_mb, storage_percent)
 
-        logger.info(f"💾 Stockage: {storage_mb:.1f}MB ({storage_percent:.1f}%)")
-
-        # 3. Maintenance selon l'usage du stockage
-        if storage_percent > 90:  # Critique (>460MB)
-            logger.warning("🚨 Stockage critique - Nettoyage d'urgence")
+        if storage_percent > 90.0:
             self.emergency_cleanup()
-        elif storage_percent > 75:  # Élevé (>384MB)
-            logger.warning("⚠️ Stockage élevé - Maintenance complète forcée")
-            self.full_maintenance()
-        elif self.should_do_full_maintenance():
-            logger.info("🔧 Maintenance complète programmée")
+        elif storage_percent > 75.0 or self.should_do_full_maintenance():
             self.full_maintenance()
         else:
-            logger.info("🧹 Nettoyage rapide quotidien")
             self.quick_cleanup()
 
-        # 4. Rapport final avec détails du stockage
+        # 3. Rapport d'inspection des répertoires
+        home = os.path.expanduser("~")
+        inspect_dirs = [
+            os.path.join(home, ".cache"),
+            os.path.join(home, ".local"),
+            "/tmp",
+            BASE_DIR,
+        ]
+        valid_dirs = [d for d in inspect_dirs if os.path.exists(d)]
+        du_res = subprocess.run(["du", "-sh"] + valid_dirs, capture_output=True, text=True)
+        details = du_res.stdout.strip() if du_res.returncode == 0 else "N/A"
+
         final_running, final_pid, _ = self.is_bot_running()
-        final_storage = self.check_storage_usage()
-        final_percent = (final_storage / 512) * 100
+        logger.info("📊 === Bilan de tâche planifiée ===")
+        logger.info("Statut bot : %s (PID %s)", "🟢 En ligne" if final_running else "🔴 Hors ligne", final_pid)
+        logger.info("Volumes consommés :\n%s", details)
+        logger.info("✅ Tâche planifiée terminée.")
 
-        # Détail des répertoires les plus volumineux
-        try:
-            result = subprocess.run(['du', '-sh', '~/.cache', '~/.local', '/tmp', '~/telegram_bot'],
-                                  capture_output=True, text=True)
-            storage_details = result.stdout if result.returncode == 0 else "N/A"
-        except:
-            storage_details = "N/A"
-
-        logger.info(f"📊 === Rapport final ===")
-        logger.info(f"Bot: {'✅ Actif' if final_running else '❌ Inactif'}")
-        logger.info(f"Stockage: {final_storage:.1f}MB ({final_percent:.1f}%)")
-        logger.info(f"Détails stockage:\n{storage_details}")
-        logger.info(f"=== Maintenance terminée ===")
 
 if __name__ == "__main__":
     try:
-        from database import get_db_manager
-        db_manager = get_db_manager()
-        maintenance = UnifiedMaintenance(db_manager)
-        maintenance.run()
-    except Exception as e:
-        logger.error(f"Erreur critique maintenance: {e}")
-        raise
+        from config import Config
+        from database import DatabaseManager
+
+        cfg = Config()
+        db = DatabaseManager(cfg)
+        task = UnifiedMaintenance(db)
+        task.run()
+    except Exception as fatal_exc:
+        logger.critical("Échec critique lors de l'exécution de la maintenance planifiée : %s", fatal_exc, exc_info=True)
+        sys.exit(1)
