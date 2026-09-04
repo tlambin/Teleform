@@ -1,0 +1,11 @@
+python-telegram-bot
+python-dotenv
+mysql-connector-python
+Pillow
+requests
+psutil          # Pour surveillance des processus
+pytz            # Pour gestion timezone
+
+# Optionnelles
+httpx           # Pour de meilleures performances réseau
+aiofiles        # Pour la gestion asynchrone des fichiers
