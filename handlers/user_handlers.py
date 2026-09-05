@@ -16,14 +16,12 @@ class UserHandlers:
         self.db_manager = db_manager
         self.interface = InterfaceManager(config, db_manager)
 
-        # Sous-modules métier
         self.compte = CompteManager(db_manager, config)
         self.formulaire = FormulaireManager(db_manager, config, self.compte)
         self.demande = DemandeManager(db_manager, config, self.compte)
         self.edition = EditionManager(db_manager, config)
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche l'interface d'accueil adaptée au profil de l'utilisateur."""
         if not update.effective_user or not update.message:
             return
 
@@ -41,7 +39,6 @@ class UserHandlers:
         )
 
     async def handle_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Routeur des callbacks utilisateur avec contrôle du statut du service."""
         query = update.callback_query
         if not query or not query.data:
             return
@@ -49,7 +46,6 @@ class UserHandlers:
         await query.answer()
         data = query.data
 
-        # Vérification globale de la disponibilité du service pour les créations
         if data.startswith(("form_", "nav_")) and not self.config.are_demandes_enabled():
             await query.edit_message_text(
                 "🚫 <b>Service temporairement indisponible</b>\n\n"
@@ -62,7 +58,32 @@ class UserHandlers:
             return
 
         try:
-            if data.startswith("form_"):
+            if data.startswith("reply_to_admin_"):
+                # Suppression immédiate du bouton pour garantir l'usage unique
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+
+                parts = data.split("_")
+                demande_id = int(parts[3])
+                admin_id = int(parts[4])
+                context.user_data["replying_to_admin"] = {
+                    "demande_id": demande_id,
+                    "admin_id": admin_id,
+                }
+                await query.message.reply_text(
+                    "✍️ <b>Tapez votre réponse ou envoyez votre fichier ci-dessous :</b>\n\n"
+                    "⚠️ <i>Attention : vous ne disposez que d'une seule réponse autorisée pour ce message.</i>",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_reply")
+                    ]])
+                )
+            elif data == "cancel_user_reply":
+                context.user_data.pop("replying_to_admin", None)
+                await query.edit_message_text("❌ Réponse annulée.")
+            elif data.startswith("form_"):
                 await self.formulaire.navigation.handle_form_navigation(update, context)
             elif data.startswith("nav_"):
                 await self.demande.handle_navigation(update, context, data)
@@ -92,7 +113,6 @@ class UserHandlers:
             )
 
     async def handle_interface_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Routeur des boutons de navigation générale (menus, paramètres, panneaux)."""
         query = update.callback_query
         if not query or not query.data:
             return
@@ -102,7 +122,6 @@ class UserHandlers:
         first_name = query.from_user.first_name
         data = query.data
 
-        # Contrôles de sécurité
         owner_actions = {
             "gerer_admins", "admin_ajouter", "admin_supprimer",
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance"
@@ -134,23 +153,82 @@ class UserHandlers:
             await query.answer("❌ Action indisponible.", show_alert=True)
 
     async def handle_text_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Aiguillage des messages texte hors commandes vers l'édition ou le compte."""
-        if not update.message or not update.message.text:
+        """Aiguillage des messages (texte et médias) hors commandes."""
+        if not update.message:
             return
 
-        # Priorité au mode édition si actif
-        if context.user_data and context.user_data.get("editing"):
+        # 1. Collecte des fichiers/messages de l'Admin en cours d'envoi
+        if context.user_data and context.user_data.get("contact_session"):
+            from handlers.admin_handlers import AdminHandlers
+            admin_h = AdminHandlers(self.config, self.db_manager)
+            if await admin_h.handle_collect_admin_media(update, context):
+                return
+
+        # 2. Réponse du Demandeur vers l'Admin
+        if context.user_data and context.user_data.get("replying_to_admin"):
+            await self._handle_user_reply_relay(update, context)
+            return
+
+        # 3. Édition d'une demande par l'utilisateur (texte)
+        if update.message.text and context.user_data and context.user_data.get("editing"):
             await self.edition.handle_edit_text_input(update, context)
             return
 
+        # 4. Fallback compte utilisateur
         await self.compte.handle_text_messages(update, context)
 
+    async def _handle_user_reply_relay(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Transmet la réponse unique de l'utilisateur vers l'admin."""
+        reply_info = context.user_data.pop("replying_to_admin", None)
+        if not reply_info:
+            return
+
+        admin_id = reply_info["admin_id"]
+        demande_id = reply_info["demande_id"]
+        user = update.effective_user
+        msg = update.message
+
+        user_label = f"@{user.username}" if user.username else f"{user.first_name} (ID: {user.id})"
+        user_comment = (msg.caption or msg.text or "").strip()
+        corps = f"\n\n« {user_comment} »" if user_comment else ""
+
+        admin_keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💬 Répondre à nouveau", callback_data=f"contacter_{demande_id}"),
+            InlineKeyboardButton("📄 Voir la fiche", callback_data=f"retour_texte_{demande_id}")
+        ]])
+
+        try:
+            caption_text = (
+                f"📩 <b>Réponse du demandeur (Demande #{demande_id})</b>\n"
+                f"De : {user_label}"
+                f"{corps}"
+            )
+
+            await context.bot.copy_message(
+                chat_id=admin_id,
+                from_chat_id=msg.chat_id,
+                message_id=msg.message_id,
+                caption=caption_text,
+                parse_mode="HTML",
+                reply_markup=admin_keyboard,
+            )
+
+            await msg.reply_text(
+                "✅ <b>Votre réponse a été transmise à l'administrateur !</b>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Mes demandes", callback_data="voir_demandes")
+                ]])
+            )
+
+        except Exception as exc:
+            logger.error("Erreur renvoi réponse utilisateur vers admin %s : %s", admin_id, exc)
+            await msg.reply_text("❌ Une erreur est survenue lors de la transmission de votre message.")
+
     async def voir_demandes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Accès direct à la liste des demandes."""
         await self.demande.voir_demandes(update, context)
 
     async def _handle_cancel_demande_placeholder(self, update: Update, data: str):
-        """Écran d'attente pour l'annulation future d'une demande."""
         query = update.callback_query
         if not query:
             return
@@ -158,8 +236,7 @@ class UserHandlers:
         demande_id = data.replace("cancel_demande_", "")
         await query.edit_message_text(
             f"🚧 <b>Annulation de demande</b>\n\n"
-            f"L'annulation de la demande n°<code>{demande_id}</code> n'est pas encore activée.\n"
-            f"Cette option sera disponible dans une prochaine mise à jour.",
+            f"L'annulation de la demande n°<code>{demande_id}</code> n'est pas encore activée.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Mes demandes", callback_data="voir_demandes")],

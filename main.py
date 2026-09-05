@@ -181,24 +181,18 @@ class TelegramBot:
         # Callbacks admin
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(admin_|demandes_disponibles|dispo_|demandes_suivies|suivi_|mark_treated_menu|change_status_|set_status_|voir_photo_|retour_texte_|suivre_demande_|contacter_)"
-        ))
-
-        # Callbacks owner
-        app.add_handler(CallbackQueryHandler(
-            self.owner_handlers.handle_owner_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats)$"
+            pattern=r"^(admin_|demandes_disponibles|dispo_|demandes_suivies|suivi_|mark_treated_menu|change_status_|set_status_|voir_photo_|retour_texte_|suivre_demande_|contacter_|contact_mode_|cancel_contact_|send_batch_)"
         ))
 
         # Callbacks utilisateur
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
-            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit)"
+            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit|reply_to_admin_|cancel_user_reply)"
         ))
 
-        # Messages texte non-commandes
+        # Messages (texte, photos, vidéos, documents) hors commandes
         app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
+            (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & ~filters.COMMAND,
             self.user_handlers.handle_text_messages
         ))
 
