@@ -101,7 +101,6 @@ class StatutsManager:
             nouveau_statut = self.statuts_disponibles[status_index]
             admin_alias = self.db_manager.get_admin_alias(admin_id)
 
-            # Transaction atomique : vérification, mise à jour du statut et synchronisation du suivi
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
@@ -132,13 +131,16 @@ class StatutsManager:
                     (nouveau_statut, admin_id, demande_id),
                 )
 
-                # 2. Inscription automatique dans les demandes suivies si le statut devient "En cours"
-                if "En cours" in nouveau_statut:
+                # 2. Inscription ou actualisation dans demandes_suivi avec les colonnes exactes
+                if "En cours" in nouveau_statut or "En attente" in nouveau_statut:
                     cursor.execute(
                         """
-                        INSERT INTO demandes_suivi (demande_id, admin_id, date_prise_en_charge)
-                        VALUES (%s, %s, NOW())
-                        ON DUPLICATE KEY UPDATE date_prise_en_charge = NOW()
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                        VALUES (%s, %s, NOW(), NOW(), 'active')
+                        ON DUPLICATE KEY UPDATE 
+                            admin_id = VALUES(admin_id),
+                            derniere_action = NOW(),
+                            statut_suivi = 'active'
                         """,
                         (demande_id, admin_id),
                     )
