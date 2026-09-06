@@ -137,10 +137,10 @@ class InterfaceManager:
 
         return message, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU GÉRER LE BOT (Owner Only) ==========
+    # ========== SOUS-MENU GÉRER LE BOT (Owner) ==========
 
     def get_gerer_bot_menu(self):
-        """Menu de contrôle du bot avec état dynamique."""
+        """Menu de contrôle du bot avec état dynamique et réglage des quotas."""
         try:
             bot_active = self.db_manager.is_bot_active()
         except Exception:
@@ -155,16 +155,67 @@ class InterfaceManager:
             toggle_text = "🟢 ACTIVER"
             toggle_callback = "bot_on"
 
+        # Récupération des quotas actuels pour affichage informatif direct
+        try:
+            max_tot = self.config.get_max_total_demandes()
+            max_usr = self.config.get_max_demandes_per_user()
+            tot_str = str(max_tot) if max_tot > 0 else "Illimité"
+            usr_str = str(max_usr) if max_usr > 0 else "Illimité"
+        except Exception:
+            tot_str, usr_str = "Inconnu", "Inconnu"
+
         message = (
             "🤖 <b>Contrôle du Bot</b>\n\n"
-            f"• <b>Statut des demandes :</b> {status_badge}\n\n"
+            f"• <b>Statut des demandes :</b> {status_badge}\n"
+            f"• <b>Plafond global :</b> <code>{tot_str}</code>\n"
+            f"• <b>Plafond par personne :</b> <code>{usr_str}</code>\n\n"
             "Options opérationnelles :"
         )
 
         keyboard = [
             [InlineKeyboardButton(f"{toggle_text} LES DEMANDES", callback_data=toggle_callback)],
+            [InlineKeyboardButton("⚙️ LIMITES & QUOTAS", callback_data="menu_limits")],
             [InlineKeyboardButton("🛠️ MAINTENANCE SYSTÈME", callback_data="maintenance")],
             [InlineKeyboardButton("🔙 Retour", callback_data="parametres")]
+        ]
+
+        return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU QUOTAS & LIMITES (Owner Only) ==========
+
+    def get_limits_menu(self):
+        """Génère l'affichage et le clavier de réglage des quotas."""
+        max_total = self.config.get_max_total_demandes()
+        max_user = self.config.get_max_demandes_per_user()
+
+        total_str = f"<b>{max_total}</b>" if max_total > 0 else "<i>Illimité (aucun plafond)</i>"
+        user_str = f"<b>{max_user}</b>" if max_user > 0 else "<i>Illimité</i>"
+
+        message = (
+            "⚙️ <b>Limitation des Demandes</b>\n\n"
+            f"🌐 <b>Plafond global actif :</b> {total_str}\n"
+            f"👤 <b>Plafond par personne :</b> {user_str}\n\n"
+            "Ajustez les quotas souhaités via les commandes rapides ou par saisie :"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🌐 Global: -5", callback_data="limit_total_sub5"),
+                InlineKeyboardButton("Illimité (0)", callback_data="limit_total_0"),
+                InlineKeyboardButton("+5", callback_data="limit_total_add5"),
+            ],
+            [
+                InlineKeyboardButton("👤 User: -1", callback_data="limit_user_sub1"),
+                InlineKeyboardButton("Défaut (3)", callback_data="limit_user_3"),
+                InlineKeyboardButton("+1", callback_data="limit_user_add1"),
+            ],
+            [
+                InlineKeyboardButton("✏️ Saisir Total au clavier", callback_data="limit_input_total"),
+                InlineKeyboardButton("✏️ Saisir User au clavier", callback_data="limit_input_user"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Retour Gestion Bot", callback_data="gerer_bot")
+            ]
         ]
 
         return message, InlineKeyboardMarkup(keyboard)
@@ -189,6 +240,7 @@ class InterfaceManager:
             "parametres": lambda: self.get_parametres_menu(user_id),
             "gerer_admins": self.get_gerer_admins_menu,
             "gerer_bot": self.get_gerer_bot_menu,
+            "menu_limits": self.get_limits_menu,
         }
 
         handler = routing_map.get(callback_data)

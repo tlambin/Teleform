@@ -46,7 +46,8 @@ class UserHandlers:
         await query.answer()
         data = query.data
 
-        if data.startswith(("form_", "nav_")) and not self.config.are_demandes_enabled():
+        # 1. Contrôle global du service
+        if data.startswith(("form_", "nav_", "new_demande")) and not self.config.are_demandes_enabled():
             await query.edit_message_text(
                 "🚫 <b>Service temporairement indisponible</b>\n\n"
                 "La création et la navigation des demandes sont actuellement désactivées par l'administration.",
@@ -58,8 +59,28 @@ class UserHandlers:
             return
 
         try:
-            if data.startswith("reply_to_admin_"):
-                # Suppression immédiate du bouton pour garantir l'usage unique
+            # 2. Bouton d'information quota atteint
+            if data == "quota_reached_info":
+                _, reason = self.demande.check_creation_quota(query.from_user.id)
+                await query.answer(reason.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")[:150], show_alert=True)
+                return
+
+            # 3. Tentative de création d'une nouvelle demande (contrôle des quotas)
+            elif data == "new_demande":
+                can_create, reason_msg = self.demande.check_creation_quota(query.from_user.id)
+                if not can_create:
+                    await query.edit_message_text(
+                        reason_msg,
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                        ]),
+                    )
+                    return
+                # Lancement du formulaire
+                await self.formulaire.navigation.handle_form_navigation(update, context)
+
+            elif data.startswith("reply_to_admin_"):
                 try:
                     await query.edit_message_reply_markup(reply_markup=None)
                 except Exception:
@@ -126,9 +147,10 @@ class UserHandlers:
         # Contrôles de sécurité
         owner_actions = {
             "gerer_admins", "admin_ajouter", "admin_supprimer",
-            "gerer_bot", "bot_on", "bot_off", "bot_maintenance"
+            "gerer_bot", "bot_on", "bot_off", "bot_maintenance",
+            "menu_limits"
         }
-        if data in owner_actions and not self.config.is_owner(user_id):
+        if (data in owner_actions or data.startswith("limit_")) and not self.config.is_owner(user_id):
             await query.answer("❌ Accès réservé au propriétaire.", show_alert=True)
             return
 
@@ -144,9 +166,60 @@ class UserHandlers:
             await self.demande.voir_demandes(update, context)
             return
 
+        # Affichage du menu Quotas & Limites
+        if data == "menu_limits":
+            msg, kb = self.interface.get_limits_menu()
+            if query.message and query.message.photo:
+                await query.message.delete()
+                await context.bot.send_message(chat_id=query.message.chat_id, text=msg, parse_mode="HTML", reply_markup=kb)
+            else:
+                await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            return
+
+        # Traitement des boutons d'ajustement des quotas
+        if data.startswith("limit_"):
+            tot = self.config.get_max_total_demandes()
+            usr = self.config.get_max_demandes_per_user()
+
+            if data == "limit_total_0":
+                self.config.set_max_total_demandes(0)
+            elif data == "limit_total_add5":
+                self.config.set_max_total_demandes(tot + 5)
+            elif data == "limit_total_sub5":
+                self.config.set_max_total_demandes(max(0, tot - 5))
+
+            elif data == "limit_user_3":
+                self.config.set_max_demandes_per_user(3)
+            elif data == "limit_user_add1":
+                self.config.set_max_demandes_per_user(usr + 1)
+            elif data == "limit_user_sub1":
+                self.config.set_max_demandes_per_user(max(1, usr - 1))
+
+            elif data == "limit_input_total":
+                context.user_data["waiting_limit_input"] = "total"
+                await query.edit_message_text(
+                    "🔢 Tapez au clavier le <b>nombre total maximum</b> de demandes autorisées (0 = illimité) :",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_limits")]])
+                )
+                return
+
+            elif data == "limit_input_user":
+                context.user_data["waiting_limit_input"] = "user"
+                await query.edit_message_text(
+                    "🔢 Tapez au clavier le <b>nombre maximum de demandes par personne</b> (0 = illimité) :",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_limits")]])
+                )
+                return
+
+            # Rafraîchissement avec les nouvelles valeurs
+            msg, kb = self.interface.get_limits_menu()
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            return
+
         message, keyboard = self.interface.route_callback(data, user_id, first_name)
         if message and keyboard:
-            # Si le message actuel est une photo, on supprime et renvoie en texte pur
             if query.message and query.message.photo:
                 chat_id = query.message.chat_id
                 await query.message.delete()
@@ -170,38 +243,61 @@ class UserHandlers:
         if not update.message:
             return
 
-        # 0. Saisie de recherche dynamique dans les demandes disponibles
+        # Saisie d'un quota au clavier par le propriétaire
+        if update.message.text and context.user_data and context.user_data.get("waiting_limit_input"):
+            if self.config.is_owner(update.effective_user.id):
+                raw = update.message.text.strip()
+                if raw.isdigit():
+                    mode = context.user_data.pop("waiting_limit_input")
+                    val = int(raw)
+                    if mode == "total":
+                        self.config.set_max_total_demandes(val)
+                        libelle = "Illimité" if val == 0 else str(val)
+                        await update.message.reply_text(f"✅ Plafond global défini à : <b>{libelle}</b>", parse_mode="HTML")
+                    elif mode == "user":
+                        self.config.set_max_demandes_per_user(val)
+                        libelle = "Illimité" if val == 0 else str(val)
+                        await update.message.reply_text(f"✅ Plafond par personne défini à : <b>{libelle}</b>", parse_mode="HTML")
+
+                    msg, kb = self.interface.get_limits_menu()
+                    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+                    return
+                else:
+                    await update.message.reply_text("❌ Veuillez saisir un nombre entier positif (ex: 0, 5, 10).")
+                    return
+
+        # Saisie de recherche dynamique dans les demandes disponibles
         if update.message.text and context.user_data and context.user_data.get("waiting_dispo_search"):
             from handlers.admin_handlers import AdminHandlers
             admin_h = AdminHandlers(self.config, self.db_manager)
             await admin_h.dispo.handle_search_text_input(update, context)
             return
 
-        # 0 bis. Saisie de recherche dynamique dans les demandes suivies
+        # Saisie de recherche dynamique dans les demandes suivies
         if update.message.text and context.user_data and context.user_data.get("waiting_suivi_search"):
             from handlers.admin_handlers import AdminHandlers
             admin_h = AdminHandlers(self.config, self.db_manager)
             await admin_h.suivi.handle_search_text_input(update, context)
             return
 
-        # 1. Collecte des fichiers/messages de l'Admin en cours d'envoi
+        # Collecte des fichiers/messages de l'Admin en cours d'envoi
         if context.user_data and context.user_data.get("contact_session"):
             from handlers.admin_handlers import AdminHandlers
             admin_h = AdminHandlers(self.config, self.db_manager)
             if await admin_h.handle_collect_admin_media(update, context):
                 return
 
-        # 2. Réponse du Demandeur vers l'Admin
+        # Réponse du Demandeur vers l'Admin
         if context.user_data and context.user_data.get("replying_to_admin"):
             await self._handle_user_reply_relay(update, context)
             return
 
-        # 3. Édition d'une demande par l'utilisateur (texte)
+        # Édition d'une demande par l'utilisateur (texte)
         if update.message.text and context.user_data and context.user_data.get("editing"):
             await self.edition.handle_edit_text_input(update, context)
             return
 
-        # 4. Fallback compte utilisateur
+        # Fallback compte utilisateur
         await self.compte.handle_text_messages(update, context)
 
     async def _handle_user_reply_relay(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

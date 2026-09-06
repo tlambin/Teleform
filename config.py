@@ -187,3 +187,27 @@ class Config:
         if self._db_manager:
             return self._db_manager.is_bot_active()
         return True
+
+    def get_max_total_demandes(self) -> int:
+        """Retourne le quota global via DatabaseManager (fallback 0)."""
+        if self._db_manager:
+            return self._db_manager.get_max_total_demandes()
+        return 0
+
+    def set_max_total_demandes(self, limit: int) -> bool:
+        """Modifie le quota global via DatabaseManager."""
+        if self._db_manager:
+            return self._db_manager.set_max_total_demandes(limit)
+        return False
+
+    def get_max_demandes_per_user(self) -> int:
+        """Retourne le quota individuel via DatabaseManager (fallback 3)."""
+        if self._db_manager:
+            return self._db_manager.get_max_demandes_per_user()
+        return 3
+
+    def set_max_demandes_per_user(self, limit: int) -> bool:
+        """Modifie le quota individuel via DatabaseManager."""
+        if self._db_manager:
+            return self._db_manager.set_max_demandes_per_user(limit)
+        return False

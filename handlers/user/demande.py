@@ -8,13 +8,50 @@ logger = logging.getLogger(__name__)
 
 
 class DemandeManager:
-    """Gestionnaire d'affichage et de navigation dans les demandes."""
+    """Gestionnaire d'affichage, de navigation et de vérification des quotas."""
 
     def __init__(self, db_manager, config, account_manager):
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
         logger.info("DemandeManager initialisé")
+
+    def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
+        """Contrôle les plafonds global et individuel avant création."""
+        # 1. Vérification du quota global
+        max_total = self.config.get_max_total_demandes()
+        if max_total > 0:
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) AS total FROM demandes WHERE statut NOT IN ('❌ Abandonnée')")
+                row = cursor.fetchone()
+                total_actif = row["total"] if row else 0
+
+            if total_actif >= max_total:
+                return False, (
+                    "🚫 <b>Service complet</b>\n\n"
+                    "Le plafond global de demandes acceptées sur la plateforme a été atteint.\n"
+                    "Merci de réessayer un peu plus tard."
+                )
+
+        # 2. Vérification du quota par personne
+        max_user = self.config.get_max_demandes_per_user()
+        if max_user > 0:
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) AS count_user FROM demandes WHERE user_id = %s AND statut NOT IN ('❌ Abandonnée')",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
+                user_actif = row["count_user"] if row else 0
+
+            if user_actif >= max_user:
+                return False, (
+                    "⚠️ <b>Limite atteinte</b>\n\n"
+                    f"Vous avez déjà <b>{user_actif}/{max_user}</b> demande(s) enregistrée(s).\n"
+                    "Attendez le traitement d'une demande existante avant d'en formuler une nouvelle."
+                )
+
+        return True, ""
 
     async def voir_demandes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Point d'entrée pour afficher les demandes de l'utilisateur."""
@@ -52,7 +89,7 @@ class DemandeManager:
         page: int = 0,
         edit_message: bool = True
     ):
-        """Affiche une demande à la fois avec navigation dynamique (page précédente / suivante)."""
+        """Affiche une demande à la fois avec navigation dynamique."""
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
@@ -69,16 +106,15 @@ class DemandeManager:
                 demandes = cursor.fetchall()
 
             if not demandes:
-                await self._send_no_requests_message(update, edit_message)
+                await self._send_no_requests_message(update, edit_message, user_id)
                 return
 
             total_pages = len(demandes)
             page = max(0, min(page, total_pages - 1))
             demande = demandes[page]
 
-            # Construction de la fiche
             message = self._format_demande_card(demande, page, total_pages)
-            keyboard = self._build_navigation_keyboard(demande, page, total_pages)
+            keyboard = self._build_navigation_keyboard(demande, page, total_pages, user_id)
 
             if edit_message and update.callback_query:
                 await update.callback_query.edit_message_text(
@@ -115,7 +151,6 @@ class DemandeManager:
             f"📊 <b>Statut :</b> <code>{demande.get('statut', 'En cours')}</code>"
         ]
 
-        # Réseaux
         reseaux = []
         if demande.get("instagram"):
             reseaux.append(f"📷 <a href='https://instagram.com/{demande['instagram']}'>@{demande['instagram']}</a>")
@@ -124,32 +159,30 @@ class DemandeManager:
         if reseaux:
             lignes.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
 
-        # Détails
         if demande.get("details"):
             det = demande["details"]
             det_short = (det[:150] + "...") if len(det) > 150 else det
             lignes.append(f"💬 <b>Remarque :</b> <i>{det_short}</i>")
 
-        # Date de création
         date_str = str(demande.get("date_creation", ""))[:16]
         lignes.append(f"\n📅 <i>Créée le {date_str}</i>")
 
         return "\n".join(lignes)
 
-    def _build_navigation_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Génère les boutons de pagination et d'actions (modifier/supprimer)."""
+    def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
+        """Génère les boutons de pagination, de modification et d'ajout conditionné aux quotas."""
         buttons = []
         demande_id = demande["id"]
         statut = demande.get("statut", "")
 
-        # Actions sur la demande si elle n'est pas encore traitée
-        if statut in ["📨 Reçue", "En attente"]:
+        # Actions d'édition si non traitée
+        if statut in ["📨 Reçue", "⏳ En attente"]:
             buttons.append([
                 InlineKeyboardButton("✏️ Modifier", callback_data=f"modify_{demande_id}"),
                 InlineKeyboardButton("🗑️ Supprimer", callback_data=f"delete_{demande_id}")
             ])
 
-        # Barre de pagination
+        # Barre de navigation
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"nav_page_{page - 1}"))
@@ -159,23 +192,37 @@ class DemandeManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # Raccourcis globaux
+        # Contrôle dynamique du bouton de création
+        can_create, _ = self.check_creation_quota(user_id)
+        btn_creation = (
+            InlineKeyboardButton("➕ Nouvelle demande", callback_data="new_demande")
+            if can_create
+            else InlineKeyboardButton("🔒 Quota atteint", callback_data="quota_reached_info")
+        )
+
         buttons.append([
-            InlineKeyboardButton("➕ Nouvelle demande", callback_data="new_demande"),
+            btn_creation,
             InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
         ])
 
         return InlineKeyboardMarkup(buttons)
 
-    async def _send_no_requests_message(self, update: Update, edit_message: bool):
+    async def _send_no_requests_message(self, update: Update, edit_message: bool, user_id: int):
         """Message affiché quand aucune demande n'est enregistrée."""
+        can_create, _ = self.check_creation_quota(user_id)
+        btn_creation = (
+            InlineKeyboardButton("➕ Créer une demande", callback_data="new_demande")
+            if can_create
+            else InlineKeyboardButton("🔒 Quota atteint", callback_data="quota_reached_info")
+        )
+
         text = (
             "📭 <b>Aucune demande active</b>\n\n"
             "Vous n'avez pas encore soumis de demande.\n"
             "Cliquez ci-dessous pour en créer une !"
         )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Créer une demande", callback_data="new_demande")],
+            [btn_creation],
             [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
         ])
 

@@ -322,6 +322,30 @@ class DatabaseManager:
         """Bascule l'acceptation globale des demandes."""
         return self.set_config_value("bot_active", "true" if active else "false")
 
+    def get_max_total_demandes(self) -> int:
+        """Retourne la limite globale de demandes (0 = illimité)."""
+        val = self.get_config_value("max_total_demandes", "0")
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return 0
+
+    def set_max_total_demandes(self, limit: int) -> bool:
+        """Met à jour le plafond global de demandes."""
+        return self.set_config_value("max_total_demandes", str(max(0, limit)))
+
+    def get_max_demandes_per_user(self) -> int:
+        """Retourne la limite par utilisateur (3 par défaut, 0 = illimité)."""
+        val = self.get_config_value("max_demandes_per_user", "3")
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return 3
+
+    def set_max_demandes_per_user(self, limit: int) -> bool:
+        """Met à jour le plafond par utilisateur."""
+        return self.set_config_value("max_demandes_per_user", str(max(0, limit)))
+
     def get_owner_id(self) -> int:
         """Retourne l'identifiant du compte propriétaire configuré."""
         val = self.get_config_value("owner_id", str(getattr(self.config, "OWNER_ID", 0)))

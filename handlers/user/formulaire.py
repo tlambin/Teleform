@@ -1,4 +1,4 @@
-"""Formulaire de création de demandes."""
+"""Formulaire de création de demandes avec vérification des quotas."""
 
 import logging
 from functools import wraps
@@ -137,9 +137,70 @@ class FormulaireManager:
             return False
         return True
 
+    async def _check_quotas(self, update: Update, user_id: int) -> bool:
+        """Vérifie que les quotas global et personnel ne sont pas atteints."""
+        # 1. Vérification du quota global
+        max_total = self.config.get_max_total_demandes()
+        if max_total > 0:
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) AS total FROM demandes WHERE statut NOT IN ('❌ Abandonnée')")
+                row = cursor.fetchone()
+                total_actif = row["total"] if row else 0
+
+            if total_actif >= max_total:
+                msg = (
+                    "🚫 <b>Service complet</b>\n\n"
+                    "Le plafond global de demandes acceptées sur la plateforme a été atteint.\n"
+                    "Merci de réessayer un peu plus tard."
+                )
+                if update.callback_query:
+                    await update.callback_query.answer("Plafond global atteint.", show_alert=True)
+                    await update.callback_query.edit_message_text(
+                        msg,
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]])
+                    )
+                elif update.message:
+                    await update.message.reply_text(msg, parse_mode="HTML")
+                return False
+
+        # 2. Vérification du quota personnel
+        max_user = self.config.get_max_demandes_per_user()
+        if max_user > 0:
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) AS count_user FROM demandes WHERE user_id = %s AND statut NOT IN ('❌ Abandonnée')",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
+                user_actif = row["count_user"] if row else 0
+
+            if user_actif >= max_user:
+                msg = (
+                    "⚠️ <b>Limite atteinte</b>\n\n"
+                    f"Vous avez déjà <b>{user_actif}/{max_user}</b> demande(s) active(s).\n"
+                    "Vous devez attendre le traitement d'une demande existante avant d'en créer une nouvelle."
+                )
+                if update.callback_query:
+                    await update.callback_query.answer("Quota individuel atteint.", show_alert=True)
+                    await update.callback_query.edit_message_text(
+                        msg,
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]])
+                    )
+                elif update.message:
+                    await update.message.reply_text(msg, parse_mode="HTML")
+                return False
+
+        return True
+
     async def new_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Initialise le formulaire via la commande /new."""
         if not await self._check_service_active(update):
+            return ConversationHandler.END
+
+        user_id = update.effective_user.id
+        if not await self._check_quotas(update, user_id):
             return ConversationHandler.END
 
         registered = await self.account_manager.ensure_user_registered(update)
@@ -149,7 +210,7 @@ class FormulaireManager:
             return ConversationHandler.END
 
         context.user_data["demande"] = {}
-        context.user_data["user_id"] = update.effective_user.id
+        context.user_data["user_id"] = user_id
 
         await update.message.reply_text(
             "📝 <b>Création d'une nouvelle demande</b>\n\n"
@@ -170,13 +231,17 @@ class FormulaireManager:
         if not await self._check_service_active(update):
             return ConversationHandler.END
 
+        user_id = query.from_user.id
+        if not await self._check_quotas(update, user_id):
+            return ConversationHandler.END
+
         registered = await self.account_manager.ensure_user_registered(update)
         if not registered:
             await query.edit_message_text("❌ Impossible d'enregistrer votre compte.")
             return ConversationHandler.END
 
         context.user_data["demande"] = {}
-        context.user_data["user_id"] = query.from_user.id
+        context.user_data["user_id"] = user_id
 
         await query.edit_message_text(
             "📝 <b>Création d'une nouvelle demande</b>\n\n"
@@ -236,7 +301,6 @@ class FormulaireManager:
 
     async def skip_nom(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.setdefault("demande", {})["nom"] = None
-        target = update.callback_query if update.callback_query else update.message
         text = "⏭️ Nom ignoré.\n\nIndiquez son âge (entre 18 et 40 ans) :"
         kb = self.navigation.create_navigation_keyboard(self.AGE)
 
@@ -304,9 +368,8 @@ class FormulaireManager:
             return self.PHOTO
 
         try:
-            # Récupère la photo la plus adaptée (meilleure résolution sans excéder 1280px)
             photos = update.message.photo
-            best = photos[-1]  # Dernière résolution fournie par Telegram par défaut
+            best = photos[-1]
             for p in sorted(photos, key=lambda x: x.file_size or 0, reverse=True):
                 if p.width <= 1280 and p.height <= 1280:
                     best = p
@@ -473,7 +536,6 @@ class FormulaireManager:
             )
             return self.MONTANT
 
-        # Mode Standard
         demande = context.user_data.setdefault("demande", {})
         demande["prioritaire"] = False
         demande["montant"] = 0
