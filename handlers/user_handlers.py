@@ -113,6 +113,7 @@ class UserHandlers:
             )
 
     async def handle_interface_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Routeur des boutons de navigation générale (menus, paramètres, panneaux)."""
         query = update.callback_query
         if not query or not query.data:
             return
@@ -122,6 +123,7 @@ class UserHandlers:
         first_name = query.from_user.first_name
         data = query.data
 
+        # Contrôles de sécurité
         owner_actions = {
             "gerer_admins", "admin_ajouter", "admin_supprimer",
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance"
@@ -144,11 +146,22 @@ class UserHandlers:
 
         message, keyboard = self.interface.route_callback(data, user_id, first_name)
         if message and keyboard:
-            await query.edit_message_text(
-                message,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
+            # Si le message actuel est une photo, on supprime et renvoie en texte pur
+            if query.message and query.message.photo:
+                chat_id = query.message.chat_id
+                await query.message.delete()
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+            else:
+                await query.edit_message_text(
+                    message,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
         else:
             await query.answer("❌ Action indisponible.", show_alert=True)
 

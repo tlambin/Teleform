@@ -1,19 +1,82 @@
-"""Module de gestion des demandes prises en charge par les administrateurs."""
+"""Module de gestion et consultation des demandes suivies par les administrateurs avec affichage automatique des photos."""
 
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Update,
+)
 from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
 
 class SuiviManager:
-    """Gestionnaire des demandes suivies par l'administrateur connecté."""
+    """Gestionnaire des demandes prises en charge avec rendu visuel direct."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
         logger.info("SuiviManager initialisé")
+
+    async def show_demandes_suivies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Point d'entrée pour afficher la première page des demandes suivies."""
+        await self.show_demandes_suivies_page(update, context, page=0)
+
+    async def show_demandes_suivies_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+        """Affiche les demandes suivies avec photo directe et pagination fluide."""
+        query = update.callback_query
+        if not query or not update.effective_user:
+            return
+
+        admin_id = update.effective_user.id
+
+        try:
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT d.*, u.username, u.first_name AS user_first_name,
+                           ds.date_suivi, ds.notes_admin
+                    FROM demandes d
+                    JOIN demandes_suivi ds ON d.id = ds.demande_id
+                    JOIN users u ON d.user_id = u.user_id
+                    WHERE ds.admin_id = %s
+                    ORDER BY ds.date_suivi DESC
+                    """,
+                    (admin_id,),
+                )
+                demandes = cursor.fetchall()
+
+            if not demandes:
+                msg = (
+                    "💌 <b>Mes Demandes Suivies</b>\n\n"
+                    "❤️ Vous ne suivez aucune demande actuellement.\n"
+                    "Consultez les demandes disponibles pour en prendre en charge."
+                )
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")],
+                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                ])
+                await self._render_clean_text(query, context, msg, keyboard)
+                return
+
+            total = len(demandes)
+            page = max(0, min(page, total - 1))
+            demande = demandes[page]
+
+            text_card = self._format_suivi_card(demande, page, total)
+            keyboard = self._build_suivi_keyboard(demande, page, total)
+            photo_id = demande.get("photo_id")
+
+            if photo_id:
+                await self._render_photo(query, context, photo_id, text_card, keyboard)
+            else:
+                await self._render_clean_text(query, context, text_card, keyboard)
+
+        except Exception as exc:
+            logger.error("Erreur affichage demandes suivies: %s", exc, exc_info=True)
+            await query.answer("❌ Erreur lors du chargement des suivis.", show_alert=True)
 
     async def suivre_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Assigne une demande disponible à l'administrateur connecté."""
@@ -32,23 +95,23 @@ class SuiviManager:
             return
 
         try:
-            with self.db_manager.get_cursor() as cursor:
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     "SELECT id FROM demandes_suivi WHERE demande_id = %s AND admin_id = %s",
                     (demande_id, user_id),
                 )
                 if cursor.fetchone():
+                    await query.answer("⚠️ Demande déjà suivie.")
                     return
 
                 cursor.execute(
                     """
-                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi)
-                    VALUES (%s, %s, NOW())
+                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                    VALUES (%s, %s, NOW(), NOW(), 'active')
                     """,
                     (demande_id, user_id),
                 )
 
-                # Mise à jour du statut et de l'administrateur référent
                 cursor.execute(
                     """
                     UPDATE demandes
@@ -58,79 +121,65 @@ class SuiviManager:
                     (user_id, demande_id),
                 )
 
-            # Rafraîchit l'affichage en basculant directement sur les demandes suivies
+            await query.answer("✅ Demande prise en charge !")
             await self.show_demandes_suivies(update, context)
 
         except Exception as exc:
             logger.error("Erreur prise en charge demande %s: %s", demande_id, exc, exc_info=True)
+            await query.answer("❌ Erreur lors de la prise en charge.", show_alert=True)
 
-    async def show_demandes_suivies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Point d'entrée pour afficher la première page des demandes suivies."""
-        await self.show_demandes_suivies_page(update, context, page=0)
-
-    async def show_demandes_suivies_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-        """Affiche les demandes suivies avec pagination dynamique sur un seul message éditable."""
-        query = update.callback_query
-        if not query or not update.effective_user:
-            return
-
-        user_id = update.effective_user.id
+    async def _render_photo(self, query, context: ContextTypes.DEFAULT_TYPE, photo_id: str, caption: str, keyboard: InlineKeyboardMarkup):
+        """Met à jour l'affichage en mode photo via context.bot."""
+        is_current_photo = bool(query.message and query.message.photo)
+        chat_id = query.message.chat_id
 
         try:
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT d.*, u.username, u.first_name AS user_first_name,
-                           ds.date_suivi, ds.notes_admin
-                    FROM demandes d
-                    JOIN demandes_suivi ds ON d.id = ds.demande_id
-                    JOIN users u ON d.user_id = u.user_id
-                    WHERE ds.admin_id = %s
-                    ORDER BY ds.date_suivi DESC
-                    """,
-                    (user_id,),
+            if is_current_photo:
+                new_media = InputMediaPhoto(media=photo_id, caption=caption, parse_mode="HTML")
+                await query.edit_message_media(media=new_media, reply_markup=keyboard)
+            else:
+                await query.message.delete()
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_id,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
                 )
-                demandes = cursor.fetchall()
+        except Exception as err:
+            logger.warning("Recréation du message photo suivi suite à: %s", err)
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=photo_id,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
 
-            if not demandes:
-                msg = (
-                    "💌 <b>Mes Demandes Suivies</b>\n\n"
-                    "❤️ Vous ne suivez aucune demande actuellement.\n"
-                    "Consultez les demandes disponibles pour en prendre en charge."
-                )
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")],
-                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
-                ])
-                await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
-                return
+    async def _render_clean_text(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
+        """Gère l'affichage en mode texte (si aucune photo n'est associée)."""
+        is_current_photo = bool(query.message and query.message.photo)
 
-            total = len(demandes)
-            page = max(0, min(page, total - 1))
-            demande = demandes[page]
-
-            message = self._format_suivi_card(demande, page, total)
-            keyboard = self._build_suivi_keyboard(demande, page, total)
-
+        if is_current_photo:
+            chat_id = query.message.chat_id
+            await query.message.delete()
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+                disable_web_page_preview=True
+            )
+        else:
             await query.edit_message_text(
-                message,
+                text=text,
                 parse_mode="HTML",
                 reply_markup=keyboard,
                 disable_web_page_preview=True
             )
 
-        except Exception as exc:
-            logger.error("Erreur affichage demandes suivies: %s", exc, exc_info=True)
-            await query.edit_message_text(
-                "❌ Une erreur est survenue lors du chargement de vos suivis.",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour", callback_data="start_menu")
-                ]])
-            )
-
     def _format_suivi_card(self, demande: dict, page: int, total: int) -> str:
-        """Formate la fiche d'une demande suivie."""
+        """Formate la fiche d'une demande suivie (adaptée aux limites de légende photo)."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
@@ -159,7 +208,7 @@ class SuiviManager:
 
         if demande.get("details"):
             det = demande["details"]
-            det_court = (det[:150] + "...") if len(det) > 150 else det
+            det_court = (det[:140] + "...") if len(det) > 140 else det
             lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
 
         if demande.get("notes_admin"):
@@ -169,22 +218,14 @@ class SuiviManager:
         return "\n".join(lines)
 
     def _build_suivi_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Construit le clavier d'actions (statut, photo, contact) et de pagination."""
+        """Construit le clavier d'actions (statut, contact) et de pagination."""
         demande_id = demande["id"]
         buttons = []
 
         # Actions principales
-        action_row = [
-            InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande_id}")
-        ]
-        if demande.get("photo_id"):
-            action_row.append(InlineKeyboardButton("📷 Photo", callback_data=f"voir_photo_{demande_id}"))
-
-        buttons.append(action_row)
-
-        # Contact direct du demandeur
         buttons.append([
-            InlineKeyboardButton("💬 Contacter le demandeur", callback_data=f"contacter_{demande_id}")
+            InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande_id}"),
+            InlineKeyboardButton("💬 Contacter le demandeur", callback_data=f"contacter_{demande_id}"),
         ])
 
         # Pagination
