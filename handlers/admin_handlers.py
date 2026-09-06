@@ -66,13 +66,13 @@ class AdminHandlers:
                 await self.dispo.show_demandes_disponibles(update, context)
 
             elif data.startswith("dispo_"):
-                await self._route_dispo_pagination(update, context, data)
+                await self.dispo.handle_callback_routing(update, context, data)
 
             elif data == "demandes_suivies":
                 await self.suivi.show_demandes_suivies(update, context)
 
             elif data.startswith("suivi_"):
-                await self._route_suivi_pagination(update, context, data)
+                await self.suivi.handle_callback_routing(update, context, data)
 
             elif data.startswith("voir_photo_"):
                 await self.photos.voir_photo_demande(update, context)
@@ -126,7 +126,7 @@ class AdminHandlers:
             logger.error("Erreur callback admin '%s': %s", data, exc, exc_info=True)
             await self._handle_callback_error(query)
 
-    async def _route_dispo_pagination(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    """ async def _route_dispo_pagination(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         parts = data.split("_")
         page = 0
         if len(parts) >= 3 and parts[-1].isdigit():
@@ -135,7 +135,7 @@ class AdminHandlers:
                 page = max(0, current_idx - 1)
             elif "next" in data:
                 page = current_idx + 1
-        await self.dispo.show_demandes_disponibles_page(update, context, page)
+        await self.dispo.show_demandes_disponibles_page(update, context, page)"""
 
     async def _route_suivi_pagination(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         parts = data.split("_")

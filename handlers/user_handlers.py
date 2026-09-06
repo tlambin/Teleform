@@ -170,6 +170,20 @@ class UserHandlers:
         if not update.message:
             return
 
+        # 0. Saisie de recherche dynamique dans les demandes disponibles
+        if update.message.text and context.user_data and context.user_data.get("waiting_dispo_search"):
+            from handlers.admin_handlers import AdminHandlers
+            admin_h = AdminHandlers(self.config, self.db_manager)
+            await admin_h.dispo.handle_search_text_input(update, context)
+            return
+
+        # 0 bis. Saisie de recherche dynamique dans les demandes suivies
+        if update.message.text and context.user_data and context.user_data.get("waiting_suivi_search"):
+            from handlers.admin_handlers import AdminHandlers
+            admin_h = AdminHandlers(self.config, self.db_manager)
+            await admin_h.suivi.handle_search_text_input(update, context)
+            return
+
         # 1. Collecte des fichiers/messages de l'Admin en cours d'envoi
         if context.user_data and context.user_data.get("contact_session"):
             from handlers.admin_handlers import AdminHandlers
