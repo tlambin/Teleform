@@ -168,6 +168,12 @@ class OwnerHandlers:
             await self.show_admin_permissions_menu(update, context, admin_target_id)
         elif data.startswith("set_perm_"):
             await self.handle_set_permission(update, context, data)
+        elif data.startswith("owner_edit_alias_"):
+            admin_target_id = int(data.replace("owner_edit_alias_", ""))
+            context.user_data["target_alias_user_id"] = admin_target_id
+            from handlers.admin.alias import AliasManager
+            alias_mgr = AliasManager(self.db_manager, self.config)
+            await alias_mgr.modifier_alias(update, context)
 
     # ==================== GESTION DES PERMISSIONS ADMIN ====================
 
@@ -183,7 +189,6 @@ class OwnerHandlers:
         reseau = perms.get("perm_reseaux", "all")
         typ = perms.get("perm_type", "all")
 
-        # Labels avec témoins d'activation
         btn_res_all = "✅ Tous réseaux" if reseau == "all" else "Tous réseaux"
         btn_res_insta = "✅ Insta seul" if reseau == "insta" else "Insta seul"
         btn_res_snap = "✅ Snap seul" if reseau == "snap" else "Snap seul"
@@ -202,6 +207,9 @@ class OwnerHandlers:
                 InlineKeyboardButton(btn_typ_all, callback_data=f"set_perm_{admin_id}_type_all"),
                 InlineKeyboardButton(btn_typ_prio, callback_data=f"set_perm_{admin_id}_type_prio_only"),
                 InlineKeyboardButton(btn_typ_std, callback_data=f"set_perm_{admin_id}_type_standard_only"),
+            ],
+            [
+                InlineKeyboardButton(f"🏷️ Renommer {alias}", callback_data=f"owner_edit_alias_{admin_id}")
             ],
             [
                 InlineKeyboardButton("🔙 Équipe d'administration", callback_data="gerer_admins")
@@ -237,7 +245,6 @@ class OwnerHandlers:
             return
 
         parts = data.split("_")
-        # Structure attendue : set_perm_<admin_id>_<cle>_<valeur>
         admin_id = int(parts[2])
         cle = f"perm_{parts[3]}"
         valeur = "_".join(parts[4:])
@@ -278,7 +285,7 @@ class OwnerHandlers:
             return ConversationHandler.END
 
     async def traiter_admin_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Vérifie l'existence de l'utilisateur, lui accorde les privilèges admin et propose de configurer ses droits."""
+        """Vérifie l'utilisateur, l'ajoute comme admin, notifie en privé et propose de configurer ses droits."""
         if not update.message or not update.message.text:
             return self.WAITING_ADMIN_ID
 
@@ -317,8 +324,8 @@ class OwnerHandlers:
 
                 cursor.execute(
                     """
-                    INSERT INTO admins (user_id, alias, added_by, perm_reseaux, perm_type, date_added)
-                    VALUES (%s, %s, %s, 'all', 'all', NOW())
+                    INSERT INTO admins (user_id, alias, added_by, perm_reseaux, perm_type, alias_locked, date_added)
+                    VALUES (%s, %s, %s, 'all', 'all', FALSE, NOW())
                     """,
                     (target_id, alias, user_id)
                 )
@@ -326,6 +333,31 @@ class OwnerHandlers:
             self.config.add_admin(target_id)
             logger.info("Admin ajouté: %s (%s)", target_id, alias)
 
+            # 1. Envoi de la notification et de la proposition d'alias au nouvel administrateur
+            try:
+                welcome_msg = (
+                    "🎉 <b>Bienvenue dans l'équipe d'administration !</b>\n\n"
+                    "Le propriétaire vous a accordé les droits d'accès pour traiter et suivre les demandes.\n\n"
+                    f"🏷️ <b>Votre alias provisoire :</b> <code>{alias}</code>\n\n"
+                    "⚠️ <b>Important :</b> Vous avez la possibilité de choisir votre propre pseudonyme officiel.\n"
+                    "<i>Attention : vous ne disposez que d'<b>une seule modification</b>. Une fois validé, il sera verrouillé.</i>\n\n"
+                    "Cliquez ci-dessous pour le définir dès maintenant :"
+                )
+                welcome_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🏷️ DÉFINIR MON ALIAS", callback_data="modifier_alias")],
+                    [InlineKeyboardButton("🚀 Accéder au menu principal", callback_data="start_menu")]
+                ])
+                await context.bot.send_message(
+                    chat_id=target_id,
+                    text=welcome_msg,
+                    parse_mode="HTML",
+                    reply_markup=welcome_kb
+                )
+                logger.info("Message de bienvenue et proposition d'alias envoyés à l'admin %s", target_id)
+            except Exception as notif_err:
+                logger.warning("Impossible d'envoyer la notification de bienvenue à l'admin %s : %s", target_id, notif_err)
+
+            # 2. Confirmation affichée au propriétaire
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛡️ Régler ses permissions", callback_data=f"perm_admin_{target_id}")],
                 [InlineKeyboardButton("👥 Gestion Admins", callback_data="gerer_admins")],
@@ -336,9 +368,9 @@ class OwnerHandlers:
                 f"✅ <b>Administrateur ajouté avec succès !</b>\n\n"
                 f"👤 <b>Nom :</b> {user_data.get('first_name', '')}\n"
                 f"🆔 <b>ID :</b> <code>{target_id}</code>\n"
-                f"🏷️ <b>Alias attribué :</b> <code>{alias}</code>\n\n"
-                "<i>Par défaut, tous les accès lui sont ouverts (Tous réseaux, Tout type). "
-                "Vous pouvez restreindre ses accès ci-dessous :</i>",
+                f"🏷️ <b>Alias provisoire :</b> <code>{alias}</code>\n\n"
+                "📨 <i>Une notification privée a été envoyée au nouvel administrateur l'invitant à définir son alias unique.</i>\n"
+                "Vous pouvez configurer ses permissions de traitement ci-dessous :",
                 parse_mode="HTML",
                 reply_markup=keyboard
             )

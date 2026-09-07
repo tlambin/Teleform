@@ -197,11 +197,13 @@ class TelegramBot:
         """Crée les ConversationHandlers du bot."""
         demande_handler = self.user_handlers.formulaire.get_conversation_handler()
 
+        # Intercepte à la fois la modification par l'admin ('modifier_alias')
+        # et le forçage par l'Owner ('owner_edit_alias_<id>')
         modify_alias_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
                     self.admin_handlers.alias.modifier_alias,
-                    pattern="^modifier_alias$",
+                    pattern=r"^(modifier_alias|owner_edit_alias_\d+)$",
                 )
             ],
             states={

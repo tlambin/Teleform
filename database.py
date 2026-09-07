@@ -168,6 +168,7 @@ class DatabaseManager:
                 added_by BIGINT,
                 perm_reseaux VARCHAR(16) DEFAULT 'all',
                 perm_type VARCHAR(16) DEFAULT 'all',
+                alias_locked BOOLEAN DEFAULT FALSE,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
@@ -247,10 +248,11 @@ class DatabaseManager:
                 for query in tables:
                     cursor.execute(query)
 
-                # Migration automatique des colonnes
+                # Migration automatique des colonnes pour tables déjà créées
                 columns_to_add = [
                     ("admins", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
                     ("admins", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
+                    ("admins", "alias_locked", "BOOLEAN DEFAULT FALSE"),
                     ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
                     ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
                     ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
@@ -454,6 +456,28 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur mise à jour alias admin %s: %s", user_id, exc)
             return False
+
+    def can_admin_edit_alias(self, user_id: int) -> bool:
+        """Indique si l'admin peut encore définir son alias (l'owner peut toujours)."""
+        if self.config.is_owner(user_id):
+            return True
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT alias_locked FROM admins WHERE user_id = %s", (user_id,))
+                row = cursor.fetchone()
+                return not bool(row.get("alias_locked")) if row else False
+        except Exception as exc:
+            logger.error("Erreur vérification verrou alias pour %s: %s", user_id, exc)
+            return False
+
+    def lock_admin_alias(self, user_id: int):
+        """Verrouille définitivement l'alias pour un administrateur."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("UPDATE admins SET alias_locked = TRUE WHERE user_id = %s", (user_id,))
+            self.clear_cache(f"alias_{user_id}")
+        except Exception as exc:
+            logger.error("Erreur verrouillage alias %s: %s", user_id, exc)
 
     # ==================== GESTION DES PERMISSIONS ADMIN ====================
 
