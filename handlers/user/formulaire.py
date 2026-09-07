@@ -578,7 +578,7 @@ class FormulaireManager:
         return ConversationHandler.END
 
     async def save_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enregistre définitivement la demande dans MySQL."""
+        """Enregistre définitivement la demande dans MySQL et diffuse l'alerte filtrée aux admins."""
         demande = context.user_data.get("demande", {})
         user_id = update.effective_user.id if update.effective_user else None
 
@@ -641,6 +641,9 @@ class FormulaireManager:
             elif update.message:
                 await update.message.reply_text(recap, parse_mode="HTML")
 
+            # Diffusion filtrée selon les préférences de chaque admin
+            await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet, demande)
+
         except Exception as exc:
             logger.error("Erreur lors de la sauvegarde de la demande: %s", exc, exc_info=True)
             err_msg = "❌ Erreur technique lors de la sauvegarde. Veuillez contacter un administrateur."
@@ -648,3 +651,54 @@ class FormulaireManager:
                 await update.callback_query.edit_message_text(err_msg)
             elif update.message:
                 await update.message.reply_text(err_msg)
+
+    async def _broadcast_new_demande_alert(
+        self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict
+    ):
+        """Avertit l'équipe en appliquant les préférences (sonore, silencieux ou coupé)."""
+        prio_icon = "💎" if demande.get("prioritaire") else "📝"
+        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
+        montant_str = f" ({demande.get('montant', 0):.2f}€)" if demande.get("prioritaire") else ""
+
+        alert_text = (
+            f"🔔 <b>Nouvelle demande disponible #{req_num}</b>\n\n"
+            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
+            f"📍 <b>Localisation :</b> {demande.get('localisation')}\n"
+            f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}"
+        )
+        alert_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❤️ Prendre en charge", callback_data=f"suivre_demande_{demande_id}")],
+            [InlineKeyboardButton("📮 Voir les disponibles", callback_data="demandes_disponibles")]
+        ])
+
+        for admin_id in self.config.get_all_admins():
+            try:
+                aid = int(admin_id)
+                prefs = self.db_manager.get_admin_preferences(aid)
+                notif_mode = prefs.get("notif_new_mode", "sound")
+
+                if notif_mode == "off":
+                    continue
+
+                is_silent = (notif_mode == "silent")
+
+                photo_id = demande.get("photo_id")
+                if photo_id:
+                    await context.bot.send_photo(
+                        chat_id=aid,
+                        photo=photo_id,
+                        caption=alert_text,
+                        parse_mode="HTML",
+                        reply_markup=alert_kb,
+                        disable_notification=is_silent
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=aid,
+                        text=alert_text,
+                        parse_mode="HTML",
+                        reply_markup=alert_kb,
+                        disable_notification=is_silent
+                    )
+            except Exception as e:
+                logger.warning("Impossible d'envoyer l'alerte nouvelle demande à %s : %s", admin_id, e)

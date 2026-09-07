@@ -29,7 +29,6 @@ class DatabaseManager:
         import os
         from dotenv import load_dotenv
 
-        # Force le rechargement du fichier .env depuis le dossier racine du bot
         env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
         if os.path.exists(env_path):
             load_dotenv(dotenv_path=env_path, override=True)
@@ -167,6 +166,8 @@ class DatabaseManager:
                 user_id BIGINT PRIMARY KEY,
                 alias VARCHAR(64) NOT NULL,
                 added_by BIGINT,
+                perm_reseaux VARCHAR(16) DEFAULT 'all',
+                perm_type VARCHAR(16) DEFAULT 'all',
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
@@ -227,6 +228,18 @@ class DatabaseManager:
                 date_archivage DATETIME DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_archive_user (user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS admin_preferences (
+                user_id BIGINT PRIMARY KEY,
+                notif_new_mode VARCHAR(16) DEFAULT 'sound',
+                rappel_mode VARCHAR(16) DEFAULT 'sound',
+                rappel_freq VARCHAR(16) DEFAULT 'daily',
+                rappel_heure INT DEFAULT 18,
+                rappel_jour_semaine INT DEFAULT 6,
+                rappel_jour_mois INT DEFAULT 1,
+                last_rappel_date DATE DEFAULT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """
         ]
         try:
@@ -234,21 +247,29 @@ class DatabaseManager:
                 for query in tables:
                     cursor.execute(query)
 
-                # Migration automatique des colonnes pour les tables existantes
+                # Migration automatique des colonnes
                 columns_to_add = [
+                    ("admins", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
+                    ("admins", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
                     ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
                     ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
                     ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
                     ("demandes", "request_number", "INT DEFAULT NULL"),
                     ("demandes", "date_modification", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+                    ("admin_preferences", "notif_new_mode", "VARCHAR(16) DEFAULT 'sound'"),
+                    ("admin_preferences", "rappel_mode", "VARCHAR(16) DEFAULT 'sound'"),
+                    ("admin_preferences", "rappel_freq", "VARCHAR(16) DEFAULT 'daily'"),
+                    ("admin_preferences", "rappel_heure", "INT DEFAULT 18"),
+                    ("admin_preferences", "rappel_jour_semaine", "INT DEFAULT 6"),
+                    ("admin_preferences", "rappel_jour_mois", "INT DEFAULT 1"),
+                    ("admin_preferences", "last_rappel_date", "DATE DEFAULT NULL"),
                 ]
                 for table, col, col_def in columns_to_add:
                     try:
                         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
-                        logger.info("Colonne %s.%s ajoutée automatiquement.", table, col)
+                        logger.info("Colonne %s.%s vérifiée/ajoutée.", table, col)
                     except Error as e:
-                        # Erreur 1060 = Duplicate column name (déjà présente, ignorer)
-                        if getattr(e, 'errno', None) != 1060:
+                        if getattr(e, "errno", None) != 1060:
                             logger.debug("Info colonne %s.%s : %s", table, col, e)
 
             logger.info("Vérification et création des tables terminées avec succès.")
@@ -433,6 +454,145 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur mise à jour alias admin %s: %s", user_id, exc)
             return False
+
+    # ==================== GESTION DES PERMISSIONS ADMIN ====================
+
+    def get_admin_permissions(self, user_id: int) -> Dict[str, str]:
+        """Retourne les permissions de traitement d'un admin (l'owner a toujours accès total)."""
+        if self.config.is_owner(user_id):
+            return {"perm_reseaux": "all", "perm_type": "all"}
+
+        cache_key = f"perm_{user_id}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        default_perms = {"perm_reseaux": "all", "perm_type": "all"}
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT perm_reseaux, perm_type FROM admins WHERE user_id = %s",
+                    (user_id,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    default_perms["perm_reseaux"] = row.get("perm_reseaux") or "all"
+                    default_perms["perm_type"] = row.get("perm_type") or "all"
+            self._set_cached_value(cache_key, default_perms)
+            return default_perms
+        except Exception as exc:
+            logger.error("Erreur lecture permissions admin %s: %s", user_id, exc)
+            return default_perms
+
+    def update_admin_permission(self, user_id: int, perm_key: str, perm_value: str) -> bool:
+        """Met à jour une permission spécifique d'un admin."""
+        if perm_key not in ("perm_reseaux", "perm_type"):
+            return False
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    f"UPDATE admins SET {perm_key} = %s WHERE user_id = %s",
+                    (perm_value, user_id)
+                )
+            self.clear_cache(f"perm_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur mise à jour permission %s pour admin %s: %s", perm_key, user_id, exc)
+            return False
+
+    # ==================== PRÉFÉRENCES NOTIFICATIONS & RAPPELS ====================
+
+    def get_admin_preferences(self, user_id: int) -> Dict[str, Any]:
+        """Retourne les réglages de notifications d'un administrateur avec valeurs par défaut."""
+        default_prefs = {
+            "user_id": user_id,
+            "notif_new_mode": "sound",      # 'sound', 'silent', 'off'
+            "rappel_mode": "sound",         # 'sound', 'silent', 'off'
+            "rappel_freq": "daily",         # 'daily', 'weekly', 'monthly'
+            "rappel_heure": 18,             # 0 à 23
+            "rappel_jour_semaine": 6,       # 0 = Lundi, 6 = Dimanche (Dimanche par défaut)
+            "rappel_jour_mois": 1,          # 1 à 28 (le 1er par défaut)
+            "last_rappel_date": None
+        }
+        cache_key = f"admin_prefs_{user_id}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT * FROM admin_preferences WHERE user_id = %s", (user_id,))
+                row = cursor.fetchone()
+                if row:
+                    default_prefs.update(row)
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO admin_preferences (
+                            user_id, notif_new_mode, rappel_mode, rappel_freq,
+                            rappel_heure, rappel_jour_semaine, rappel_jour_mois
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
+                        """,
+                        (user_id, "sound", "sound", "daily", 18, 6, 1)
+                    )
+            self._set_cached_value(cache_key, default_prefs)
+            return default_prefs
+        except Exception as exc:
+            logger.error("Erreur récupération préférences admin %s: %s", user_id, exc)
+            return default_prefs
+
+    def update_admin_preference(self, user_id: int, key: str, value: Any) -> bool:
+        """Met à jour un paramètre des préférences d'un administrateur avec invalidation du cache."""
+        allowed_keys = {
+            "notif_new_mode", "rappel_mode", "rappel_freq", "rappel_heure",
+            "rappel_jour_semaine", "rappel_jour_mois", "last_rappel_date"
+        }
+        if key not in allowed_keys:
+            logger.warning("Clé de préférence admin non autorisée : %s", key)
+            return False
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    INSERT INTO admin_preferences (user_id, {key})
+                    VALUES (%s, %s)
+                    ON DUPLICATE KEY UPDATE {key} = VALUES({key})
+                    """,
+                    (user_id, value)
+                )
+            self.clear_cache(f"admin_prefs_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur mise à jour préférence %s pour admin %s: %s", key, user_id, exc)
+            return False
+
+    def mark_admin_reminder_sent(self, user_id: int):
+        """Met à jour la date du dernier rappel envoyé à la date du jour."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE admin_preferences 
+                    SET last_rappel_date = CURRENT_DATE() 
+                    WHERE user_id = %s
+                    """,
+                    (user_id,)
+                )
+            self.clear_cache(f"admin_prefs_{user_id}")
+        except Exception as exc:
+            logger.error("Erreur mise à jour last_rappel_date pour %s: %s", user_id, exc)
+
+    def get_all_admin_preferences(self) -> List[Dict[str, Any]]:
+        """Récupère l'ensemble des préférences des administrateurs dont les rappels sont actifs."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT * FROM admin_preferences WHERE rappel_mode != 'off'")
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur lecture globale des préférences admins : %s", exc)
+            return []
 
     # ==================== UTILITAIRE / MÉTRIQUES ====================
 

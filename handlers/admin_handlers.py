@@ -18,6 +18,7 @@ from .admin.dispo import DispoManager
 from .admin.photos import PhotosManager
 from .admin.statuts import StatutsManager
 from .admin.suivi import SuiviManager
+from .admin.notifs import NotifsManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class AdminHandlers:
         self.photos = PhotosManager(db_manager, config)
         self.dispo = DispoManager(db_manager, config)
         self.alias = AliasManager(db_manager, config)
+        self.notifs = NotifsManager(db_manager, config)
 
     async def handle_admin_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Aiguillage sécurisé des callbacks administrateurs."""
@@ -73,6 +75,12 @@ class AdminHandlers:
 
             elif data.startswith("suivi_"):
                 await self.suivi.handle_callback_routing(update, context, data)
+
+            elif data == "menu_notifs":
+                await self.notifs.show_notifs_menu(update, context)
+
+            elif data.startswith("pref_"):
+                await self.notifs.handle_callback_routing(update, context, data)
 
             elif data.startswith("voir_photo_"):
                 await self.photos.voir_photo_demande(update, context)
@@ -125,17 +133,6 @@ class AdminHandlers:
         except Exception as exc:
             logger.error("Erreur callback admin '%s': %s", data, exc, exc_info=True)
             await self._handle_callback_error(query)
-
-    """ async def _route_dispo_pagination(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        parts = data.split("_")
-        page = 0
-        if len(parts) >= 3 and parts[-1].isdigit():
-            current_idx = int(parts[-1])
-            if "prev" in data:
-                page = max(0, current_idx - 1)
-            elif "next" in data:
-                page = current_idx + 1
-        await self.dispo.show_demandes_disponibles_page(update, context, page)"""
 
     async def _route_suivi_pagination(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         parts = data.split("_")

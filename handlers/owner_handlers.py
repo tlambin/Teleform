@@ -32,7 +32,6 @@ class OwnerHandlers:
                 await update.message.reply_text("❌ Accès non autorisé.")
             return
 
-        target = update.callback_query if update.callback_query else update.message
         if update.callback_query:
             await update.callback_query.edit_message_text("🔧 <b>Maintenance en cours...</b>", parse_mode="HTML")
         else:
@@ -164,6 +163,90 @@ class OwnerHandlers:
             await self.run_maintenance(update, context)
         elif data == "bot_stats":
             await self.show_statistics(update, context)
+        elif data.startswith("perm_admin_"):
+            admin_target_id = int(data.replace("perm_admin_", ""))
+            await self.show_admin_permissions_menu(update, context, admin_target_id)
+        elif data.startswith("set_perm_"):
+            await self.handle_set_permission(update, context, data)
+
+    # ==================== GESTION DES PERMISSIONS ADMIN ====================
+
+    async def show_admin_permissions_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
+        """Affiche le panneau de contrôle des permissions pour un administrateur spécifique."""
+        query = update.callback_query
+        if not query:
+            return
+
+        alias = self.db_manager.get_admin_alias(admin_id)
+        perms = self.db_manager.get_admin_permissions(admin_id)
+
+        reseau = perms.get("perm_reseaux", "all")
+        typ = perms.get("perm_type", "all")
+
+        # Labels avec témoins d'activation
+        btn_res_all = "✅ Tous réseaux" if reseau == "all" else "Tous réseaux"
+        btn_res_insta = "✅ Insta seul" if reseau == "insta" else "Insta seul"
+        btn_res_snap = "✅ Snap seul" if reseau == "snap" else "Snap seul"
+
+        btn_typ_all = "✅ Tout type" if typ == "all" else "Tout type"
+        btn_typ_prio = "✅ 💎 Payantes" if typ == "prio_only" else "💎 Payantes"
+        btn_typ_std = "✅ 📝 Gratuites" if typ == "standard_only" else "📝 Gratuites"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(btn_res_all, callback_data=f"set_perm_{admin_id}_reseaux_all"),
+                InlineKeyboardButton(btn_res_insta, callback_data=f"set_perm_{admin_id}_reseaux_insta"),
+                InlineKeyboardButton(btn_res_snap, callback_data=f"set_perm_{admin_id}_reseaux_snap"),
+            ],
+            [
+                InlineKeyboardButton(btn_typ_all, callback_data=f"set_perm_{admin_id}_type_all"),
+                InlineKeyboardButton(btn_typ_prio, callback_data=f"set_perm_{admin_id}_type_prio_only"),
+                InlineKeyboardButton(btn_typ_std, callback_data=f"set_perm_{admin_id}_type_standard_only"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Équipe d'administration", callback_data="gerer_admins")
+            ]
+        ]
+
+        reseau_desc = {
+            "all": "Instagram & Snapchat",
+            "insta": "Instagram uniquement (inclut les demandes avec Insta + Snap)",
+            "snap": "Snapchat uniquement (inclut les demandes avec Snap + Insta)"
+        }.get(reseau, reseau)
+
+        type_desc = {
+            "all": "Prioritaires / Payantes et Standards",
+            "prio_only": "Uniquement les demandes payantes (💎 Prioritaires)",
+            "standard_only": "Uniquement les demandes gratuites (📝 Standards)"
+        }.get(typ, typ)
+
+        text = (
+            f"🛡️ <b>Permissions Administrateur : {alias}</b>\n"
+            f"🆔 ID : <code>{admin_id}</code>\n\n"
+            f"🌐 <b>Périmètre réseaux :</b> {reseau_desc}\n"
+            f"🎯 <b>Périmètre demandes :</b> {type_desc}\n\n"
+            "<i>Cliquez sur un bouton pour modifier instantanément les accès :</i>"
+        )
+
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def handle_set_permission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+        """Bascule une permission en base et rafraîchit la vue."""
+        query = update.callback_query
+        if not query:
+            return
+
+        parts = data.split("_")
+        # Structure attendue : set_perm_<admin_id>_<cle>_<valeur>
+        admin_id = int(parts[2])
+        cle = f"perm_{parts[3]}"
+        valeur = "_".join(parts[4:])
+
+        self.db_manager.update_admin_permission(admin_id, cle, valeur)
+        await query.answer("✅ Permission mise à jour")
+        await self.show_admin_permissions_menu(update, context, admin_id)
+
+    # ==================== AJOUT D'ADMINISTRATEUR ====================
 
     async def admin_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Ouvre le formulaire d'ajout d'administrateur."""
@@ -195,7 +278,7 @@ class OwnerHandlers:
             return ConversationHandler.END
 
     async def traiter_admin_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Vérifie l'existence de l'utilisateur et lui accorde les privilèges admin."""
+        """Vérifie l'existence de l'utilisateur, lui accorde les privilèges admin et propose de configurer ses droits."""
         if not update.message or not update.message.text:
             return self.WAITING_ADMIN_ID
 
@@ -229,22 +312,22 @@ class OwnerHandlers:
                     await update.message.reply_text("⚠️ Cet utilisateur est déjà administrateur.")
                     return self.WAITING_ADMIN_ID
 
-                # Attribution de l'alias initial
                 base_alias = user_data.get("first_name") or user_data.get("username") or f"Admin{target_id}"
                 alias = base_alias[:20]
 
                 cursor.execute(
                     """
-                    INSERT INTO admins (user_id, alias, first_name, username, date_added, added_by)
-                    VALUES (%s, %s, %s, %s, NOW(), %s)
+                    INSERT INTO admins (user_id, alias, added_by, perm_reseaux, perm_type, date_added)
+                    VALUES (%s, %s, %s, 'all', 'all', NOW())
                     """,
-                    (target_id, alias, user_data.get("first_name", ""), user_data.get("username", ""), user_id)
+                    (target_id, alias, user_id)
                 )
 
             self.config.add_admin(target_id)
             logger.info("Admin ajouté: %s (%s)", target_id, alias)
 
             keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛡️ Régler ses permissions", callback_data=f"perm_admin_{target_id}")],
                 [InlineKeyboardButton("👥 Gestion Admins", callback_data="gerer_admins")],
                 [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ])
@@ -253,7 +336,9 @@ class OwnerHandlers:
                 f"✅ <b>Administrateur ajouté avec succès !</b>\n\n"
                 f"👤 <b>Nom :</b> {user_data.get('first_name', '')}\n"
                 f"🆔 <b>ID :</b> <code>{target_id}</code>\n"
-                f"🏷️ <b>Alias attribué :</b> <code>{alias}</code>",
+                f"🏷️ <b>Alias attribué :</b> <code>{alias}</code>\n\n"
+                "<i>Par défaut, tous les accès lui sont ouverts (Tous réseaux, Tout type). "
+                "Vous pouvez restreindre ses accès ci-dessous :</i>",
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
@@ -272,6 +357,8 @@ class OwnerHandlers:
             await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
         return ConversationHandler.END
 
+    # ==================== SUPPRESSION D'ADMINISTRATEUR ====================
+
     async def admin_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche la liste des administrateurs révocables."""
         query = update.callback_query
@@ -282,7 +369,7 @@ class OwnerHandlers:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT user_id, alias, first_name, username, date_added
+                    SELECT user_id, alias, date_added
                     FROM admins
                     WHERE user_id != %s
                     ORDER BY date_added DESC
@@ -307,9 +394,8 @@ class OwnerHandlers:
                 f"Administrateurs révocables : <b>{len(admins)}</b>\n"
             ]
             for idx, adm in enumerate(admins, 1):
-                user_desc = f"@{adm['username']}" if adm.get("username") else adm.get("first_name", "")
                 date_str = str(adm.get("date_added", ""))[:10]
-                lines.append(f"{idx}. <b>{adm['alias']}</b> ({user_desc}) — ID: <code>{adm['user_id']}</code> [{date_str}]")
+                lines.append(f"{idx}. <b>{adm['alias']}</b> — ID: <code>{adm['user_id']}</code> [{date_str}]")
 
             lines.append("\nEnvoyez le <b>numéro</b> de l'administrateur à révoquer :")
 
@@ -413,6 +499,8 @@ class OwnerHandlers:
             await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
         return ConversationHandler.END
 
+    # ==================== STATISTIQUES ====================
+
     async def show_statistics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche les métriques globales du bot, de la base et du stockage local."""
         query = update.callback_query
@@ -461,7 +549,6 @@ class OwnerHandlers:
             if tables_info:
                 lines.append("\n📋 <b>Détails des tables :</b>")
                 for tbl in tables_info:
-                    # Lecture robuste des clés peu importe la casse
                     t_name = tbl.get("table_name") or tbl.get("TABLE_NAME") or "inconnue"
                     s_mb = tbl.get("size_mb", 0)
                     r_cnt = tbl.get("row_count", 0)

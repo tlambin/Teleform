@@ -79,12 +79,14 @@ class InterfaceManager:
                 [InlineKeyboardButton("🤖 GESTION DU SERVICE", callback_data="gerer_bot")],
                 [InlineKeyboardButton("👥 ÉQUIPE D'ADMINISTRATION", callback_data="gerer_admins")],
                 [InlineKeyboardButton("📊 STATISTIQUES GLOBALES", callback_data="bot_stats")],
+                [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
                 [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ]
         else:
             message = "🦈 <b>Paramètres Administrateur</b>\n\nOptions disponibles :"
             keyboard = [
+                [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
                 [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ]
@@ -94,12 +96,13 @@ class InterfaceManager:
     # ========== SOUS-MENU GÉRER LES ADMINS (Owner Only) ==========
 
     def get_gerer_admins_menu(self):
-        """Menu de gestion de l'équipe administrateur avec liste détaillée."""
+        """Menu de gestion de l'équipe administrateur avec liste détaillée et accès aux permissions."""
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
                     SELECT a.user_id, a.alias, a.first_name, a.username, a.date_added,
+                           a.perm_reseaux, a.perm_type,
                            u.first_name AS nom_ajouteur
                     FROM admins a
                     LEFT JOIN users u ON a.added_by = u.user_id
@@ -107,6 +110,8 @@ class InterfaceManager:
                     """
                 )
                 admins = cursor.fetchall()
+
+            keyboard = []
 
             if not admins:
                 message = "👥 <b>Gestion des Administrateurs</b>\n\n📊 Aucun administrateur secondaire configuré.\n\n"
@@ -117,18 +122,28 @@ class InterfaceManager:
                     date_str = admin["date_added"].strftime("%d/%m/%Y") if admin.get("date_added") else "Inconnue"
                     par_qui = admin.get("nom_ajouteur") or "Propriétaire"
 
+                    res_tag = admin.get("perm_reseaux") or "all"
+                    type_tag = admin.get("perm_type") or "all"
+
+                    res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(res_tag, res_tag)
+                    type_label = {"all": "Tous types", "prio_only": "Payantes seules", "standard_only": "Gratuites seules"}.get(type_tag, type_tag)
+
                     message += (
                         f"• <b>{admin['alias']}</b> ({pseudo})\n"
-                        f"  ID : <code>{admin['user_id']}</code> | Ajouté le {date_str} par {par_qui}\n\n"
+                        f"  ID : <code>{admin['user_id']}</code> | Ajouté le {date_str} par {par_qui}\n"
+                        f"  🛡️ <i>Accès : {res_label} | {type_label}</i>\n\n"
                     )
 
-            keyboard = [
-                [
-                    InlineKeyboardButton("➕ AJOUTER", callback_data="admin_ajouter"),
-                    InlineKeyboardButton("➖ RÉVOQUER", callback_data="admin_supprimer")
-                ],
-                [InlineKeyboardButton("🔙 Retour", callback_data="parametres")]
-            ]
+                    # Bouton direct pour régler les droits de chaque administrateur
+                    keyboard.append([
+                        InlineKeyboardButton(f"🛡️ Droits : {admin['alias']}", callback_data=f"perm_admin_{admin['user_id']}")
+                    ])
+
+            keyboard.append([
+                InlineKeyboardButton("➕ AJOUTER", callback_data="admin_ajouter"),
+                InlineKeyboardButton("➖ RÉVOQUER", callback_data="admin_supprimer")
+            ])
+            keyboard.append([InlineKeyboardButton("🔙 Retour", callback_data="parametres")])
 
         except Exception as exc:
             logger.error("Erreur génération menu gestion admins: %s", exc, exc_info=True)
@@ -155,7 +170,6 @@ class InterfaceManager:
             toggle_text = "🟢 ACTIVER"
             toggle_callback = "bot_on"
 
-        # Récupération des quotas actuels pour affichage informatif direct
         try:
             max_tot = self.config.get_max_total_demandes()
             max_usr = self.config.get_max_demandes_per_user()

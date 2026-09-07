@@ -235,7 +235,7 @@ class DispoManager:
         await self._render_clean_text(query, context, text, InlineKeyboardMarkup(keyboard))
 
     def _fetch_filtered_demandes(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> list:
-        """Exécute la requête SQL dynamique selon les filtres choisis."""
+        """Exécute la requête SQL dynamique selon les permissions de l'admin et les filtres choisis."""
         filters = self._get_active_filters(context)
 
         sql_where = [
@@ -244,6 +244,24 @@ class DispoManager:
         ]
         params = [user_id]
 
+        # 1. APPLICATION STRICTE DES PERMISSIONS DE L'ADMINISTRATEUR
+        perms = self.db_manager.get_admin_permissions(user_id)
+        p_reseau = perms.get("perm_reseaux", "all")
+        p_type = perms.get("perm_type", "all")
+
+        # Règle réseau : si restreint à insta, doit contenir au minimum un compte Instagram (même s'il y a snap)
+        if p_reseau == "insta":
+            sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
+        elif p_reseau == "snap":
+            sql_where.append("d.snapchat IS NOT NULL AND d.snapchat != ''")
+
+        # Règle type : restreint aux payantes ou aux gratuites
+        if p_type == "prio_only":
+            sql_where.append("d.prioritaire = 1")
+        elif p_type == "standard_only":
+            sql_where.append("d.prioritaire = 0")
+
+        # 2. APPLICATION DES FILTRES MANUELS DE SESSION UTILISATEUR
         # Filtre Réseaux
         if filters["reseau"] == "insta":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
@@ -300,7 +318,7 @@ class DispoManager:
         if not demandes:
             msg = (
                 "📮 <b>Demandes Disponibles</b>\n\n"
-                "🔍 Aucune demande ne correspond à vos filtres actuels."
+                "🔍 Aucune demande ne correspond à vos permissions ou filtres actuels."
             )
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚙️ Modifier les filtres", callback_data="dispo_filters_menu")],
@@ -408,12 +426,11 @@ class DispoManager:
             f"🙋 <b>Demandeur :</b> {demandeur}"
         ]
 
-        # Encart d'alerte si relancée après abandon
-        if demande.get("ancien_admin_alias") and demande.get("raison_abandon"):
+        # Encart d'historique si la demande a déjà été abandonnée
+        if demande.get("raison_abandon"):
             lines.append(
-                f"\n⚠️ <b>HISTORIQUE - TENTATIVE PRÉCÉDENTE :</b>\n"
-                f"• Ancien admin : <b>{demande['ancien_admin_alias']}</b>\n"
-                f"• Motif d'abandon : <i>« {demande['raison_abandon']} »</i>"
+                f"\n⚠️ <b>HISTORIQUE - TENTATIVE(S) PRÉCÉDENTE(S) :</b>\n"
+                f"{demande['raison_abandon']}"
             )
 
         reseaux = []
