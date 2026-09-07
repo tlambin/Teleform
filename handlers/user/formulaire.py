@@ -139,18 +139,21 @@ class FormulaireManager:
 
     async def _check_quotas(self, update: Update, user_id: int) -> bool:
         """Vérifie que les quotas global et personnel ne sont pas atteints."""
+        active_statuses = ("'📨 Reçue'", "'⏳ En attente'", "'🔄 En cours'", "'⚠️ Difficile'")
+        status_filter = f"statut IN ({', '.join(active_statuses)})"
+
         # 1. Vérification du quota global
         max_total = self.config.get_max_total_demandes()
         if max_total > 0:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("SELECT COUNT(*) AS total FROM demandes WHERE statut NOT IN ('❌ Abandonnée')")
+                cursor.execute(f"SELECT COUNT(*) AS total FROM demandes WHERE {status_filter}")
                 row = cursor.fetchone()
                 total_actif = row["total"] if row else 0
 
             if total_actif >= max_total:
                 msg = (
                     "🚫 <b>Service complet</b>\n\n"
-                    "Le plafond global de demandes acceptées sur la plateforme a été atteint.\n"
+                    "Le plafond global de demandes simultanées sur la plateforme a été atteint.\n"
                     "Merci de réessayer un peu plus tard."
                 )
                 if update.callback_query:
@@ -169,7 +172,7 @@ class FormulaireManager:
         if max_user > 0:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
-                    "SELECT COUNT(*) AS count_user FROM demandes WHERE user_id = %s AND statut NOT IN ('❌ Abandonnée')",
+                    f"SELECT COUNT(*) AS count_user FROM demandes WHERE user_id = %s AND {status_filter}",
                     (user_id,)
                 )
                 row = cursor.fetchone()
@@ -178,8 +181,8 @@ class FormulaireManager:
             if user_actif >= max_user:
                 msg = (
                     "⚠️ <b>Limite atteinte</b>\n\n"
-                    f"Vous avez déjà <b>{user_actif}/{max_user}</b> demande(s) active(s).\n"
-                    "Vous devez attendre le traitement d'une demande existante avant d'en créer une nouvelle."
+                    f"Vous avez déjà <b>{user_actif}/{max_user}</b> demande(s) en cours de traitement.\n"
+                    "Attendez qu'une demande soit finalisée avant d'en ouvrir une nouvelle."
                 )
                 if update.callback_query:
                     await update.callback_query.answer("Quota individuel atteint.", show_alert=True)

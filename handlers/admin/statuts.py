@@ -81,7 +81,7 @@ class StatutsManager:
             logger.error("Erreur affichage menu changement statut: %s", exc, exc_info=True)
 
     async def set_status_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Applique le nouveau statut en base de façon atomique et notifie le demandeur."""
+        """Applique le nouveau statut ou intercepte l'abandon pour demander un motif."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -99,9 +99,8 @@ class StatutsManager:
                 return
 
             nouveau_statut = self.statuts_disponibles[status_index]
-            admin_alias = self.db_manager.get_admin_alias(admin_id)
 
-            with self.db_manager.transaction() as cursor:
+            with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
                     SELECT d.*, u.username, u.first_name AS user_first_name
@@ -113,15 +112,42 @@ class StatutsManager:
                 )
                 demande = cursor.fetchone()
 
-                if not demande:
-                    return
+            if not demande:
+                await query.answer("❌ Demande introuvable.", show_alert=True)
+                return
 
-                old_status = demande["statut"]
-                user_id_demande = demande["user_id"]
-                prenom = demande["prenom"]
+            # CAS PARTICULIER : ABANDON -> Demande de motif à l'administrateur
+            if "abandon" in nouveau_statut.lower():
+                context.user_data["waiting_abandon_reason"] = {
+                    "demande_id": demande_id,
+                    "status_index": status_index,
+                }
                 req_num = demande.get("request_number", demande_id)
+                prompt_text = (
+                    f"⚠️ <b>Abandon de la demande #{req_num}</b>\n\n"
+                    "Veuillez taper au clavier la <b>raison de l'abandon</b>.\n\n"
+                    "<i>Ce message sera transmis au demandeur pour qu'il comprenne la situation "
+                    "et décide soit de la relancer (remise en dispo), soit de l'archiver (libérant son quota).</i>"
+                )
+                cancel_kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")
+                ]])
 
-                # 1. Mise à jour dans la table des demandes
+                if query.message and query.message.photo:
+                    await query.message.delete()
+                    await context.bot.send_message(chat_id=admin_id, text=prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
+                else:
+                    await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
+                return
+
+            # TOUS LES AUTRES STATUTS : application directe
+            admin_alias = self.db_manager.get_admin_alias(admin_id)
+            old_status = demande["statut"]
+            user_id_demande = demande["user_id"]
+            prenom = demande["prenom"]
+            req_num = demande.get("request_number", demande_id)
+
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
                     UPDATE demandes
@@ -131,8 +157,7 @@ class StatutsManager:
                     (nouveau_statut, admin_id, demande_id),
                 )
 
-                # 2. Inscription ou actualisation dans demandes_suivi avec les colonnes exactes
-                if "En cours" in nouveau_statut or "En attente" in nouveau_statut:
+                if "En cours" in nouveau_statut or "En attente" in nouveau_statut or "Difficile" in nouveau_statut:
                     cursor.execute(
                         """
                         INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
@@ -145,7 +170,6 @@ class StatutsManager:
                         (demande_id, admin_id),
                     )
 
-            # Notification au demandeur si le statut a changé
             if old_status != nouveau_statut:
                 try:
                     await self.alias_manager.send_status_notification(
@@ -160,7 +184,6 @@ class StatutsManager:
                 except Exception as notif_err:
                     logger.warning("Échec notification demandeur: %s", notif_err)
 
-            # Rafraîchissement de la vue admin
             demande["statut"] = nouveau_statut
             if query.message and query.message.photo:
                 await self._update_photo_caption(query, demande, nouveau_statut)
@@ -170,8 +193,112 @@ class StatutsManager:
         except Exception as exc:
             logger.error("Erreur mise à jour statut demande: %s", exc, exc_info=True)
 
+    async def process_abandon_reason(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Enregistre le motif d'abandon fourni au clavier, cumule l'historique et notifie le demandeur."""
+        if not update.message or not update.message.text:
+            return
+
+        abandon_data = context.user_data.pop("waiting_abandon_reason", None)
+        if not abandon_data:
+            return
+
+        demande_id = abandon_data["demande_id"]
+        raison = update.message.text.strip()
+        admin_id = update.effective_user.id
+        admin_alias = self.db_manager.get_admin_alias(admin_id)
+
+        try:
+            with self.db_manager.transaction() as cursor:
+                cursor.execute(
+                    """
+                    SELECT request_number, user_id, prenom, ancien_admin_alias, raison_abandon 
+                    FROM demandes WHERE id = %s
+                    """,
+                    (demande_id,)
+                )
+                demande = cursor.fetchone()
+
+                if not demande:
+                    await update.message.reply_text("❌ Demande introuvable.")
+                    return
+
+                # Cumul de l'historique si des tentatives existent déjà
+                prev_alias = demande.get("ancien_admin_alias")
+                prev_raison = demande.get("raison_abandon")
+
+                if prev_alias and prev_raison:
+                    nouvel_alias_str = f"{prev_alias}, {admin_alias}"
+                    nouvelle_raison_str = f"{prev_raison}\n• <b>{admin_alias} :</b> « <i>{raison}</i> »"
+                else:
+                    nouvel_alias_str = admin_alias
+                    nouvelle_raison_str = f"• <b>{admin_alias} :</b> « <i>{raison}</i> »"
+
+                # Mise à jour cumulative en base
+                cursor.execute(
+                    """
+                    UPDATE demandes 
+                    SET statut = '❌ Abandonnée',
+                        admin_en_charge = %s,
+                        ancien_admin_alias = %s,
+                        raison_abandon = %s,
+                        date_modification = NOW() 
+                    WHERE id = %s
+                    """,
+                    (admin_id, nouvel_alias_str, nouvelle_raison_str, demande_id)
+                )
+                # Retrait de la file active de cet administrateur
+                cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
+
+            user_id_demande = demande["user_id"]
+            req_num = demande.get("request_number", demande_id)
+
+            # Notification au demandeur avec le motif actuel
+            abandon_keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🔄 Remettre en disponible", callback_data=f"reprendre_demande_{demande_id}")
+                ],
+                [
+                    InlineKeyboardButton("🗑️ Laisser tomber (archiver)", callback_data=f"archiver_demande_{demande_id}")
+                ]
+            ])
+
+            msg_demandeur = (
+                f"⚠️ <b>Information sur votre demande #{req_num}</b>\n\n"
+                f"L'administrateur <b>{admin_alias}</b> n'est plus en mesure de traiter votre demande.\n\n"
+                f"📝 <b>Motif communiqué :</b>\n"
+                f"« <i>{raison}</i> »\n\n"
+                "Que souhaitez-vous faire ?\n"
+                "• <b>Remettre en disponible :</b> un autre administrateur pourra la reprendre dans les demandes disponibles (votre demande reste active).\n"
+                "• <b>Laisser tomber :</b> la demande sera archivée et votre quota sera libéré immédiatement."
+            )
+
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id_demande,
+                    text=msg_demandeur,
+                    parse_mode="HTML",
+                    reply_markup=abandon_keyboard,
+                )
+            except Exception as notif_exc:
+                logger.warning("Échec envoi motif abandon à %s: %s", user_id_demande, notif_exc)
+
+            # Confirmation à l'admin
+            back_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Retour aux demandes suivies", callback_data="demandes_suivies")
+            ]])
+            await update.message.reply_text(
+                f"✅ <b>Demande #{req_num} passée en statut ❌ Abandonnée.</b>\n\n"
+                f"Le demandeur a été notifié avec votre motif.",
+                parse_mode="HTML",
+                reply_markup=back_kb
+            )
+
+        except Exception as exc:
+            logger.error("Erreur traitement motif abandon demande %s: %s", demande_id, exc, exc_info=True)
+            await update.message.reply_text("❌ Une erreur est survenue lors de l'enregistrement de l'abandon.")
+
     async def _update_existing_text_message(self, query, demande: dict, nouveau_statut: str):
-        """Actualise le corps du message texte après transition d'état."""
+        """Actualise le corps du message texte après transition d'état avec historique cumulé."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
@@ -187,6 +314,13 @@ class StatutsManager:
             f"📊 <b>Statut :</b> <code>{nouveau_statut}</code>",
             f"🙋 <b>Demandeur :</b> {user_display}",
         ]
+
+        # Encart d'historique cumulé si des tentatives précédentes existent
+        if demande.get("raison_abandon"):
+            lines.append(
+                f"\n⚠️ <b>HISTORIQUE - TENTATIVE(S) PRÉCÉDENTE(S) :</b>\n"
+                f"{demande['raison_abandon']}"
+            )
 
         reseaux = []
         if demande.get("instagram"):
@@ -227,12 +361,19 @@ class StatutsManager:
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
         nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
 
-        caption = (
-            f"📷 <b>Photo de la demande #{demande.get('request_number', demande['id'])}</b>\n\n"
-            f"👤 {nom_complet} ({demande['age']} ans) | {demande['localisation']}\n"
-            f"🎯 {priorite_icon} {type_str}{montant_str}\n"
+        caption_lines = [
+            f"📷 <b>Photo de la demande #{demande.get('request_number', demande['id'])}</b>\n",
+            f"👤 {nom_complet} ({demande['age']} ans) | {demande['localisation']}",
+            f"🎯 {priorite_icon} {type_str}{montant_str}",
             f"📊 Statut : <code>{nouveau_statut}</code>"
-        )
+        ]
+
+        if demande.get("raison_abandon"):
+            caption_lines.append(
+                f"⚠️ <b>Relancée après tentative(s) sans suite</b>"
+            )
+
+        caption = "\n".join(caption_lines)
 
         keyboard = InlineKeyboardMarkup([
             [

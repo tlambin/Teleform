@@ -131,7 +131,6 @@ class DispoManager:
             f"🔎 Filtre de recherche appliqué : « <b>{search_str}</b> »",
             parse_mode="HTML"
         )
-        # Affichage direct de la première page trouvée
         await self._render_first_page_from_message(update, context)
 
     async def _render_first_page_from_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -179,7 +178,6 @@ class DispoManager:
         query = update.callback_query
         filters = self._get_active_filters(context)
 
-        # Indicateurs visuels
         net = filters["reseau"]
         net_all = "✅ Tous" if net == "all" else "Tous"
         net_insta = "✅ Insta" if net == "insta" else "Insta"
@@ -360,7 +358,7 @@ class DispoManager:
                     reply_markup=keyboard
                 )
         except Exception as err:
-            logger.warning("Recréation photo dispo suite à: %s", err)
+            logger.warning("Recréation photo dispo suite à : %s", err)
             await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=photo_id,
@@ -392,7 +390,7 @@ class DispoManager:
             )
 
     def _format_demande_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche avec rappel des filtres actifs en pied de page."""
+        """Formate la fiche avec avertissement si relancée après abandon."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
@@ -409,6 +407,14 @@ class DispoManager:
             f"📊 <b>Statut :</b> <code>{demande.get('statut')}</code>",
             f"🙋 <b>Demandeur :</b> {demandeur}"
         ]
+
+        # Encart d'alerte si relancée après abandon
+        if demande.get("ancien_admin_alias") and demande.get("raison_abandon"):
+            lines.append(
+                f"\n⚠️ <b>HISTORIQUE - TENTATIVE PRÉCÉDENTE :</b>\n"
+                f"• Ancien admin : <b>{demande['ancien_admin_alias']}</b>\n"
+                f"• Motif d'abandon : <i>« {demande['raison_abandon']} »</i>"
+            )
 
         reseaux = []
         if demande.get("instagram"):

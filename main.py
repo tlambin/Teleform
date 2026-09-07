@@ -187,7 +187,7 @@ class TelegramBot:
         # Callbacks utilisateur
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
-            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit|reply_to_admin_|cancel_user_reply|quota_reached_info)"
+            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit|reply_to_admin_|cancel_user_reply|quota_reached_info|reprendre_demande_|archiver_demande_)"
         ))
 
         # Messages (texte, photos, vidéos, documents) hors commandes

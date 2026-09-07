@@ -25,64 +25,64 @@ class DatabaseManager:
         logger.info("DatabaseManager initialisé avec pool de %d connexions.", self.pool_size)
 
     def _init_connection_pool(self):
-            """Initialise le pool de connexions MySQL avec chargement direct du .env."""
-            import os
-            from dotenv import load_dotenv
+        """Initialise le pool de connexions MySQL avec chargement direct du .env."""
+        import os
+        from dotenv import load_dotenv
 
-            # Force le rechargement du fichier .env depuis le dossier racine du bot
-            env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-            if os.path.exists(env_path):
-                load_dotenv(dotenv_path=env_path, override=True)
+        # Force le rechargement du fichier .env depuis le dossier racine du bot
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        if os.path.exists(env_path):
+            load_dotenv(dotenv_path=env_path, override=True)
 
-            host = (
-                os.getenv("DB_HOST")
-                or getattr(self.config, "DB_HOST", None)
-                or getattr(self.config, "db_host", None)
-                or "paraworld.mysql.eu.pythonanywhere-services.com"
-            )
-            user = (
-                os.getenv("DB_USER")
-                or getattr(self.config, "DB_USER", None)
-                or getattr(self.config, "db_user", None)
-                or "paraworld"
-            )
-            password = (
-                os.getenv("DB_PASSWORD")
-                or getattr(self.config, "DB_PASSWORD", None)
-                or getattr(self.config, "db_password", None)
-                or ""
-            )
-            database = (
-                os.getenv("DB_NAME")
-                or getattr(self.config, "DB_NAME", None)
-                or getattr(self.config, "db_name", None)
-                or "paraworld$telegramDB"
-            )
-            port = int(os.getenv("DB_PORT", 3306))
+        host = (
+            os.getenv("DB_HOST")
+            or getattr(self.config, "DB_HOST", None)
+            or getattr(self.config, "db_host", None)
+            or "paraworld.mysql.eu.pythonanywhere-services.com"
+        )
+        user = (
+            os.getenv("DB_USER")
+            or getattr(self.config, "DB_USER", None)
+            or getattr(self.config, "db_user", None)
+            or "paraworld"
+        )
+        password = (
+            os.getenv("DB_PASSWORD")
+            or getattr(self.config, "DB_PASSWORD", None)
+            or getattr(self.config, "db_password", None)
+            or ""
+        )
+        database = (
+            os.getenv("DB_NAME")
+            or getattr(self.config, "DB_NAME", None)
+            or getattr(self.config, "db_name", None)
+            or "paraworld$telegramDB"
+        )
+        port = int(os.getenv("DB_PORT", 3306))
 
-            db_config = {
-                "host": host,
-                "user": user,
-                "password": password,
-                "database": database,
-                "port": port,
-                "autocommit": False,
-                "buffered": True,
-                "connect_timeout": 10,
-            }
+        db_config = {
+            "host": host,
+            "user": user,
+            "password": password,
+            "database": database,
+            "port": port,
+            "autocommit": False,
+            "buffered": True,
+            "connect_timeout": 10,
+        }
 
-            pool_name = f"bot_pool_{int(time.time())}"
-            try:
-                self._pool = pooling.MySQLConnectionPool(
-                    pool_name=pool_name,
-                    pool_size=self.pool_size,
-                    pool_reset_session=True,
-                    **db_config,
-                )
-                logger.info("Pool MySQL établi sur %s (base: %s)", host, database)
-            except Error as exc:
-                logger.critical("Échec de connexion MySQL au serveur %s : %s", host, exc, exc_info=True)
-                raise
+        pool_name = f"bot_pool_{int(time.time())}"
+        try:
+            self._pool = pooling.MySQLConnectionPool(
+                pool_name=pool_name,
+                pool_size=self.pool_size,
+                pool_reset_session=True,
+                **db_config,
+            )
+            logger.info("Pool MySQL établi sur %s (base: %s)", host, database)
+        except Error as exc:
+            logger.critical("Échec de connexion MySQL au serveur %s : %s", host, exc, exc_info=True)
+            raise
 
     def _get_connection(self):
         """Récupère une connexion disponible depuis le pool ou réinitialise si épuisé."""
@@ -185,7 +185,12 @@ class DatabaseManager:
                 prioritaire BOOLEAN DEFAULT FALSE,
                 montant DECIMAL(10, 2) DEFAULT 0.00,
                 statut VARCHAR(32) DEFAULT '📨 Reçue',
+                admin_en_charge BIGINT DEFAULT NULL,
+                ancien_admin_alias VARCHAR(64) DEFAULT NULL,
+                raison_abandon TEXT DEFAULT NULL,
                 date_creation DATETIME DEFAULT CURRENT_TIMESTAMP,
+                date_modification DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                request_number INT DEFAULT NULL,
                 INDEX idx_user (user_id),
                 INDEX idx_statut (statut)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -195,7 +200,9 @@ class DatabaseManager:
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 demande_id INT NOT NULL,
                 admin_id BIGINT NOT NULL,
-                date_prise_en_charge DATETIME DEFAULT CURRENT_TIMESTAMP,
+                date_suivi DATETIME DEFAULT CURRENT_TIMESTAMP,
+                derniere_action DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                statut_suivi VARCHAR(32) DEFAULT 'active',
                 UNIQUE KEY unique_demande_admin (demande_id, admin_id),
                 INDEX idx_admin (admin_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -226,6 +233,24 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 for query in tables:
                     cursor.execute(query)
+
+                # Migration automatique des colonnes pour les tables existantes
+                columns_to_add = [
+                    ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
+                    ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
+                    ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
+                    ("demandes", "request_number", "INT DEFAULT NULL"),
+                    ("demandes", "date_modification", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+                ]
+                for table, col, col_def in columns_to_add:
+                    try:
+                        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+                        logger.info("Colonne %s.%s ajoutée automatiquement.", table, col)
+                    except Error as e:
+                        # Erreur 1060 = Duplicate column name (déjà présente, ignorer)
+                        if getattr(e, 'errno', None) != 1060:
+                            logger.debug("Info colonne %s.%s : %s", table, col, e)
+
             logger.info("Vérification et création des tables terminées avec succès.")
         except Exception as exc:
             logger.error("Erreur lors de la création des tables : %s", exc)
@@ -350,6 +375,14 @@ class DatabaseManager:
         """Retourne l'identifiant du compte propriétaire configuré."""
         val = self.get_config_value("owner_id", str(getattr(self.config, "OWNER_ID", 0)))
         return int(val) if str(val).isdigit() else 0
+
+    def get_owner_alias(self) -> str:
+        """Retourne l'alias configuré du propriétaire."""
+        return self.get_config_value("owner_alias", "Propriétaire")
+
+    def set_owner_alias(self, alias: str) -> bool:
+        """Définit l'alias du propriétaire."""
+        return self.set_config_value("owner_alias", alias)
 
     # ==================== TABLE ADMINS ====================
 

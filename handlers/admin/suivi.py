@@ -211,7 +211,6 @@ class SuiviManager:
         sb = settings["sort_by"]
         order = settings["order"] if settings["order"] in ("ASC", "DESC") else "DESC"
 
-        # Mapping strict des colonnes autorisées
         col_map = {
             "date_suivi": "ds.date_suivi",
             "date_creation": "d.date_creation",
@@ -386,14 +385,13 @@ class SuiviManager:
             )
 
     def _format_suivi_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche avec rappel du tri actif."""
+        """Formate la fiche avec avertissement d'échec précédent si la demande a été relancée."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
         nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
 
         demandeur = f"@{demande['username']}" if demande.get("username") else (demande.get("user_first_name") or f"User {demande['user_id']}")
-        date_crea_str = str(demande.get("date_creation", ""))[:16]
         date_suivi_str = str(demande.get("date_suivi", ""))[:16]
 
         lines = [
@@ -404,6 +402,14 @@ class SuiviManager:
             f"📊 <b>Statut :</b> <code>{demande.get('statut')}</code>",
             f"🙋 <b>Demandeur :</b> {demandeur}"
         ]
+
+        # Encart d'historique si la demande a été reprise après un échec
+        if demande.get("ancien_admin_alias") and demande.get("raison_abandon"):
+            lines.append(
+                f"\n⚠️ <b>HISTORIQUE - TENTATIVE PRÉCÉDENTE :</b>\n"
+                f"• Ancien admin : <b>{demande['ancien_admin_alias']}</b>\n"
+                f"• Motif d'abandon : <i>« {demande['raison_abandon']} »</i>"
+            )
 
         reseaux = []
         if demande.get("instagram"):

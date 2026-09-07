@@ -62,7 +62,8 @@ class UserHandlers:
             # 2. Bouton d'information quota atteint
             if data == "quota_reached_info":
                 _, reason = self.demande.check_creation_quota(query.from_user.id)
-                await query.answer(reason.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")[:150], show_alert=True)
+                clean_reason = reason.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")[:150]
+                await query.answer(clean_reason, show_alert=True)
                 return
 
             # 3. Tentative de création d'une nouvelle demande (contrôle des quotas)
@@ -79,6 +80,80 @@ class UserHandlers:
                     return
                 # Lancement du formulaire
                 await self.formulaire.navigation.handle_form_navigation(update, context)
+
+            # 4. Choix demandeur : Reprise suite à un abandon admin (remise en file disponible)
+            elif data.startswith("reprendre_demande_"):
+                demande_id = int(data.replace("reprendre_demande_", ""))
+                user_id = query.from_user.id
+
+                try:
+                    with self.db_manager.transaction() as cursor:
+                        cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
+                        cursor.execute(
+                            """
+                            UPDATE demandes 
+                            SET statut = '📨 Reçue', admin_en_charge = NULL, date_modification = NOW() 
+                            WHERE id = %s AND user_id = %s
+                            """,
+                            (demande_id, user_id)
+                        )
+
+                    await query.edit_message_text(
+                        "🔄 <b>Votre demande a été remise en file d'attente !</b>\n\n"
+                        "Elle est de nouveau disponible et visible par toute l'équipe dans les demandes disponibles.",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes")
+                        ]])
+                    )
+                except Exception as exc:
+                    logger.error("Erreur remise en dispo demande %s: %s", demande_id, exc)
+                    await query.answer("❌ Erreur technique lors de la remise en file d'attente.", show_alert=True)
+                return
+
+            # 5. Choix demandeur : Archivage définitif (libère le quota)
+            elif data.startswith("archiver_demande_"):
+                demande_id = int(data.replace("archiver_demande_", ""))
+                user_id = query.from_user.id
+
+                try:
+                    with self.db_manager.transaction() as cursor:
+                        cursor.execute("SELECT * FROM demandes WHERE id = %s AND user_id = %s", (demande_id, user_id))
+                        demande = cursor.fetchone()
+
+                        if demande:
+                            cursor.execute(
+                                """
+                                INSERT INTO archives (
+                                    original_id, user_id, prenom, nom, age, localisation,
+                                    photo_id, instagram, snapchat, details, prioritaire,
+                                    montant, statut, date_creation, date_archivage
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                                """,
+                                (
+                                    demande["id"], demande["user_id"], demande["prenom"], demande.get("nom"),
+                                    demande.get("age"), demande.get("localisation"), demande.get("photo_id"),
+                                    demande.get("instagram"), demande.get("snapchat"), demande.get("details"),
+                                    demande.get("prioritaire", False), demande.get("montant", 0.0),
+                                    "❌ Abandonnée (Demandeur)", demande.get("date_creation")
+                                )
+                            )
+                            cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
+                            cursor.execute("DELETE FROM demandes WHERE id = %s", (demande_id,))
+
+                    await query.edit_message_text(
+                        "🗑️ <b>Demande classée sans suite.</b>\n\n"
+                        "Votre demande a été archivée. Une place vient d'être libérée dans votre quota.",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("🗳️ Nouvelle demande", callback_data="new_demande"),
+                            InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
+                        ]])
+                    )
+                except Exception as exc:
+                    logger.error("Erreur archivage demande %s: %s", demande_id, exc)
+                    await query.answer("❌ Erreur technique lors de l'archivage.", show_alert=True)
+                return
 
             elif data.startswith("reply_to_admin_"):
                 try:
@@ -265,6 +340,13 @@ class UserHandlers:
                 else:
                     await update.message.reply_text("❌ Veuillez saisir un nombre entier positif (ex: 0, 5, 10).")
                     return
+
+        # Saisie de la raison d'abandon par un admin
+        if update.message.text and context.user_data and context.user_data.get("waiting_abandon_reason"):
+            from handlers.admin_handlers import AdminHandlers
+            admin_h = AdminHandlers(self.config, self.db_manager)
+            await admin_h.statuts.process_abandon_reason(update, context)
+            return
 
         # Saisie de recherche dynamique dans les demandes disponibles
         if update.message.text and context.user_data and context.user_data.get("waiting_dispo_search"):
