@@ -14,11 +14,13 @@ from telegram.ext import ContextTypes
 from utils.interface_manager import InterfaceManager
 
 from .admin.alias import AliasManager
+from .admin.contact import ContactManager
 from .admin.dispo import DispoManager
+from .admin.notifs import NotifsManager
 from .admin.photos import PhotosManager
+from .admin.profils import ProfilsManager
 from .admin.statuts import StatutsManager
 from .admin.suivi import SuiviManager
-from .admin.notifs import NotifsManager
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,8 @@ class AdminHandlers:
         self.dispo = DispoManager(db_manager, config)
         self.alias = AliasManager(db_manager, config)
         self.notifs = NotifsManager(db_manager, config)
+        self.contact = ContactManager(db_manager, config)
+        self.profils = ProfilsManager(db_manager, config)
 
     async def handle_admin_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Aiguillage sécurisé des callbacks administrateurs."""
@@ -102,7 +106,15 @@ class AdminHandlers:
                 demande_id = int(data.replace("mark_treated_menu_", ""))
                 await self.statuts.show_status_change_menu(update, context, demande_id)
 
-            elif data.startswith("contacter_"):
+            elif data.startswith("profil_admin_"):
+                target_admin_id = int(data.replace("profil_admin_", ""))
+                await self.profils.show_admin_profile(update, context, target_admin_id)
+
+            elif data.startswith("profil_demande_"):
+                demande_id = int(data.replace("profil_demande_", ""))
+                await self.profils.show_user_profile_by_demande(update, context, demande_id)
+
+            elif data.startswith("contacter_") and not data.startswith("contacter_owner"):
                 demande_id = int(data.replace("contacter_", ""))
                 await self._prompt_contact_user(update, context, demande_id)
 
@@ -116,7 +128,7 @@ class AdminHandlers:
                 demande_id = int(data.replace("send_batch_", ""))
                 await self._dispatch_media_batch(update, context, demande_id)
 
-            elif data.startswith("cancel_contact_"):
+            elif data.startswith("cancel_contact_") and not data.startswith("cancel_contact_owner"):
                 demande_id = int(data.replace("cancel_contact_", ""))
                 context.user_data.pop("contact_session", None)
                 await query.edit_message_text(
@@ -202,16 +214,15 @@ class AdminHandlers:
 
         req_num = row.get("request_number", row["id"])
 
-        # Structure de la file d'attente de messages/médias
         context.user_data["contact_session"] = {
             "demande_id": demande_id,
             "target_user_id": row["user_id"],
             "prenom": row["prenom"],
             "req_num": req_num,
             "allow_reply": allow_reply,
-            "visual_media": [],  # Photos et vidéos (regroupées en albums)
-            "doc_media": [],     # Documents génériques
-            "text_notes": [],    # Messages texte
+            "visual_media": [],
+            "doc_media": [],
+            "text_notes": [],
         }
 
         mode_str = "💬 Réponse autorisée (1 fois)" if allow_reply else "🔒 Message informatif (réponse bloquée)"
@@ -241,19 +252,15 @@ class AdminHandlers:
         demande_id = session["demande_id"]
         caption = (msg.caption or "").strip()
 
-        # 1. Traitement des photos
         if msg.photo:
             file_id = msg.photo[-1].file_id
             session["visual_media"].append({"type": "photo", "file_id": file_id, "caption": caption})
-        # 2. Traitement des vidéos
         elif msg.video:
             file_id = msg.video.file_id
             session["visual_media"].append({"type": "video", "file_id": file_id, "caption": caption})
-        # 3. Traitement des documents
         elif msg.document:
             file_id = msg.document.file_id
             session["doc_media"].append({"file_id": file_id, "caption": caption})
-        # 4. Traitement du texte pur
         elif msg.text:
             session["text_notes"].append(msg.text.strip())
 
@@ -269,7 +276,6 @@ class AdminHandlers:
             "Vous pouvez encore déposer d'autres fichiers ou cliquer ci-dessous pour expédier l'ensemble :"
         )
 
-        # Si un message d'état existe déjà, on le met à jour pour éviter le spam visuel
         last_status_msg_id = session.get("last_status_msg_id")
         if last_status_msg_id:
             try:
@@ -284,7 +290,6 @@ class AdminHandlers:
             except Exception:
                 pass
 
-        # Premier message de validation du lot
         sent_msg = await msg.reply_text(
             status_text,
             parse_mode="HTML",
@@ -322,7 +327,6 @@ class AdminHandlers:
         if query:
             await query.edit_message_text("⏳ Transmission du lot en cours...")
 
-        # Préparation du texte d'en-tête
         combined_text = "\n".join(texts)
         corps = f"\n\n« {combined_text} »" if combined_text else ""
         footer = "\n\n<i>Vous pouvez répondre une seule fois ci-dessous.</i>" if allow_reply else ""
@@ -341,13 +345,11 @@ class AdminHandlers:
             ]])
 
         try:
-            # 1. Envoi des Photos et Vidéos par lots de 10 (limite native de Telegram)
             if visuals:
                 for i in range(0, len(visuals), 10):
                     batch = visuals[i:i + 10]
                     media_group = []
                     for idx, item in enumerate(batch):
-                        # Légende sur le tout premier fichier du premier album
                         item_caption = header_text if (i == 0 and idx == 0) else item["caption"]
                         if item["type"] == "photo":
                             media_group.append(InputMediaPhoto(media=item["file_id"], caption=item_caption, parse_mode="HTML" if item_caption else None))
@@ -355,23 +357,19 @@ class AdminHandlers:
                             media_group.append(InputMediaVideo(media=item["file_id"], caption=item_caption, parse_mode="HTML" if item_caption else None))
 
                     if len(media_group) == 1:
-                        # Si un seul visuel isolé
                         single = media_group[0]
                         if isinstance(single, InputMediaPhoto):
                             await context.bot.send_photo(chat_id=target_user_id, photo=single.media, caption=single.caption, parse_mode="HTML")
                         else:
                             await context.bot.send_video(chat_id=target_user_id, video=single.media, caption=single.caption, parse_mode="HTML")
                     else:
-                        # Envoi sous forme d'ALBUM natif Telegram
                         await context.bot.send_media_group(chat_id=target_user_id, media=media_group)
 
-            # 2. Envoi des Documents par lots de 10
             if docs:
                 for i in range(0, len(docs), 10):
                     batch = docs[i:i + 10]
                     doc_group = []
                     for idx, item in enumerate(batch):
-                        # Légende si pas encore de visuel envoyé
                         item_caption = header_text if (not visuals and i == 0 and idx == 0) else item["caption"]
                         doc_group.append(InputMediaDocument(media=item["file_id"], caption=item_caption, parse_mode="HTML" if item_caption else None))
 
@@ -380,7 +378,6 @@ class AdminHandlers:
                     else:
                         await context.bot.send_media_group(chat_id=target_user_id, media=doc_group)
 
-            # 3. Si aucun fichier (texte seul)
             if not visuals and not docs and texts:
                 await context.bot.send_message(
                     chat_id=target_user_id,
@@ -389,7 +386,6 @@ class AdminHandlers:
                     reply_markup=user_keyboard
                 )
 
-            # 4. Si fichiers avec réponse autorisée : envoi du bouton de réponse dédié
             elif user_keyboard:
                 await context.bot.send_message(
                     chat_id=target_user_id,

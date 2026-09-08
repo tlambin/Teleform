@@ -197,8 +197,7 @@ class TelegramBot:
         """Crée les ConversationHandlers du bot."""
         demande_handler = self.user_handlers.formulaire.get_conversation_handler()
 
-        # Intercepte à la fois la modification par l'admin ('modifier_alias')
-        # et le forçage par l'Owner ('owner_edit_alias_<id>')
+        # Modification d'alias (Admin ou Owner)
         modify_alias_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -219,6 +218,55 @@ class TelegramBot:
             per_user=True,
         )
 
+        # Contact Admin -> Propriétaire
+        contact_owner_conv = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    self.admin_handlers.contact.start_contact_owner,
+                    pattern="^contacter_owner$",
+                )
+            ],
+            states={
+                self.admin_handlers.contact.WAITING_ADMIN_MSG: [
+                    MessageHandler(
+                        (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND,
+                        self.admin_handlers.contact.send_to_owner
+                    )
+                ]
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.admin_handlers.contact.cancel_contact_owner, pattern="^cancel_contact_owner$"),
+                CommandHandler("stop", self.admin_handlers.contact.cancel_contact_owner),
+            ],
+            allow_reentry=True,
+            per_user=True,
+        )
+
+        # Réponse Propriétaire -> Admin
+        owner_reply_conv = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    self.admin_handlers.contact.start_owner_reply,
+                    pattern=r"^owner_reply_to_\d+$",
+                )
+            ],
+            states={
+                self.admin_handlers.contact.WAITING_OWNER_REPLY: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        self.admin_handlers.contact.send_owner_reply
+                    )
+                ]
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.admin_handlers.contact.cancel_owner_reply, pattern="^cancel_owner_reply$"),
+                CommandHandler("stop", self.admin_handlers.contact.cancel_owner_reply),
+            ],
+            allow_reentry=True,
+            per_user=True,
+        )
+
+        # Ajout d'admin par l'Owner
         add_admin_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -239,6 +287,7 @@ class TelegramBot:
             per_user=True,
         )
 
+        # Révocation d'admin par l'Owner
         remove_admin_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -265,7 +314,14 @@ class TelegramBot:
             per_user=True,
         )
 
-        return [demande_handler, modify_alias_conv, add_admin_conv, remove_admin_conv]
+        return [
+            demande_handler,
+            modify_alias_conv,
+            contact_owner_conv,
+            owner_reply_conv,
+            add_admin_conv,
+            remove_admin_conv
+        ]
 
     def setup_application(self) -> Application:
         """Configure et câble tous les handlers du bot ainsi que la tâche de fond."""
@@ -293,10 +349,10 @@ class TelegramBot:
             pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_bot|menu_limits|limit_.*|bot_.*)$",
         ))
 
-        # Callbacks admin (inclut notifications et préférences)
+        # Callbacks admin (inclut profils statistiques, notifications, filtres et préférences)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(admin_|demandes_disponibles|dispo_|demandes_suivies|suivi_|mark_treated_menu|change_status_|set_status_|voir_photo_|retour_texte_|suivre_demande_|contacter_|contact_mode_|cancel_contact_|send_batch_|menu_notifs|pref_)",
+            pattern=r"^(admin_|demandes_disponibles|dispo_|demandes_suivies|suivi_|mark_treated_menu|change_status_|set_status_|voir_photo_|retour_texte_|suivre_demande_|contacter_|contact_mode_|cancel_contact_|send_batch_|menu_notifs|pref_|profil_)",
         ))
 
         # Callbacks utilisateur

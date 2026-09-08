@@ -19,7 +19,7 @@ class DatabaseManager:
         self._pool: Optional[pooling.MySQLConnectionPool] = None
         self._cache: Dict[str, Any] = {}
         self._cache_timestamp: Dict[str, float] = {}
-        self._cache_ttl = 300.0  # Durée de validité du cache : 5 minutes
+        self._cache_ttl = 300.0
 
         self._init_connection_pool()
         logger.info("DatabaseManager initialisé avec pool de %d connexions.", self.pool_size)
@@ -156,7 +156,7 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 username VARCHAR(64),
-                prenom VARCHAR(64),
+                first_name VARCHAR(64),
                 derniere_activite DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 date_inscription DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -248,7 +248,6 @@ class DatabaseManager:
                 for query in tables:
                     cursor.execute(query)
 
-                # Migration automatique des colonnes pour tables déjà créées
                 columns_to_add = [
                     ("admins", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
                     ("admins", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
@@ -530,12 +529,12 @@ class DatabaseManager:
         """Retourne les réglages de notifications d'un administrateur avec valeurs par défaut."""
         default_prefs = {
             "user_id": user_id,
-            "notif_new_mode": "sound",      # 'sound', 'silent', 'off'
-            "rappel_mode": "sound",         # 'sound', 'silent', 'off'
-            "rappel_freq": "daily",         # 'daily', 'weekly', 'monthly'
-            "rappel_heure": 18,             # 0 à 23
-            "rappel_jour_semaine": 6,       # 0 = Lundi, 6 = Dimanche (Dimanche par défaut)
-            "rappel_jour_mois": 1,          # 1 à 28 (le 1er par défaut)
+            "notif_new_mode": "sound",
+            "rappel_mode": "sound",
+            "rappel_freq": "daily",
+            "rappel_heure": 18,
+            "rappel_jour_semaine": 6,
+            "rappel_jour_mois": 1,
             "last_rappel_date": None
         }
         cache_key = f"admin_prefs_{user_id}"
@@ -617,6 +616,189 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur lecture globale des préférences admins : %s", exc)
             return []
+
+    # ==================== STATISTIQUES & PROFILS ====================
+
+    def get_admin_stats(self, admin_id: int) -> Dict[str, Any]:
+        """Calcule l'ensemble des métriques de performance et de charge d'un administrateur ou du propriétaire."""
+        try:
+            admin_id = int(admin_id)
+        except Exception:
+            pass
+
+        is_owner = self.config.is_owner(admin_id)
+
+        stats = {
+            "user_id": admin_id,
+            "alias": self.get_admin_alias(admin_id),
+            "date_added": None,
+            "perm_reseaux": "all",
+            "perm_type": "all",
+            "en_cours": 0,
+            "reussies": 0,
+            "abandonnees": 0,
+            "total_traitees": 0,
+            "taux_reussite": 0.0,
+            "prioritaires_traitees": 0,
+            "montant_total": 0.0,
+        }
+
+        try:
+            with self.get_cursor() as cursor:
+                if is_owner:
+                    stats["alias"] = self.get_owner_alias()
+                    stats["perm_reseaux"] = "all"
+                    stats["perm_type"] = "all"
+                else:
+                    cursor.execute(
+                        "SELECT alias, date_added, perm_reseaux, perm_type FROM admins WHERE user_id = %s",
+                        (admin_id,)
+                    )
+                    admin_row = cursor.fetchone()
+                    if admin_row:
+                        stats["alias"] = admin_row.get("alias") or stats["alias"]
+                        stats["date_added"] = admin_row.get("date_added")
+                        stats["perm_reseaux"] = admin_row.get("perm_reseaux") or "all"
+                        stats["perm_type"] = admin_row.get("perm_type") or "all"
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM demandes d
+                    JOIN demandes_suivi ds ON d.id = ds.demande_id
+                    WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente', '⚠️ Difficile')
+                    """,
+                    (admin_id,)
+                )
+                r_encours = cursor.fetchone()
+                stats["en_cours"] = int(r_encours["total"]) if r_encours and r_encours.get("total") else 0
+
+                cursor.execute(
+                    """
+                    SELECT 
+                        SUM(CASE WHEN d.statut = '✅ Réussie' THEN 1 ELSE 0 END) AS reussies,
+                        SUM(CASE WHEN d.statut = '❌ Abandonnée' THEN 1 ELSE 0 END) AS abandonnees,
+                        SUM(CASE WHEN d.prioritaire = 1 THEN 1 ELSE 0 END) AS nb_prio,
+                        COALESCE(SUM(CASE WHEN d.prioritaire = 1 THEN d.montant ELSE 0 END), 0) AS montant_cumule
+                    FROM demandes d
+                    JOIN demandes_suivi ds ON d.id = ds.demande_id
+                    WHERE ds.admin_id = %s
+                    """,
+                    (admin_id,)
+                )
+                r_term = cursor.fetchone()
+                if r_term:
+                    stats["reussies"] = int(r_term.get("reussies") or 0)
+                    stats["abandonnees"] = int(r_term.get("abandonnees") or 0)
+                    stats["prioritaires_traitees"] = int(r_term.get("nb_prio") or 0)
+                    stats["montant_total"] = float(r_term.get("montant_cumule") or 0.0)
+
+                total_fermees = stats["reussies"] + stats["abandonnees"]
+                stats["total_traitees"] = total_fermees
+                if total_fermees > 0:
+                    stats["taux_reussite"] = round((stats["reussies"] / total_fermees) * 100, 1)
+
+            return stats
+        except Exception as exc:
+            logger.error("Erreur calcul statistiques admin %s: %s", admin_id, exc, exc_info=True)
+            return stats
+
+    def get_user_stats(self, user_id: int, demande_id: Optional[int] = None) -> Dict[str, Any]:
+        """Calcule le profil statistique complet d'un demandeur avec compatibilité first_name/prenom."""
+        try:
+            user_id = int(user_id)
+        except Exception:
+            pass
+
+        stats = {
+            "user_id": user_id,
+            "username": None,
+            "prenom": "Utilisateur",
+            "date_inscription": None,
+            "derniere_activite": None,
+            "total_demandes": 0,
+            "en_cours": 0,
+            "reussies": 0,
+            "abandonnees": 0,
+            "en_attente": 0,
+            "total_prio": 0,
+            "montant_total_investi": 0.0,
+        }
+
+        try:
+            with self.get_cursor() as cursor:
+                # 1. Infos utilisateur dans la table users (gère first_name ou prenom sans crash)
+                try:
+                    cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                    u_row = cursor.fetchone()
+                    if u_row:
+                        stats["username"] = u_row.get("username")
+                        stats["prenom"] = u_row.get("first_name") or u_row.get("prenom") or "Utilisateur"
+                        stats["date_inscription"] = u_row.get("date_inscription")
+                        stats["derniere_activite"] = u_row.get("derniere_activite")
+                except Exception as e_user:
+                    logger.debug("Info lecture users: %s", e_user)
+
+                # 2. Statistiques des demandes actives
+                cursor.execute(
+                    """
+                    SELECT 
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN statut IN ('🔄 En cours', '⚠️ Difficile') THEN 1 ELSE 0 END) AS en_cours,
+                        SUM(CASE WHEN statut IN ('📨 Reçue', '⏳ En attente') THEN 1 ELSE 0 END) AS en_attente,
+                        SUM(CASE WHEN statut = '✅ Réussie' THEN 1 ELSE 0 END) AS reussies,
+                        SUM(CASE WHEN statut = '❌ Abandonnée' THEN 1 ELSE 0 END) AS abandonnees,
+                        SUM(CASE WHEN prioritaire = 1 THEN 1 ELSE 0 END) AS total_prio,
+                        COALESCE(SUM(CASE WHEN prioritaire = 1 THEN montant ELSE 0 END), 0) AS montant_total
+                    FROM demandes
+                    WHERE user_id = %s
+                    """,
+                    (user_id,)
+                )
+                d_row = cursor.fetchone()
+
+                # 3. Statistiques des archives
+                cursor.execute(
+                    """
+                    SELECT 
+                        COUNT(*) AS total_archives,
+                        SUM(CASE WHEN statut = '✅ Réussie' THEN 1 ELSE 0 END) AS reussies_arch,
+                        SUM(CASE WHEN statut = '❌ Abandonnée' THEN 1 ELSE 0 END) AS abandonnees_arch,
+                        COALESCE(SUM(CASE WHEN prioritaire = 1 THEN montant ELSE 0 END), 0) AS montant_arch
+                    FROM archives
+                    WHERE user_id = %s
+                    """,
+                    (user_id,)
+                )
+                a_row = cursor.fetchone()
+
+                tot_actives = int(d_row["total"]) if d_row and d_row.get("total") else 0
+                tot_archives = int(a_row["total_archives"]) if a_row and a_row.get("total_archives") else 0
+                stats["total_demandes"] = tot_actives + tot_archives
+
+                if d_row:
+                    stats["en_cours"] = int(d_row.get("en_cours") or 0)
+                    stats["en_attente"] = int(d_row.get("en_attente") or 0)
+                    stats["reussies"] = int(d_row.get("reussies") or 0)
+                    stats["abandonnees"] = int(d_row.get("abandonnees") or 0)
+                    stats["total_prio"] = int(d_row.get("total_prio") or 0)
+                    montant_actif = float(d_row.get("montant_total") or 0.0)
+                else:
+                    montant_actif = 0.0
+
+                if a_row:
+                    stats["reussies"] += int(a_row.get("reussies_arch") or 0)
+                    stats["abandonnees"] += int(a_row.get("abandonnees_arch") or 0)
+                    montant_arch = float(a_row.get("montant_arch") or 0.0)
+                else:
+                    montant_arch = 0.0
+
+                stats["montant_total_investi"] = round(montant_actif + montant_arch, 2)
+
+            return stats
+        except Exception as exc:
+            logger.error("Erreur calcul statistiques utilisateur %s: %s", user_id, exc, exc_info=True)
+            return stats
 
     # ==================== UTILITAIRE / MÉTRIQUES ====================
 

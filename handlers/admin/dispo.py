@@ -244,25 +244,22 @@ class DispoManager:
         ]
         params = [user_id]
 
-        # 1. APPLICATION STRICTE DES PERMISSIONS DE L'ADMINISTRATEUR
+        # 1. Application des permissions administrateur
         perms = self.db_manager.get_admin_permissions(user_id)
         p_reseau = perms.get("perm_reseaux", "all")
         p_type = perms.get("perm_type", "all")
 
-        # Règle réseau : si restreint à insta, doit contenir au minimum un compte Instagram (même s'il y a snap)
         if p_reseau == "insta":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
         elif p_reseau == "snap":
             sql_where.append("d.snapchat IS NOT NULL AND d.snapchat != ''")
 
-        # Règle type : restreint aux payantes ou aux gratuites
         if p_type == "prio_only":
             sql_where.append("d.prioritaire = 1")
         elif p_type == "standard_only":
             sql_where.append("d.prioritaire = 0")
 
-        # 2. APPLICATION DES FILTRES MANUELS DE SESSION UTILISATEUR
-        # Filtre Réseaux
+        # 2. Application des filtres de session
         if filters["reseau"] == "insta":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
         elif filters["reseau"] == "snap":
@@ -270,7 +267,6 @@ class DispoManager:
         elif filters["reseau"] == "both":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != '' AND d.snapchat IS NOT NULL AND d.snapchat != ''")
 
-        # Filtre Âge
         if filters["age_range"] == "18_25":
             sql_where.append("d.age BETWEEN 18 AND 25")
         elif filters["age_range"] == "26_35":
@@ -278,13 +274,11 @@ class DispoManager:
         elif filters["age_range"] == "36_plus":
             sql_where.append("d.age >= 36")
 
-        # Filtre Type
         if filters["type_demande"] == "prio":
             sql_where.append("d.prioritaire = 1")
         elif filters["type_demande"] == "standard":
             sql_where.append("d.prioritaire = 0")
 
-        # Recherche textuelle libre
         if filters["search"]:
             pattern = f"%{filters['search']}%"
             sql_where.append(
@@ -426,7 +420,6 @@ class DispoManager:
             f"🙋 <b>Demandeur :</b> {demandeur}"
         ]
 
-        # Encart d'historique si la demande a déjà été abandonnée
         if demande.get("raison_abandon"):
             lines.append(
                 f"\n⚠️ <b>HISTORIQUE - TENTATIVE(S) PRÉCÉDENTE(S) :</b>\n"
@@ -446,7 +439,6 @@ class DispoManager:
             det_court = (det[:140] + "...") if len(det) > 140 else det
             lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
 
-        # Indicateur de filtre actif
         f = self._get_active_filters(context)
         active_tags = []
         if f["reseau"] != "all":
@@ -464,8 +456,9 @@ class DispoManager:
         return "\n".join(lines)
 
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Construit le clavier d'actions enrichi avec Filtres et Aléatoire."""
+        """Construit le clavier d'actions enrichi avec Filtres, Aléatoire et Profil Demandeur."""
         demande_id = demande["id"]
+        demande_user_id = demande["user_id"]
         buttons = []
 
         # 1. Action directe
@@ -474,7 +467,12 @@ class DispoManager:
             InlineKeyboardButton("🎲 Au hasard", callback_data="dispo_random")
         ])
 
-        # 2. Pagination
+        # 2. Bouton d'inspection du profil demandeur
+        buttons.append([
+            InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
+        ])
+
+        # 3. Pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"dispo_prev_{page}"))
@@ -484,13 +482,13 @@ class DispoManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # 3. Filtres & recherche
+        # 4. Filtres & recherche
         buttons.append([
             InlineKeyboardButton("⚙️ Filtres / Recherche", callback_data="dispo_filters_menu"),
             InlineKeyboardButton("💌 Mes Suivis", callback_data="demandes_suivies")
         ])
 
-        # 4. Accueil
+        # 5. Accueil
         buttons.append([
             InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
         ])

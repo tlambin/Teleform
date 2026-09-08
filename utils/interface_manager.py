@@ -36,7 +36,6 @@ class InterfaceManager:
                 "Sélectionnez une option pour continuer :"
             )
 
-        # Clavier utilisateur de base
         keyboard = [
             [
                 InlineKeyboardButton("🗳️ FAIRE UNE DEMANDE", callback_data="new_demande"),
@@ -44,7 +43,6 @@ class InterfaceManager:
             ]
         ]
 
-        # Raccourcis de gestion pour l'équipe
         if user_role in ["admin", "owner"]:
             keyboard.append([
                 InlineKeyboardButton("📋 GÉRER LES DEMANDES", callback_data="gerer_demandes")
@@ -86,8 +84,10 @@ class InterfaceManager:
         else:
             message = "🦈 <b>Paramètres Administrateur</b>\n\nOptions disponibles :"
             keyboard = [
+                [InlineKeyboardButton("📊 MON PROFIL & PERFORMANCES", callback_data=f"profil_admin_{user_id}")],
                 [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
+                [InlineKeyboardButton("👑 CONTACTER LE PROPRIÉTAIRE", callback_data="contacter_owner")],
                 [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ]
 
@@ -96,7 +96,7 @@ class InterfaceManager:
     # ========== SOUS-MENU GÉRER LES ADMINS (Owner Only) ==========
 
     def get_gerer_admins_menu(self):
-        """Menu de gestion de l'équipe administrateur avec liste détaillée et accès aux permissions."""
+        """Menu de gestion de l'équipe administrateur avec liste détaillée, statistiques et permissions."""
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
@@ -126,7 +126,7 @@ class InterfaceManager:
                     type_tag = admin.get("perm_type") or "all"
 
                     res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(res_tag, res_tag)
-                    type_label = {"all": "Tous types", "prio_only": "Payantes seules", "standard_only": "Gratuites seules"}.get(type_tag, type_tag)
+                    type_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(type_tag, type_tag)
 
                     message += (
                         f"• <b>{admin['alias']}</b> ({pseudo})\n"
@@ -134,9 +134,10 @@ class InterfaceManager:
                         f"  🛡️ <i>Accès : {res_label} | {type_label}</i>\n\n"
                     )
 
-                    # Bouton direct pour régler les droits de chaque administrateur
+                    # Deux boutons par administrateur : Droits & Profil
                     keyboard.append([
-                        InlineKeyboardButton(f"🛡️ Droits : {admin['alias']}", callback_data=f"perm_admin_{admin['user_id']}")
+                        InlineKeyboardButton(f"🛡️ Droits : {admin['alias']}", callback_data=f"perm_admin_{admin['user_id']}"),
+                        InlineKeyboardButton("📊 Stats", callback_data=f"profil_admin_{admin['user_id']}")
                     ])
 
             keyboard.append([

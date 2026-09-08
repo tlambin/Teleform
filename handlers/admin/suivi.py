@@ -311,7 +311,7 @@ class SuiviManager:
                     """
                     INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
                     VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE 
+                    ON DUPLICATE KEY UPDATE
                         admin_id = VALUES(admin_id),
                         derniere_action = NOW(),
                         statut_suivi = 'active'
@@ -320,7 +320,7 @@ class SuiviManager:
                 )
                 cursor.execute(
                     """
-                    UPDATE demandes 
+                    UPDATE demandes
                     SET statut = '🔄 En cours', admin_en_charge = %s, date_modification = NOW()
                     WHERE id = %s
                     """,
@@ -403,7 +403,6 @@ class SuiviManager:
             f"🙋 <b>Demandeur :</b> {demandeur}"
         ]
 
-        # Encart d'historique si la demande a été reprise après un échec
         if demande.get("ancien_admin_alias") and demande.get("raison_abandon"):
             lines.append(
                 f"\n⚠️ <b>HISTORIQUE - TENTATIVE PRÉCÉDENTE :</b>\n"
@@ -424,7 +423,6 @@ class SuiviManager:
             det_court = (det[:140] + "...") if len(det) > 140 else det
             lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
 
-        # Indicateur de tri actif
         s = self._get_sort_settings(context)
         label_sort = {
             "date_suivi": "date suivi",
@@ -444,14 +442,20 @@ class SuiviManager:
         return "\n".join(lines)
 
     def _build_suivi_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Clavier avec actions, pagination et menu de tri."""
+        """Clavier avec actions, consultation profil demandeur, pagination et tri."""
         demande_id = demande["id"]
+        demande_user_id = demande["user_id"]
         buttons = []
 
         # Actions principales
         buttons.append([
             InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
             InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}"),
+        ])
+
+        # Bouton profil utilisateur demandeur
+        buttons.append([
+            InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
         ])
 
         # Pagination
