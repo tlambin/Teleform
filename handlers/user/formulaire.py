@@ -450,7 +450,7 @@ class FormulaireManager:
             "⚠️ <b>Au moins un réseau social est obligatoire.</b>\n"
             "Veuillez indiquer son compte <b>Snapchat</b> :"
         )
-        # include_skip=False car Instagram a été ignoré : Snapchat est obligatoire
+        # include_skip=False car Instagram a été ignoré : Snapchat devient obligatoire
         kb = self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=False)
 
         if update.callback_query:
@@ -616,7 +616,7 @@ class FormulaireManager:
             return self.MONTANT
 
     async def prompt_admin_selection_or_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Si l'utilisateur est VIP, lui propose de choisir son admin référent. Sinon, enregistre."""
+        """Si l'utilisateur est VIP, lui propose de choisir son admin référent (hors admins en pause). Sinon, enregistre."""
         user = update.effective_user
         if not user:
             return ConversationHandler.END
@@ -723,7 +723,6 @@ class FormulaireManager:
                 )
                 demande_id = cursor.lastrowid
 
-                # Si un admin dédié a été sélectionné, l'inscrire directement dans ses suivis
                 if target_admin_id:
                     cursor.execute(
                         """
@@ -760,7 +759,7 @@ class FormulaireManager:
             elif update.message:
                 await update.message.reply_text(recap, parse_mode="HTML")
 
-            # Notification à l'admin ciblé ou diffusion générale
+            # Notification ciblée ou diffusion générale
             if target_admin_id:
                 await self._send_targeted_admin_alert(context, target_admin_id, demande_id, next_num, nom_complet, demande)
             else:
@@ -818,7 +817,7 @@ class FormulaireManager:
     async def _broadcast_new_demande_alert(
         self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict
     ):
-        """Avertit l'équipe en appliquant les préférences (sonore, silencieux ou coupé)."""
+        """Avertit l'équipe en appliquant les préférences (ignore les administrateurs en pause)."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -837,6 +836,11 @@ class FormulaireManager:
         for admin_id in self.config.get_all_admins():
             try:
                 aid = int(admin_id)
+
+                # 🛑 Ne pas notifier un administrateur en mode pause
+                if self.db_manager.is_admin_paused(aid):
+                    continue
+
                 prefs = self.db_manager.get_admin_preferences(aid)
                 notif_mode = prefs.get("notif_new_mode", "sound")
 

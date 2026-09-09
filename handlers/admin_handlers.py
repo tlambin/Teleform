@@ -113,6 +113,10 @@ class AdminHandlers:
                 demande_id = int(data.replace("profil_demande_", ""))
                 await self.profils.show_user_profile_by_demande(update, context, demande_id)
 
+            # Mode pause administrateur
+            elif data in ("admin_pause_prompt", "admin_pause_keep", "admin_pause_release", "admin_resume"):
+                await self._handle_admin_pause(update, context, data)
+
             elif data.startswith("contacter_") and not data.startswith("contacter_owner"):
                 demande_id = int(data.replace("contacter_", ""))
                 await self._prompt_contact_user(update, context, demande_id)
@@ -142,8 +146,105 @@ class AdminHandlers:
                 await query.answer("Action non reconnue.", show_alert=True)
 
         except Exception as exc:
-            logger.error("Erreur callback admin '%s': %s", data, exc, exc_info=True)
+            logger.error("Erreur callback admin '%s' : %s", data, exc, exc_info=True)
             await self._handle_callback_error(query)
+
+    async def _handle_admin_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+        """Gère les transitions du mode pause administrateur."""
+        query = update.callback_query
+        admin_id = update.effective_user.id
+
+        if data == "admin_pause_prompt":
+            active_demandes = self.db_manager.get_admin_active_demandes(admin_id)
+            nb = len(active_demandes)
+
+            if nb == 0:
+                self.db_manager.set_admin_pause_status(admin_id, paused=True)
+                await query.edit_message_text(
+                    "⏸️ <b>Mode pause activé</b>\n\n"
+                    "• Vous ne recevrez plus aucune notification de nouvelle demande.\n"
+                    "• Vous n'apparaissez plus dans la liste de sélection VIP.\n"
+                    "• Vous n'avez aucun dossier actif en attente.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")
+                    ]])
+                )
+                return
+
+            text = (
+                f"⏸️ <b>Passage en mode pause</b>\n\n"
+                f"Vous avez actuellement <b>{nb}</b> demande(s) en cours de traitement.\n"
+                "Que souhaitez-vous faire de vos dossiers ?"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📁 Conserver mes dossiers en cours", callback_data="admin_pause_keep")],
+                [InlineKeyboardButton("❌ Libérer et abandonner mes dossiers", callback_data="admin_pause_release")],
+                [InlineKeyboardButton("🔙 Annuler", callback_data="parametres")]
+            ])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+            return
+
+        elif data == "admin_pause_keep":
+            self.db_manager.set_admin_pause_status(admin_id, paused=True)
+            await query.edit_message_text(
+                "⏸️ <b>Mode pause activé (dossiers conservés)</b>\n\n"
+                "• Vos demandes en cours restent assignées à votre compte.\n"
+                "• Aucune nouvelle demande ne vous sera attribuée ni notifiée.\n"
+                "• Vous pouvez continuer à traiter vos suivis à votre rythme.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")
+                ]])
+            )
+            return
+
+        elif data == "admin_pause_release":
+            abandoned = self.db_manager.abandon_admin_demandes_for_pause(admin_id)
+            self.db_manager.set_admin_pause_status(admin_id, paused=True)
+            alias = self.db_manager.get_admin_alias(admin_id)
+
+            for dem in abandoned:
+                try:
+                    c_id = dem["user_id"]
+                    req_num = dem.get("request_number") or dem["id"]
+                    msg_client = (
+                        f"⚠️ <b>Demande #{req_num} — Piégeur indisponible</b>\n\n"
+                        f"Votre piégeur référent (<b>{alias}</b>) est actuellement à l'arrêt / en pause.\n"
+                        "Sa prise en charge sur votre dossier a donc été interrompue.\n\n"
+                        "Vous pouvez au choix remettre votre demande dans la file d'attente pour qu'un autre membre prenne le relais, ou la classer sans suite :"
+                    )
+                    kb_client = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Reprendre ma demande", callback_data=f"reprendre_demande_{dem['id']}")],
+                        [InlineKeyboardButton("🗑️ Archiver la demande", callback_data=f"archiver_demande_{dem['id']}")]
+                    ])
+                    await context.bot.send_message(chat_id=c_id, text=msg_client, parse_mode="HTML", reply_markup=kb_client)
+                except Exception as err:
+                    logger.warning("Notification abandon pause impossible pour user %s : %s", dem.get("user_id"), err)
+
+            await query.edit_message_text(
+                f"⏸️ <b>Mode pause activé</b>\n\n"
+                f"• {len(abandoned)} dossier(s) libéré(s) et notifiés aux demandeurs.\n"
+                "• Vous êtes désormais retiré du service jusqu'à votre reprise.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")
+                ]])
+            )
+            return
+
+        elif data == "admin_resume":
+            self.db_manager.set_admin_pause_status(admin_id, paused=False)
+            await query.edit_message_text(
+                "🟢 <b>Bon retour ! Vous êtes à nouveau en service.</b>\n\n"
+                "• Vous recevrez à nouveau les alertes et notifications.\n"
+                "• Vous êtes à nouveau sélectionnable par les clients VIP.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")
+                ]])
+            )
+            return
 
     async def _prompt_contact_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Demande d'abord si l'utilisateur doit pouvoir répondre."""
@@ -414,5 +515,5 @@ class AdminHandlers:
                     ]])
                 )
         except Exception as fallback_exc:
-            logger.error("Échec notification erreur admin: %s", fallback_exc)
+            logger.error("Échec notification erreur admin : %s", fallback_exc)
             await query.answer("❌ Erreur système.")

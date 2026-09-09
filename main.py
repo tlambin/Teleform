@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point d'entrée principal de l'application Telegram avec gestion des VIP et Telegram Stars."""
+"""Point d'entrée principal de l'application Telegram avec gestion des VIP, Telegram Stars et mode pause."""
 
 from datetime import datetime
 import logging
@@ -84,6 +84,11 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
 
     for pref in admin_prefs_list:
         user_id = pref["user_id"]
+
+        # 🛑 Ne pas envoyer de rappel périodique si l'admin est en mode pause
+        if db_manager.is_admin_paused(user_id):
+            continue
+
         rappel_mode = pref.get("rappel_mode", "sound")
         freq = pref.get("rappel_freq", "daily")
         heure = pref.get("rappel_heure", 18)
@@ -458,16 +463,16 @@ class TelegramBot:
             pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_bot|menu_limits|limit_.*|bot_.*)$",
         ))
 
-        # Callbacks admin (profils statistiques, notifications, filtres et préférences)
+        # Callbacks admin (profils statistiques, notifications, filtres, préférences et mode pause)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(admin_|demandes_disponibles|dispo_|demandes_suivies|suivi_|mark_treated_menu|change_status_|set_status_|voir_photo_|retour_texte_|suivre_demande_|contacter_|contact_mode_|cancel_contact_|send_batch_|menu_notifs|pref_|profil_)",
+            pattern=r"^(admin_|demandes_disponibles|dispo_|demandes_suivies|suivi_|mark_treated_menu|change_status_|set_status_|voir_photo_|retour_texte_|suivre_demande_|contacter_|contact_mode_|cancel_contact_|send_batch_|menu_notifs|pref_|profil_|admin_pause_.*|admin_resume)$",
         ))
 
         # Callbacks utilisateur (formulaires, options VIP, boutique Stars et relances)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
-            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit|reply_to_admin_|cancel_user_reply|quota_reached_info|reprendre_demande_|archiver_demande_|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*)",
+            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit|reply_to_admin_|cancel_user_reply|quota_reached_info|reprendre_demande_|archiver_demande_|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*)$",
         ))
 
         # Messages (texte, photos, vidéos, documents) hors commandes

@@ -171,6 +171,7 @@ class DatabaseManager:
                 perm_reseaux VARCHAR(16) DEFAULT 'all',
                 perm_type VARCHAR(16) DEFAULT 'all',
                 alias_locked BOOLEAN DEFAULT FALSE,
+                is_paused BOOLEAN DEFAULT FALSE,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
@@ -255,6 +256,7 @@ class DatabaseManager:
                     ("admins", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
                     ("admins", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
                     ("admins", "alias_locked", "BOOLEAN DEFAULT FALSE"),
+                    ("admins", "is_paused", "BOOLEAN DEFAULT FALSE"),
                     ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
                     ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
                     ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
@@ -484,6 +486,99 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur verrouillage alias %s: %s", user_id, exc)
 
+    # ==================== MODE PAUSE ADMINISTRATEUR ====================
+
+    def is_admin_paused(self, user_id: int) -> bool:
+        """Indique si un administrateur est actuellement en mode pause."""
+        cache_key = f"admin_paused_{user_id}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT is_paused FROM admins WHERE user_id = %s", (int(user_id),))
+                row = cursor.fetchone()
+                val = bool(row.get("is_paused")) if row else False
+                self._set_cached_value(cache_key, val)
+                return val
+        except Exception as exc:
+            logger.error("Erreur vérification mode pause pour %s : %s", user_id, exc)
+            return False
+
+    def set_admin_pause_status(self, user_id: int, paused: bool) -> bool:
+        """Active ou désactive le mode pause d'un administrateur."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "UPDATE admins SET is_paused = %s WHERE user_id = %s",
+                    (paused, int(user_id))
+                )
+            self.clear_cache(f"admin_paused_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur modification mode pause pour %s : %s", user_id, exc)
+            return False
+
+    def get_admin_active_demandes(self, admin_id: int) -> List[Dict[str, Any]]:
+        """Récupère les demandes en cours prises en charge par un administrateur."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT d.id, d.user_id, d.request_number, d.prenom, d.nom, d.statut
+                    FROM demandes d
+                    JOIN demandes_suivi ds ON d.id = ds.demande_id
+                    WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente', '⚠️ Difficile')
+                    """,
+                    (int(admin_id),)
+                )
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur récupération demandes actives admin %s : %s", admin_id, exc)
+            return []
+
+    def abandon_admin_demandes_for_pause(self, admin_id: int) -> List[Dict[str, Any]]:
+        """Passe toutes les demandes actives d'un admin en statut abandonné pour cause d'arrêt."""
+        alias = self.get_admin_alias(admin_id)
+        reason = f"Piégeur ({alias}) actuellement à l'arrêt / en pause."
+
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    SELECT d.id, d.user_id, d.request_number, d.prenom
+                    FROM demandes d
+                    JOIN demandes_suivi ds ON d.id = ds.demande_id
+                    WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente', '⚠️ Difficile')
+                    """,
+                    (int(admin_id),)
+                )
+                rows = cursor.fetchall()
+
+                if rows:
+                    ids = [r["id"] for r in rows]
+                    placeholders = ", ".join(["%s"] * len(ids))
+
+                    cursor.execute(
+                        f"""
+                        UPDATE demandes
+                        SET statut = '❌ Abandonnée',
+                            ancien_admin_alias = %s,
+                            admin_en_charge = NULL,
+                            raison_abandon = %s,
+                            date_modification = NOW()
+                        WHERE id IN ({placeholders})
+                        """,
+                        (alias, reason, *ids)
+                    )
+                    cursor.execute(f"DELETE FROM demandes_suivi WHERE demande_id IN ({placeholders})", ids)
+
+            return rows
+        except Exception as exc:
+            logger.error("Erreur abandon des demandes suite pause admin %s : %s", admin_id, exc)
+            return []
+
     # ==================== GESTION DES PERMISSIONS ADMIN ====================
 
     def get_admin_permissions(self, user_id: int) -> Dict[str, str]:
@@ -706,16 +801,24 @@ class DatabaseManager:
             return []
 
     def get_available_admins_for_selection(self) -> List[Dict[str, Any]]:
-        """Retourne la liste complète des membres de l'équipe (Owner + Admins) pour le choix VIP."""
+        """Retourne la liste des membres disponibles (non en pause) pour le choix VIP."""
         equipe = []
         try:
             owner_id = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
             owner_alias = self.get_owner_alias()
-            if owner_id:
+            owner_paused = self.is_admin_paused(owner_id)
+
+            if owner_id and not owner_paused:
                 equipe.append({"user_id": owner_id, "alias": owner_alias, "role": "Owner"})
 
             with self.get_cursor() as cursor:
-                cursor.execute("SELECT user_id, alias FROM admins ORDER BY alias ASC")
+                cursor.execute(
+                    """
+                    SELECT user_id, alias FROM admins 
+                    WHERE (is_paused IS FALSE OR is_paused IS NULL)
+                    ORDER BY alias ASC
+                    """
+                )
                 for r in cursor.fetchall():
                     if r["user_id"] != owner_id:
                         equipe.append({"user_id": r["user_id"], "alias": r["alias"], "role": "Admin"})

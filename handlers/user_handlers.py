@@ -116,9 +116,9 @@ class UserHandlers:
                     title=title,
                     description=desc,
                     payload=payload,
-                    currency="XTR",  # Monnaie officielle Telegram Stars
+                    currency="XTR",
                     prices=prices,
-                    provider_token="",  # Doit rester vide pour Telegram Stars
+                    provider_token="",
                 )
                 return
 
@@ -130,6 +130,19 @@ class UserHandlers:
                     await query.answer(f"⚠️ {err_msg}", show_alert=True)
                     return
 
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute("SELECT admin_en_charge FROM demandes WHERE id = %s", (demande_id,))
+                    row = cursor.fetchone()
+
+                admin_id = row.get("admin_en_charge") if row else None
+                if admin_id and self.db_manager.is_admin_paused(admin_id):
+                    alias = self.db_manager.get_admin_alias(admin_id)
+                    await query.answer(
+                        f"⏸️ Votre référent ({alias}) est actuellement en pause. Relance impossible pour le moment.",
+                        show_alert=True
+                    )
+                    return
+
                 await self._dispatch_admin_reminder(update, context, demande_id, is_paid_boost=False)
                 return
 
@@ -139,6 +152,19 @@ class UserHandlers:
                 can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
                 if not can_remind:
                     await query.answer(f"⚠️ {err_msg}", show_alert=True)
+                    return
+
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute("SELECT admin_en_charge FROM demandes WHERE id = %s", (demande_id,))
+                    row = cursor.fetchone()
+
+                admin_id = row.get("admin_en_charge") if row else None
+                if admin_id and self.db_manager.is_admin_paused(admin_id):
+                    alias = self.db_manager.get_admin_alias(admin_id)
+                    await query.answer(
+                        f"⏸️ Votre référent ({alias}) est actuellement en pause. Relance impossible pour le moment.",
+                        show_alert=True
+                    )
                     return
 
                 title = f"Rappel Demande #{demande_id}"
@@ -168,6 +194,16 @@ class UserHandlers:
                     return
 
                 admin_id = d_row["admin_en_charge"]
+
+                # Blocage si le référent est en pause
+                if self.db_manager.is_admin_paused(admin_id):
+                    alias = self.db_manager.get_admin_alias(admin_id)
+                    await query.answer(
+                        f"⏸️ Votre référent ({alias}) est actuellement en pause / indisponible. Réessayez ultérieurement.",
+                        show_alert=True
+                    )
+                    return
+
                 context.user_data["replying_to_admin"] = {
                     "demande_id": demande_id,
                     "admin_id": admin_id,

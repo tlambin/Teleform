@@ -90,9 +90,19 @@ class InterfaceManager:
                 [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ]
         else:
-            message = "🦈 <b>Paramètres Administrateur</b>\n\nOptions disponibles :"
+            is_paused = self.db_manager.is_admin_paused(user_id)
+            pause_badge = "⏸️ EN PAUSE" if is_paused else "🟢 EN SERVICE"
+            pause_btn_text = "▶️ REPRENDRE LE SERVICE" if is_paused else "⏸️ ME METTRE EN PAUSE"
+            pause_cb = "admin_resume" if is_paused else "admin_pause_prompt"
+
+            message = (
+                "🦈 <b>Paramètres Administrateur</b>\n\n"
+                f"• <b>Disponibilité :</b> {pause_badge}\n\n"
+                "Options disponibles :"
+            )
             keyboard = [
                 [InlineKeyboardButton("📊 MON PROFIL & PERFORMANCES", callback_data=f"profil_admin_{user_id}")],
+                [InlineKeyboardButton(pause_btn_text, callback_data=pause_cb)],
                 [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
                 [InlineKeyboardButton("👑 CONTACTER LE PROPRIÉTAIRE", callback_data="contacter_owner")],
@@ -110,7 +120,7 @@ class InterfaceManager:
                 cursor.execute(
                     """
                     SELECT a.user_id, a.alias, a.first_name, a.username, a.date_added,
-                           a.perm_reseaux, a.perm_type,
+                           a.perm_reseaux, a.perm_type, a.is_paused,
                            u.first_name AS nom_ajouteur
                     FROM admins a
                     LEFT JOIN users u ON a.added_by = u.user_id
@@ -135,9 +145,10 @@ class InterfaceManager:
 
                     res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(res_tag, res_tag)
                     type_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(type_tag, type_tag)
+                    statut_dispo = "⏸️ <i>(En pause)</i>" if admin.get("is_paused") else "🟢 <i>(En service)</i>"
 
                     message += (
-                        f"• <b>{admin['alias']}</b> ({pseudo})\n"
+                        f"• <b>{admin['alias']}</b> {statut_dispo} ({pseudo})\n"
                         f"  ID : <code>{admin['user_id']}</code> | Ajouté le {date_str} par {par_qui}\n"
                         f"  🛡️ <i>Accès : {res_label} | {type_label}</i>\n\n"
                     )
@@ -210,7 +221,7 @@ class InterfaceManager:
             "• 🚀 <b>Demandes illimitées :</b> Aucun quota ne vous bloque, même si le service est saturé.\n"
             "• 🎯 <b>Choix du référent :</b> Choisissez quel administrateur s'occupe de vos demandes.\n"
             "• 💬 <b>Ligne directe :</b> Contactez votre référent à tout moment via le bot.\n"
-            "• 🔔 <b>Relance hebdomadaire :</b> Un bouton rappel exclusif pour notifier votre admin (1 fois par semaine).\n\n"
+            "• 🔔 <b>Relance hebdomadaire gratuite :</b> Relancez votre référent une fois par semaine.\n\n"
             "<i>Paiement sécurisé via Telegram Stars. Activation immédiate pour 30 jours.</i>"
         )
         keyboard = [
