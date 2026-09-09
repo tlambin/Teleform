@@ -1,10 +1,11 @@
 """Module centralisé de gestion de la base de données MySQL avec pool de connexions et transactions."""
 
+from contextlib import contextmanager
+from datetime import datetime
 import logging
 import os
 import time
-from contextlib import contextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error, pooling
@@ -156,6 +157,8 @@ class DatabaseManager:
                 user_id BIGINT PRIMARY KEY,
                 username VARCHAR(64),
                 first_name VARCHAR(64),
+                is_vip BOOLEAN DEFAULT FALSE,
+                vip_until DATETIME DEFAULT NULL,
                 derniere_activite DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 date_inscription DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -189,6 +192,7 @@ class DatabaseManager:
                 admin_en_charge BIGINT DEFAULT NULL,
                 ancien_admin_alias VARCHAR(64) DEFAULT NULL,
                 raison_abandon TEXT DEFAULT NULL,
+                last_vip_reminder DATETIME DEFAULT NULL,
                 date_creation DATETIME DEFAULT CURRENT_TIMESTAMP,
                 date_modification DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 request_number INT DEFAULT NULL,
@@ -256,6 +260,7 @@ class DatabaseManager:
                     ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
                     ("demandes", "request_number", "INT DEFAULT NULL"),
                     ("demandes", "date_modification", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+                    ("demandes", "last_vip_reminder", "DATETIME DEFAULT NULL"),
                     ("admin_preferences", "notif_new_mode", "VARCHAR(16) DEFAULT 'sound'"),
                     ("admin_preferences", "rappel_mode", "VARCHAR(16) DEFAULT 'sound'"),
                     ("admin_preferences", "rappel_freq", "VARCHAR(16) DEFAULT 'daily'"),
@@ -263,6 +268,8 @@ class DatabaseManager:
                     ("admin_preferences", "rappel_jour_semaine", "INT DEFAULT 6"),
                     ("admin_preferences", "rappel_jour_mois", "INT DEFAULT 1"),
                     ("admin_preferences", "last_rappel_date", "DATE DEFAULT NULL"),
+                    ("users", "is_vip", "BOOLEAN DEFAULT FALSE"),
+                    ("users", "vip_until", "DATETIME DEFAULT NULL"),
                 ]
                 for table, col, col_def in columns_to_add:
                     try:
@@ -300,7 +307,7 @@ class DatabaseManager:
             self._cache.clear()
             self._cache_timestamp.clear()
 
-    # ==================== TABLE CONFIG (CENTRALISÉE) ====================
+    # ==================== TABLE CONFIG ====================
 
     def get_config_value(self, key_name: str, default: Optional[str] = None) -> Optional[str]:
         """Récupère une valeur de configuration depuis la table config."""
@@ -616,6 +623,149 @@ class DatabaseManager:
             logger.error("Erreur lecture globale des préférences admins : %s", exc)
             return []
 
+    # ==================== GESTION CLIENTS VIP & STARS ====================
+
+    def is_user_vip(self, user_id: int) -> bool:
+        """Vérifie si un utilisateur dispose du statut VIP actif (permanent ou non expiré)."""
+        cache_key = f"vip_{user_id}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT is_vip, vip_until FROM users WHERE user_id = %s",
+                    (int(user_id),)
+                )
+                row = cursor.fetchone()
+                if not row or not row.get("is_vip"):
+                    self._set_cached_value(cache_key, False)
+                    return False
+
+                vip_until = row.get("vip_until")
+                if vip_until is None:
+                    self._set_cached_value(cache_key, True)
+                    return True
+
+                now_ts = time.time()
+                is_active = vip_until.timestamp() > now_ts
+                self._set_cached_value(cache_key, is_active)
+                return is_active
+        except Exception as exc:
+            logger.error("Erreur vérification statut VIP %s : %s", user_id, exc)
+            return False
+
+    def set_user_vip(self, user_id: int, is_vip: bool, duration_days: Optional[int] = None) -> bool:
+        """Active ou désactive le statut VIP pour un utilisateur."""
+        try:
+            with self.get_cursor() as cursor:
+                if is_vip:
+                    if duration_days and duration_days > 0:
+                        cursor.execute(
+                            """
+                            UPDATE users 
+                            SET is_vip = TRUE, 
+                                vip_until = DATE_ADD(NOW(), INTERVAL %s DAY) 
+                            WHERE user_id = %s
+                            """,
+                            (duration_days, int(user_id))
+                        )
+                    else:
+                        cursor.execute(
+                            "UPDATE users SET is_vip = TRUE, vip_until = NULL WHERE user_id = %s",
+                            (int(user_id),)
+                        )
+                else:
+                    cursor.execute(
+                        "UPDATE users SET is_vip = FALSE, vip_until = NULL WHERE user_id = %s",
+                        (int(user_id),)
+                    )
+
+            self.clear_cache(f"vip_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur mise à jour VIP %s : %s", user_id, exc)
+            return False
+
+    def get_vip_users_list(self) -> List[Dict[str, Any]]:
+        """Retourne la liste des membres VIP actifs."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT user_id, username, first_name, is_vip, vip_until, date_inscription
+                    FROM users
+                    WHERE is_vip = TRUE AND (vip_until IS NULL OR vip_until > NOW())
+                    ORDER BY vip_until ASC
+                    """
+                )
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur lecture VIPs : %s", exc)
+            return []
+
+    def get_available_admins_for_selection(self) -> List[Dict[str, Any]]:
+        """Retourne la liste complète des membres de l'équipe (Owner + Admins) pour le choix VIP."""
+        equipe = []
+        try:
+            owner_id = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
+            owner_alias = self.get_owner_alias()
+            if owner_id:
+                equipe.append({"user_id": owner_id, "alias": owner_alias, "role": "Owner"})
+
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT user_id, alias FROM admins ORDER BY alias ASC")
+                for r in cursor.fetchall():
+                    if r["user_id"] != owner_id:
+                        equipe.append({"user_id": r["user_id"], "alias": r["alias"], "role": "Admin"})
+            return equipe
+        except Exception as exc:
+            logger.error("Erreur extraction équipe VIP : %s", exc)
+            return equipe
+
+    # ==================== RAPPELS DEMANDES (VIP, PAYANTES & STANDARDS) ====================
+
+    def can_send_demande_reminder(self, demande_id: int) -> Tuple[bool, Optional[str]]:
+        """Vérifie si le rappel hebdomadaire peut être envoyé (limité à 1 fois par semaine)."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT last_vip_reminder, admin_en_charge FROM demandes WHERE id = %s",
+                    (int(demande_id),)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return False, "Demande introuvable."
+                if not row.get("admin_en_charge"):
+                    return False, "Aucun référent n'est actuellement assigné à cette demande."
+
+                last_rem = row.get("last_vip_reminder")
+                if not last_rem:
+                    return True, None
+
+                diff_seconds = (datetime.now() - last_rem).total_seconds()
+                sept_jours_sec = 7 * 86400
+                if diff_seconds < sept_jours_sec:
+                    jours_restants = max(1, int((sept_jours_sec - diff_seconds) // 86400))
+                    return False, f"Rappel déjà envoyé cette semaine. Nouveau rappel possible dans {jours_restants} jour(s)."
+
+                return True, None
+        except Exception as exc:
+            logger.error("Erreur contrôle rappel demande %s : %s", demande_id, exc)
+            return False, "Erreur technique."
+
+    def record_demande_reminder_sent(self, demande_id: int):
+        """Enregistre l'horodatage du rappel envoyé pour la demande."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "UPDATE demandes SET last_vip_reminder = NOW() WHERE id = %s",
+                    (int(demande_id),)
+                )
+        except Exception as exc:
+            logger.error("Erreur enregistrement rappel demande %s : %s", demande_id, exc)
+
     # ==================== STATISTIQUES & PROFILS ====================
 
     def get_admin_stats(self, admin_id: int) -> Dict[str, Any]:
@@ -703,7 +853,7 @@ class DatabaseManager:
             return stats
 
     def get_user_stats(self, user_id: int, demande_id: Optional[int] = None) -> Dict[str, Any]:
-        """Calcule le profil statistique complet d'un demandeur avec compatibilité first_name/prenom."""
+        """Calcule le profil statistique complet d'un demandeur avec statut VIP."""
         try:
             user_id = int(user_id)
         except (ValueError, TypeError):
@@ -713,6 +863,8 @@ class DatabaseManager:
             "user_id": user_id,
             "username": None,
             "prenom": "Utilisateur",
+            "is_vip": False,
+            "vip_until": None,
             "date_inscription": None,
             "derniere_activite": None,
             "total_demandes": 0,
@@ -726,7 +878,6 @@ class DatabaseManager:
 
         try:
             with self.get_cursor() as cursor:
-                # 1. Résolution stricte de l'utilisateur si demande_id est fourni
                 if demande_id:
                     cursor.execute("SELECT user_id, prenom, nom, date_creation FROM demandes WHERE id = %s", (demande_id,))
                     d_origin = cursor.fetchone()
@@ -735,19 +886,19 @@ class DatabaseManager:
                         stats["user_id"] = user_id
                         stats["date_inscription"] = d_origin.get("date_creation")
 
-                # 2. Lecture du profil dans la table users
                 try:
                     cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
                     u_row = cursor.fetchone()
                     if u_row:
                         stats["username"] = u_row.get("username")
                         stats["prenom"] = u_row.get("first_name") or u_row.get("prenom") or "Utilisateur"
+                        stats["is_vip"] = bool(u_row.get("is_vip"))
+                        stats["vip_until"] = u_row.get("vip_until")
                         stats["date_inscription"] = u_row.get("date_inscription") or stats["date_inscription"]
                         stats["derniere_activite"] = u_row.get("derniere_activite")
                 except Exception as e_user:
                     logger.debug("Info lecture table users: %s", e_user)
 
-                # 3. Comptabilisation des demandes actives
                 cursor.execute(
                     """
                     SELECT 
@@ -765,7 +916,6 @@ class DatabaseManager:
                 )
                 d_row = cursor.fetchone()
 
-                # 4. Comptabilisation des archives
                 cursor.execute(
                     """
                     SELECT 
@@ -838,7 +988,6 @@ class DatabaseManager:
             return {"total_size_mb": 0.0, "tables": []}
 
 
-# Alias global pour rétrocompatibilité
 _global_db_manager = None
 
 def get_db_manager(config=None):

@@ -1,7 +1,7 @@
 """Module principal de gestion des interactions utilisateurs et demandeurs."""
 
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Update
 from telegram.ext import ContextTypes
 from utils.interface_manager import InterfaceManager
 from .user.compte import CompteManager
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class UserHandlers:
-    """Gestionnaire des routes utilisateurs, formulaires et relais de réponses."""
+    """Gestionnaire des routes utilisateurs, formulaires, paiements Stars et privilèges VIP."""
 
     def __init__(self, config, db_manager):
         self.config = config
@@ -60,6 +60,7 @@ class UserHandlers:
 
         await query.answer()
         data = query.data
+        user_id = query.from_user.id
 
         # 1. Contrôle global du service
         if data.startswith(("form_", "nav_", "new_demande")) and not self.config.are_demandes_enabled():
@@ -76,29 +77,118 @@ class UserHandlers:
         try:
             # 2. Bouton d'information quota atteint
             if data == "quota_reached_info":
-                _, reason = self.demande.check_creation_quota(query.from_user.id)
+                _, reason = self.demande.check_creation_quota(user_id)
                 clean_reason = reason.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")[:150]
                 await query.answer(clean_reason, show_alert=True)
                 return
 
             # 3. Création d'une nouvelle demande (contrôle des quotas)
             elif data == "new_demande":
-                can_create, reason_msg = self.demande.check_creation_quota(query.from_user.id)
+                can_create, reason_msg = self.demande.check_creation_quota(user_id)
                 if not can_create:
                     await query.edit_message_text(
                         reason_msg,
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("⭐ Passer VIP", callback_data="menu_vip_shop")],
                             [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
                         ]),
                     )
                     return
                 await self.formulaire.navigation.handle_form_navigation(update, context)
 
-            # 4. Reprise suite à abandon admin (remise en file disponible)
+            # 4. Boutique VIP Telegram Stars
+            elif data == "menu_vip_shop":
+                msg, kb = self.interface.get_vip_shop_menu()
+                await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+                return
+
+            elif data == "buy_vip_month":
+                stars_price = 250
+                title = "Abonnement VIP 30 Jours"
+                desc = "Accès VIP pendant 30 jours : demandes illimitées, choix du référent et contact direct."
+                payload = f"vip_sub_{user_id}_30d"
+
+                prices = [LabeledPrice(label=title, amount=stars_price)]
+
+                await context.bot.send_invoice(
+                    chat_id=query.message.chat_id,
+                    title=title,
+                    description=desc,
+                    payload=payload,
+                    currency="XTR",  # Monnaie officielle Telegram Stars
+                    prices=prices,
+                    provider_token="",  # Doit rester vide pour Telegram Stars
+                )
+                return
+
+            # 5. Relance hebdomadaire gratuite (VIP ou demande prioritaire)
+            elif data.startswith("remind_admin_free_"):
+                demande_id = int(data.replace("remind_admin_free_", ""))
+                can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
+                if not can_remind:
+                    await query.answer(f"⚠️ {err_msg}", show_alert=True)
+                    return
+
+                await self._dispatch_admin_reminder(update, context, demande_id, is_paid_boost=False)
+                return
+
+            # 6. Relance hebdomadaire payante (Demande standard : 1 € = 50 Stars)
+            elif data.startswith("remind_admin_pay_"):
+                demande_id = int(data.replace("remind_admin_pay_", ""))
+                can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
+                if not can_remind:
+                    await query.answer(f"⚠️ {err_msg}", show_alert=True)
+                    return
+
+                title = f"Rappel Demande #{demande_id}"
+                desc = "Relance prioritaire hebdomadaire envoyée directement à votre référent."
+                payload = f"remind_pay_{demande_id}_{user_id}"
+
+                await context.bot.send_invoice(
+                    chat_id=query.message.chat_id,
+                    title=title,
+                    description=desc,
+                    payload=payload,
+                    currency="XTR",
+                    prices=[LabeledPrice(label="Relance prioritaire (1 €)", amount=50)],
+                    provider_token="",
+                )
+                return
+
+            # 7. Ligne directe VIP avec l'admin en charge
+            elif data.startswith("vip_contact_admin_"):
+                demande_id = int(data.replace("vip_contact_admin_", ""))
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute("SELECT admin_en_charge FROM demandes WHERE id = %s", (demande_id,))
+                    d_row = cursor.fetchone()
+
+                if not d_row or not d_row.get("admin_en_charge"):
+                    await query.answer("❌ Aucun référent n'est assigné à cette demande.", show_alert=True)
+                    return
+
+                admin_id = d_row["admin_en_charge"]
+                context.user_data["replying_to_admin"] = {
+                    "demande_id": demande_id,
+                    "admin_id": admin_id,
+                }
+                await query.message.reply_text(
+                    "⭐ <b>Ligne directe VIP avec votre référent :</b>\n\n"
+                    "Tapez votre message ou envoyez vos fichiers ci-dessous. Ils lui seront immédiatement transmis :",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_reply")
+                    ]])
+                )
+                return
+
+            elif data.startswith("vip_assign_admin_"):
+                await self.formulaire.handle_vip_admin_choice(update, context)
+                return
+
+            # 8. Reprise suite à un abandon admin (remise en file disponible)
             elif data.startswith("reprendre_demande_"):
                 demande_id = int(data.replace("reprendre_demande_", ""))
-                user_id = query.from_user.id
 
                 try:
                     with self.db_manager.transaction() as cursor:
@@ -121,14 +211,13 @@ class UserHandlers:
                         ]])
                     )
                 except Exception as exc:
-                    logger.error("Erreur remise en dispo demande %s: %s", demande_id, exc)
+                    logger.error("Erreur remise en dispo demande %s : %s", demande_id, exc)
                     await query.answer("❌ Erreur technique lors de la remise en file d'attente.", show_alert=True)
                 return
 
-            # 5. Archivage définitif par le demandeur
+            # 9. Archivage définitif par le demandeur
             elif data.startswith("archiver_demande_"):
                 demande_id = int(data.replace("archiver_demande_", ""))
-                user_id = query.from_user.id
 
                 try:
                     with self.db_manager.transaction() as cursor:
@@ -165,7 +254,7 @@ class UserHandlers:
                         ]])
                     )
                 except Exception as exc:
-                    logger.error("Erreur archivage demande %s: %s", demande_id, exc)
+                    logger.error("Erreur archivage demande %s : %s", demande_id, exc)
                     await query.answer("❌ Erreur technique lors de l'archivage.", show_alert=True)
                 return
 
@@ -213,7 +302,7 @@ class UserHandlers:
                 await query.answer("❌ Action non reconnue", show_alert=True)
 
         except Exception as exc:
-            logger.error("Erreur callback %s: %s", data, exc, exc_info=True)
+            logger.error("Erreur callback %s : %s", data, exc, exc_info=True)
             await query.edit_message_text(
                 "❌ Une erreur est survenue lors du traitement de votre demande.",
                 parse_mode="HTML",
@@ -221,6 +310,56 @@ class UserHandlers:
                     [InlineKeyboardButton("🔙 Retour au menu", callback_data="start_menu")]
                 ]),
             )
+
+    async def _dispatch_admin_reminder(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int, is_paid_boost: bool = False
+    ):
+        """Transmet la notification de rappel à l'administrateur en charge."""
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT request_number, prenom, user_id, admin_en_charge FROM demandes WHERE id = %s",
+                (demande_id,)
+            )
+            row = cursor.fetchone()
+
+        if not row or not row.get("admin_en_charge"):
+            return
+
+        admin_id = row["admin_en_charge"]
+        req_num = row.get("request_number", demande_id)
+        user = update.effective_user
+        user_label = f"@{user.username}" if user.username else user.first_name
+
+        if self.db_manager.is_user_vip(user.id):
+            tag = "⭐ VIP"
+        elif is_paid_boost:
+            tag = "⚡ Boost 1 €"
+        else:
+            tag = "💎 Prioritaire"
+
+        remind_msg = (
+            f"🔔 <b>RAPPEL DEMANDE #{req_num} [{tag}]</b>\n\n"
+            f"Le demandeur <b>{user_label}</b> vous relance concernant sa demande pour <b>{row['prenom']}</b>.\n"
+            "Merci de consulter vos suivis ou de lui apporter une réponse."
+        )
+        admin_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")],
+            [InlineKeyboardButton("💬 Contacter le demandeur", callback_data=f"contacter_{demande_id}")]
+        ])
+
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=remind_msg, parse_mode="HTML", reply_markup=admin_kb)
+            self.db_manager.record_demande_reminder_sent(demande_id)
+
+            confirm_txt = "✅ Rappel envoyé avec succès à votre référent !"
+            if update.callback_query:
+                await update.callback_query.answer(confirm_txt, show_alert=True)
+            elif update.message:
+                await update.message.reply_text(confirm_txt)
+        except Exception as exc:
+            logger.error("Erreur transmission rappel demande %s : %s", demande_id, exc)
+            if update.callback_query:
+                await update.callback_query.answer("❌ Erreur technique lors de l'envoi du rappel.", show_alert=True)
 
     async def handle_interface_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Routeur des boutons de navigation générale."""
@@ -236,7 +375,7 @@ class UserHandlers:
         owner_actions = {
             "gerer_admins", "admin_ajouter", "admin_supprimer",
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance",
-            "menu_limits"
+            "menu_limits", "gerer_vips", "owner_add_vip", "owner_remove_vip"
         }
         if (data in owner_actions or data.startswith("limit_")) and not self.config.is_owner(user_id):
             await query.answer("❌ Accès réservé au propriétaire.", show_alert=True)
@@ -348,7 +487,7 @@ class UserHandlers:
                     await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
                     return
                 else:
-                    await update.message.reply_text("❌ Veuillez saisir un nombre entier positif (ex: 0, 5, 10).")
+                    await update.message.reply_text("❌ Veuillez saisir un nombre entier positif (ex : 0, 5, 10).")
                     return
 
         # Saisie de la raison d'abandon par un admin
@@ -371,7 +510,7 @@ class UserHandlers:
             if await self.admin_handlers.handle_collect_admin_media(update, context):
                 return
 
-        # Réponse du Demandeur vers l'Admin
+        # Réponse du Demandeur vers l'Admin (Ligne directe ou réponse standard)
         if context.user_data and context.user_data.get("replying_to_admin"):
             await self._handle_user_reply_relay(update, context)
             return
@@ -385,7 +524,7 @@ class UserHandlers:
         await self.compte.handle_text_messages(update, context)
 
     async def _handle_user_reply_relay(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Transmet la réponse unique de l'utilisateur vers l'admin."""
+        """Transmet la réponse de l'utilisateur vers l'admin référent."""
         reply_info = context.user_data.pop("replying_to_admin", None)
         if not reply_info:
             return
@@ -395,17 +534,22 @@ class UserHandlers:
         user = update.effective_user
         msg = update.message
 
-        user_label = f"@{user.username}" if user.username else f"{user.first_name} (ID: {user.id})"
+        is_vip = self.db_manager.is_user_vip(user.id)
+        badge_vip = " ⭐ <b>[VIP]</b>" if is_vip else ""
+
+        user_label = f"@{user.username}" if user.username else f"{user.first_name} (ID : {user.id})"
         user_comment = (msg.caption or msg.text or "").strip()
         corps = f"\n\n« {user_comment} »" if user_comment else ""
 
-        admin_keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("💬 Répondre à nouveau", callback_data=f"contacter_{demande_id}"),
-            InlineKeyboardButton("📄 Voir la fiche", callback_data=f"retour_texte_{demande_id}")
-        ]])
+        admin_keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("💬 Répondre à nouveau", callback_data=f"contacter_{demande_id}"),
+                InlineKeyboardButton("📄 Voir la fiche", callback_data=f"retour_texte_{demande_id}")
+            ]
+        ])
 
         header_text = (
-            f"📩 <b>Réponse du demandeur (Demande #{demande_id})</b>\n"
+            f"📩 <b>Message du demandeur{badge_vip} (Demande #{demande_id})</b>\n"
             f"De : {user_label}"
             f"{corps}"
         )
@@ -429,7 +573,7 @@ class UserHandlers:
                 )
 
             await msg.reply_text(
-                "✅ <b>Votre réponse a été transmise à l'administrateur !</b>",
+                "✅ <b>Votre message a été transmis à votre référent !</b>",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Mes demandes", callback_data="voir_demandes")

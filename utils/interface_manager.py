@@ -16,23 +16,25 @@ class InterfaceManager:
     # ========== INTERFACE PRINCIPALE /start ==========
 
     def get_start_interface(self, user_id: int, first_name: str):
-        """Construit l'interface d'accueil selon le rôle de l'utilisateur."""
+        """Construit l'interface d'accueil selon le rôle et le statut VIP de l'utilisateur."""
         user_role = self._get_user_role(user_id)
+        is_vip = self.db_manager.is_user_vip(user_id)
+        badge_vip = " ⭐ <b>[MEMBRE VIP]</b>" if is_vip else ""
 
         if user_role == "owner":
             welcome_msg = (
-                f"👑 <b>Bienvenue {first_name}, Propriétaire !</b>\n\n"
+                f"👑 <b>Bienvenue {first_name}, Propriétaire !</b>{badge_vip}\n\n"
                 "Sélectionnez une action ci-dessous :"
             )
         elif user_role == "admin":
             alias = self.db_manager.get_admin_alias(user_id)
             welcome_msg = (
-                f"🦈 <b>Bienvenue {alias} !</b>\n\n"
+                f"🦈 <b>Bienvenue {alias} !</b>{badge_vip}\n\n"
                 "Sélectionnez une action ci-dessous :"
             )
         else:
             welcome_msg = (
-                f"👋 <b>Bonjour {first_name} !</b>\n\n"
+                f"👋 <b>Bonjour {first_name} !</b>{badge_vip}\n\n"
                 "Sélectionnez une option pour continuer :"
             )
 
@@ -42,6 +44,11 @@ class InterfaceManager:
                 InlineKeyboardButton("🗂️ MES DEMANDES", callback_data="voir_demandes")
             ]
         ]
+
+        if not is_vip and user_role not in ["admin", "owner"]:
+            keyboard.append([
+                InlineKeyboardButton("⭐ DEVENIR VIP (Telegram Stars)", callback_data="menu_vip_shop")
+            ])
 
         if user_role in ["admin", "owner"]:
             keyboard.append([
@@ -76,6 +83,7 @@ class InterfaceManager:
             keyboard = [
                 [InlineKeyboardButton("🤖 GESTION DU SERVICE", callback_data="gerer_bot")],
                 [InlineKeyboardButton("👥 ÉQUIPE D'ADMINISTRATION", callback_data="gerer_admins")],
+                [InlineKeyboardButton("⭐ GESTION DES CLIENTS VIP", callback_data="gerer_vips")],
                 [InlineKeyboardButton("📊 STATISTIQUES GLOBALES", callback_data="bot_stats")],
                 [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
@@ -150,6 +158,65 @@ class InterfaceManager:
             message = "👥 <b>Gestion des Administrateurs</b>\n\n❌ Erreur de lecture des données."
             keyboard = [[InlineKeyboardButton("🔙 Retour", callback_data="parametres")]]
 
+        return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU GÉRER LES MEMBRES VIP (Owner Only) ==========
+
+    def get_gerer_vips_menu(self):
+        """Affiche la liste des membres VIP et les outils d'administration dédiés."""
+        try:
+            vips = self.db_manager.get_vip_users_list()
+            keyboard = []
+
+            if not vips:
+                message = "⭐ <b>Gestion des Membres VIP</b>\n\n📭 Aucun membre VIP actif actuellement.\n\n"
+            else:
+                message = f"⭐ <b>Gestion des Membres VIP</b> ({len(vips)})\n\n"
+                for v in vips:
+                    nom = v.get("first_name") or "Utilisateur"
+                    pseudo = f"(@{v['username']})" if v.get("username") else ""
+                    until = v.get("vip_until")
+                    if until:
+                        exp_str = until.strftime("%d/%m/%Y")
+                        status_str = f"Expire le {exp_str}"
+                    else:
+                        status_str = "👑 À vie"
+
+                    message += (
+                        f"• <b>{nom}</b> {pseudo}\n"
+                        f"  ID : <code>{v['user_id']}</code> | <i>{status_str}</i>\n\n"
+                    )
+
+            keyboard.append([
+                InlineKeyboardButton("➕ PROMOUVOIR VIP", callback_data="owner_add_vip"),
+                InlineKeyboardButton("➖ RÉVOQUER VIP", callback_data="owner_remove_vip")
+            ])
+            keyboard.append([InlineKeyboardButton("🔙 Retour", callback_data="parametres")])
+
+        except Exception as exc:
+            logger.error("Erreur génération menu VIP owner : %s", exc, exc_info=True)
+            message = "⭐ <b>Gestion des Membres VIP</b>\n\n❌ Erreur de lecture des données."
+            keyboard = [[InlineKeyboardButton("🔙 Retour", callback_data="parametres")]]
+
+        return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU BOUTIQUE VIP (Telegram Stars) ==========
+
+    def get_vip_shop_menu(self):
+        """Affiche l'offre d'abonnement VIP mensuel payable en Telegram Stars."""
+        message = (
+            "⭐ <b>Devenez Membre VIP via Telegram Stars !</b>\n\n"
+            "Débloquez instantanément tous les privilèges premium du bot pour <b>30 jours</b> :\n\n"
+            "• 🚀 <b>Demandes illimitées :</b> Aucun quota ne vous bloque, même si le service est saturé.\n"
+            "• 🎯 <b>Choix du référent :</b> Choisissez quel administrateur s'occupe de vos demandes.\n"
+            "• 💬 <b>Ligne directe :</b> Contactez votre référent à tout moment via le bot.\n"
+            "• 🔔 <b>Relance hebdomadaire :</b> Un bouton rappel exclusif pour notifier votre admin (1 fois par semaine).\n\n"
+            "<i>Paiement sécurisé via Telegram Stars. Activation immédiate pour 30 jours.</i>"
+        )
+        keyboard = [
+            [InlineKeyboardButton("⭐ S'abonner 1 Mois (250 ⭐️)", callback_data="buy_vip_month")],
+            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+        ]
         return message, InlineKeyboardMarkup(keyboard)
 
     # ========== SOUS-MENU GÉRER LE BOT (Owner) ==========
@@ -258,6 +325,8 @@ class InterfaceManager:
             "gerer_demandes": self.get_gerer_demandes_menu,
             "parametres": lambda: self.get_parametres_menu(user_id),
             "gerer_admins": self.get_gerer_admins_menu,
+            "gerer_vips": self.get_gerer_vips_menu,
+            "menu_vip_shop": self.get_vip_shop_menu,
             "gerer_bot": self.get_gerer_bot_menu,
             "menu_limits": self.get_limits_menu,
         }

@@ -74,6 +74,28 @@ class NavigationManager:
             ])
         return InlineKeyboardMarkup(keyboard)
 
+    def create_vip_admin_choice_keyboard(self):
+        """Génère la liste dynamique des référents pour le membre VIP."""
+        equipe = self.form.db_manager.get_available_admins_for_selection()
+        kb_rows = []
+
+        for member in equipe:
+            role_icon = "👑" if member.get("role") == "Owner" else "🦈"
+            alias = member.get("alias", f"Admin_{member['user_id']}")
+            kb_rows.append([
+                InlineKeyboardButton(
+                    f"{role_icon} {alias}",
+                    callback_data=f"vip_assign_admin_{member['user_id']}"
+                )
+            ])
+
+        kb_rows.append([InlineKeyboardButton("🎲 Premier disponible (Aléatoire)", callback_data="vip_assign_admin_0")])
+        kb_rows.append([
+            InlineKeyboardButton(self.navigation_config["back_text"], callback_data=f"form_back_{self.form.CHOIX_ADMIN}"),
+            InlineKeyboardButton(self.navigation_config["cancel_text"], callback_data="form_cancel")
+        ])
+        return InlineKeyboardMarkup(kb_rows)
+
     async def handle_form_navigation(self, update, context):
         """Point d'entrée du routage navigationnel."""
         query = update.callback_query
@@ -106,8 +128,18 @@ class NavigationManager:
         return current_state
 
     async def handle_back(self, query, context, current_state):
-        """Recule d'une étape dans la FSM."""
-        previous_state = self.form.state_history.get(current_state)
+        """Recule d'une étape dans la machine à états."""
+        demande = context.user_data.get("demande", {})
+
+        # Gestion spécifique du retour depuis le choix d'admin VIP
+        if current_state == self.form.CHOIX_ADMIN:
+            if demande.get("prioritaire"):
+                previous_state = self.form.MONTANT
+            else:
+                previous_state = self.form.PRIORITAIRE
+        else:
+            previous_state = self.form.state_history.get(current_state)
+
         if not previous_state:
             await query.answer("❌ Début du formulaire atteint", show_alert=True)
             return current_state
@@ -156,6 +188,13 @@ class NavigationManager:
             self.form.MONTANT: {
                 "text": "💰 <b>Retour - Montant</b>\n\nIndiquez le montant (en euros) :",
                 "keyboard": self.create_navigation_keyboard(self.form.MONTANT),
+            },
+            self.form.CHOIX_ADMIN: {
+                "text": (
+                    "⭐ <b>Avantage Membre VIP : Choix du Référent</b>\n\n"
+                    "Sélectionnez le membre de l'équipe qui prendra personnellement en charge votre demande :"
+                ),
+                "keyboard": self.create_vip_admin_choice_keyboard(),
             },
         }
 

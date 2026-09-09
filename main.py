@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Point d'entrée principal de l'application Telegram."""
+"""Point d'entrée principal de l'application Telegram avec gestion des VIP et Telegram Stars."""
 
+from datetime import datetime
 import logging
 import os
 import sys
 import time
-from datetime import datetime
 import pytz
 
-# Configuration timezone (protégée pour supporter Windows et Unix)
+# Configuration timezone (support multiplateforme)
 os.environ["TZ"] = "Europe/Paris"
 if hasattr(time, "tzset"):
     time.tzset()
@@ -25,9 +25,10 @@ from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
-    ConversationHandler,
     ContextTypes,
+    ConversationHandler,
     MessageHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
@@ -37,7 +38,7 @@ from handlers.admin_handlers import AdminHandlers
 from handlers.owner_handlers import OwnerHandlers
 from handlers.user_handlers import UserHandlers
 
-# Logs console propres avec fallback fichier local
+# Logs console et fichier local
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, "bot.log")
@@ -63,7 +64,7 @@ def check_log_permissions() -> bool:
         logger.info("Permissions logs vérifiées : %s", log_file)
         return True
     except Exception as exc:
-        logger.warning("Erreur lors de l'accès aux logs fichier (%s). Bascule sur console uniquement.", exc)
+        logger.warning("Erreur accès logs fichier (%s). Bascule sur console uniquement.", exc)
         return True
 
 
@@ -117,7 +118,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
                 )
                 active_demandes = cursor.fetchall()
         except Exception as db_err:
-            logger.error("Erreur lecture suivis pour rappel admin %s: %s", user_id, db_err)
+            logger.error("Erreur lecture suivis pour rappel admin %s : %s", user_id, db_err)
             continue
 
         if not active_demandes:
@@ -152,9 +153,64 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
                 disable_notification=is_silent,
             )
             db_manager.mark_admin_reminder_sent(user_id)
-            logger.info("Rappel automatique envoyé à l'admin %s (mode: %s)", user_id, rappel_mode)
+            logger.info("Rappel automatique envoyé à l'admin %s (mode : %s)", user_id, rappel_mode)
         except Exception as err:
             logger.warning("Erreur envoi rappel programmé à l'admin %s : %s", user_id, err)
+
+
+# ==================== HANDLERS TELEGRAM STARS ====================
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Valide les commandes Stars (abonnements VIP ou relances à 1 €)."""
+    query = update.pre_checkout_query
+    payload = query.invoice_payload
+
+    if payload.startswith("vip_sub_") or payload.startswith("remind_pay_"):
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Erreur de validation de la transaction.")
+
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Active le VIP 30 jours ou envoie le rappel payé dès confirmation Stars."""
+    payment = update.message.successful_payment
+    payload = payment.invoice_payload
+    user_id = update.effective_user.id
+    db_manager = context.application.bot_data.get("db_manager")
+    config = context.application.bot_data.get("config")
+
+    if not db_manager:
+        logger.error("DatabaseManager introuvable dans bot_data lors du paiement Stars.")
+        return
+
+    # Cas 1 : Abonnement VIP 30 jours
+    if payload.startswith(f"vip_sub_{user_id}_"):
+        db_manager.set_user_vip(user_id, is_vip=True, duration_days=30)
+
+        merci_msg = (
+            "🎉 <b>Félicitations ! Votre abonnement VIP 30 Jours est activé !</b>\n\n"
+            "Vos privilèges exclusifs sont disponibles immédiatement :\n"
+            "• 🚀 <b>Demandes illimitées</b> sans aucune restriction de quota\n"
+            "• 🎯 <b>Choix de votre référent</b> parmi l'équipe lors de la création\n"
+            "• 💬 <b>Ligne directe</b> avec l'administrateur en charge de vos demandes\n"
+            "• 🔔 <b>Relance prioritaire hebdomadaire gratuite</b> sur chacune de vos fiches\n\n"
+            "Merci pour votre confiance !"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗳️ Créer une demande VIP", callback_data="new_demande")],
+            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+        ])
+        await update.message.reply_text(merci_msg, parse_mode="HTML", reply_markup=kb)
+        logger.info("Abonnement VIP 30 jours activé via Stars pour l'utilisateur %s", user_id)
+
+    # Cas 2 : Paiement d'une relance hebdomadaire pour demande standard (50 Stars / 1 €)
+    elif payload.startswith("remind_pay_"):
+        parts = payload.split("_")
+        demande_id = int(parts[2])
+
+        user_handlers = UserHandlers(config, db_manager)
+        await user_handlers._dispatch_admin_reminder(update, context, demande_id, is_paid_boost=True)
+        logger.info("Rappel payant (1 €) validé pour la demande #%s par l'utilisateur %s", demande_id, user_id)
 
 
 class TelegramBot:
@@ -190,7 +246,7 @@ class TelegramBot:
                 await app.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=int(admin_id)))
                 logger.info("Commandes admin configurées pour %s", admin_id)
             except Exception as exc:
-                logger.warning("Impossible de configurer les commandes pour admin %s: %s", admin_id, exc)
+                logger.warning("Impossible de configurer les commandes pour admin %s : %s", admin_id, exc)
 
     def create_conversation_handlers(self):
         """Crée les ConversationHandlers du bot."""
@@ -313,22 +369,76 @@ class TelegramBot:
             per_user=True,
         )
 
+        # Promotion VIP par l'Owner
+        add_vip_conv = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    self.owner_handlers.start_add_vip,
+                    pattern="^owner_add_vip$",
+                )
+            ],
+            states={
+                self.owner_handlers.WAITING_VIP_USER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.owner_handlers.process_vip_target_user)
+                ],
+                self.owner_handlers.WAITING_VIP_DURATION: [
+                    CallbackQueryHandler(self.owner_handlers.process_vip_duration_choice, pattern=r"^vip_dur_.*$"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.owner_handlers.process_vip_duration_choice),
+                ],
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.owner_handlers.cancel_vip_action, pattern="^cancel_vip_action$"),
+                CommandHandler("stop", self.owner_handlers.cancel_vip_action),
+            ],
+            allow_reentry=True,
+            per_user=True,
+        )
+
+        # Révocation VIP par l'Owner
+        remove_vip_conv = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    self.owner_handlers.start_remove_vip,
+                    pattern="^owner_remove_vip$",
+                )
+            ],
+            states={
+                self.owner_handlers.WAITING_VIP_REMOVE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.owner_handlers.process_vip_remove_choice)
+                ]
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.owner_handlers.cancel_vip_action, pattern="^cancel_vip_action$"),
+                CommandHandler("stop", self.owner_handlers.cancel_vip_action),
+            ],
+            allow_reentry=True,
+            per_user=True,
+        )
+
         return [
             demande_handler,
             modify_alias_conv,
             contact_owner_conv,
             owner_reply_conv,
             add_admin_conv,
-            remove_admin_conv
+            remove_admin_conv,
+            add_vip_conv,
+            remove_vip_conv,
         ]
 
     def setup_application(self) -> Application:
         """Configure et câble tous les handlers du bot ainsi que la tâche de fond."""
         app = Application.builder().token(self.config.BOT_TOKEN).build()
+        app.bot_data["db_manager"] = self.db_manager
+        app.bot_data["config"] = self.config
 
         # Enregistrement prioritaire des ConversationHandlers
         for handler in self.create_conversation_handlers():
             app.add_handler(handler)
+
+        # Gestion des paiements Telegram Stars (XTR)
+        app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+        app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
         # Commandes standard
         app.add_handler(CommandHandler("start", self.user_handlers.start))
@@ -336,10 +446,10 @@ class TelegramBot:
         app.add_handler(CommandHandler("toggle_demandes", self.owner_handlers.toggle_demandes))
         app.add_handler(CommandHandler("maintenance", self.owner_handlers.run_maintenance))
 
-        # Callbacks propriétaire (permissions admin, contrôle bot, stats)
+        # Callbacks propriétaire (permissions admin, contrôle bot, stats, VIP)
         app.add_handler(CallbackQueryHandler(
             self.owner_handlers.handle_owner_callbacks,
-            pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats)$",
+            pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips)$",
         ))
 
         # Callbacks d'interface générale
@@ -348,16 +458,16 @@ class TelegramBot:
             pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_bot|menu_limits|limit_.*|bot_.*)$",
         ))
 
-        # Callbacks admin (inclut profils statistiques, notifications, filtres et préférences)
+        # Callbacks admin (profils statistiques, notifications, filtres et préférences)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
             pattern=r"^(admin_|demandes_disponibles|dispo_|demandes_suivies|suivi_|mark_treated_menu|change_status_|set_status_|voir_photo_|retour_texte_|suivre_demande_|contacter_|contact_mode_|cancel_contact_|send_batch_|menu_notifs|pref_|profil_)",
         ))
 
-        # Callbacks utilisateur
+        # Callbacks utilisateur (formulaires, options VIP, boutique Stars et relances)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
-            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit|reply_to_admin_|cancel_user_reply|quota_reached_info|reprendre_demande_|archiver_demande_)",
+            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit|reply_to_admin_|cancel_user_reply|quota_reached_info|reprendre_demande_|archiver_demande_|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*)",
         ))
 
         # Messages (texte, photos, vidéos, documents) hors commandes
@@ -385,7 +495,7 @@ class TelegramBot:
     def run(self):
         """Démarre le bot en mode polling local."""
         app = self.setup_application()
-        logger.info("🚀 Bot Telegram démarré (mode polling)")
+        logger.info("🚀 Bot Telegram démarré avec succès (mode polling + VIP Telegram Stars)")
         app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 

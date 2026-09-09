@@ -19,11 +19,14 @@ class DemandeManager:
         logger.info("DemandeManager initialisé")
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
-        """Contrôle les plafonds global et individuel avant création."""
+        """Contrôle les plafonds global et individuel avant création (contourné pour VIP)."""
+        if self.db_manager.is_user_vip(user_id):
+            return True, ""
+
         placeholders = ", ".join(["%s"] * len(self.ACTIVE_STATUSES))
         status_filter = f"statut IN ({placeholders})"
 
-        # 1. Vérification du quota global
+        # 1. Quota global
         max_total = self.config.get_max_total_demandes()
         if max_total > 0:
             with self.db_manager.get_cursor() as cursor:
@@ -41,7 +44,7 @@ class DemandeManager:
                     "Merci de réessayer un peu plus tard."
                 )
 
-        # 2. Vérification du quota par personne
+        # 2. Quota individuel
         max_user = self.config.get_max_demandes_per_user()
         if max_user > 0:
             with self.db_manager.get_cursor() as cursor:
@@ -56,7 +59,8 @@ class DemandeManager:
                 return False, (
                     "⚠️ <b>Limite atteinte</b>\n\n"
                     f"Vous avez déjà <b>{user_actif}/{max_user}</b> demande(s) en cours de traitement.\n"
-                    "Attendez qu'une de vos demandes soit finalisée avant d'en ouvrir une nouvelle."
+                    "Attendez qu'une de vos demandes soit finalisée avant d'en ouvrir une nouvelle.\n\n"
+                    "<i>⭐ Devenez membre VIP pour débloquer les demandes illimitées !</i>"
                 )
 
         return True, ""
@@ -104,7 +108,8 @@ class DemandeManager:
                     """
                     SELECT id, request_number, prenom, nom, age, localisation,
                            photo_id, statut, prioritaire, montant, date_creation,
-                           date_modification, instagram, snapchat, details
+                           date_modification, instagram, snapchat, details,
+                           admin_en_charge, last_vip_reminder
                     FROM demandes
                     WHERE user_id = %s
                     ORDER BY id DESC
@@ -157,7 +162,7 @@ class DemandeManager:
                     )
 
         except Exception as exc:
-            logger.error("Erreur consultation demandes: %s", exc, exc_info=True)
+            logger.error("Erreur consultation demandes : %s", exc, exc_info=True)
             await self._send_error_message(update, edit_message)
 
     def _format_demande_card(self, demande: dict, current_page: int, total_pages: int) -> str:
@@ -173,6 +178,11 @@ class DemandeManager:
             f"🎯 <b>Type :</b> {type_badge}{montant_str}",
             f"📊 <b>Statut :</b> <code>{demande.get('statut', 'En cours')}</code>"
         ]
+
+        admin_id = demande.get("admin_en_charge")
+        if admin_id:
+            alias = self.db_manager.get_admin_alias(admin_id)
+            lignes.append(f"👨‍💼 <b>Référent :</b> {alias}")
 
         reseaux = []
         if demande.get("instagram"):
@@ -193,10 +203,13 @@ class DemandeManager:
         return "\n".join(lignes)
 
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
-        """Génère les boutons de pagination, de modification et d'ajout conditionné aux quotas."""
+        """Génère les boutons de pagination, de modification et d'actions de relance."""
         buttons = []
         demande_id = demande["id"]
         statut = demande.get("statut", "")
+        admin_en_charge = demande.get("admin_en_charge")
+        is_prio = bool(demande.get("prioritaire"))
+        is_vip = self.db_manager.is_user_vip(user_id)
 
         # Actions d'édition si non traitée
         if statut in ["📨 Reçue", "⏳ En attente"]:
@@ -205,7 +218,29 @@ class DemandeManager:
                 InlineKeyboardButton("🗑️ Supprimer", callback_data=f"delete_{demande_id}")
             ])
 
-        # Barre de navigation
+        # Actions interactives avec l'administrateur assigné
+        if admin_en_charge:
+            actions_row = []
+
+            # Ligne directe réservée aux VIP
+            if is_vip:
+                actions_row.append(
+                    InlineKeyboardButton("💬 Contacter mon référent", callback_data=f"vip_contact_admin_{demande_id}")
+                )
+
+            # Relance hebdomadaire (Gratuite pour VIP & Demande prioritaire, 1 € pour Standard)
+            if is_vip or is_prio:
+                actions_row.append(
+                    InlineKeyboardButton("🔔 Relancer (Gratuit)", callback_data=f"remind_admin_free_{demande_id}")
+                )
+            else:
+                actions_row.append(
+                    InlineKeyboardButton("🔔 Relancer (1 €)", callback_data=f"remind_admin_pay_{demande_id}")
+                )
+
+            buttons.append(actions_row)
+
+        # Barre de pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"nav_page_{page - 1}"))

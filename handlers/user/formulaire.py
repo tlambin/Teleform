@@ -1,4 +1,4 @@
-"""Formulaire de création de demandes avec vérification des quotas."""
+"""Formulaire de création de demandes avec vérification des quotas et choix du référent VIP."""
 
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -37,6 +37,7 @@ class FormulaireManager:
         self.DETAILS = 8
         self.PRIORITAIRE = 9
         self.MONTANT = 10
+        self.CHOIX_ADMIN = 11
 
         # Historique pour navigation arrière
         self.state_history = {
@@ -49,6 +50,7 @@ class FormulaireManager:
             self.DETAILS: self.SNAPCHAT,
             self.PRIORITAIRE: self.DETAILS,
             self.MONTANT: self.PRIORITAIRE,
+            self.CHOIX_ADMIN: self.PRIORITAIRE,
         }
 
         # Champs facultatifs
@@ -112,6 +114,10 @@ class FormulaireManager:
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.montant),
                     CallbackQueryHandler(self.navigation.handle_form_navigation, pattern=nav_pattern),
                 ],
+                self.CHOIX_ADMIN: [
+                    CallbackQueryHandler(self.handle_vip_admin_choice, pattern=r"^vip_assign_admin_\d+$"),
+                    CallbackQueryHandler(self.navigation.handle_form_navigation, pattern=nav_pattern),
+                ],
             },
             fallbacks=[
                 CommandHandler("cancel", self.cancel),
@@ -139,7 +145,10 @@ class FormulaireManager:
         return True
 
     async def _check_quotas(self, update: Update, user_id: int) -> bool:
-        """Vérifie que les quotas global et personnel ne sont pas atteints."""
+        """Vérifie que les quotas ne sont pas atteints (ignoré si l'utilisateur est VIP)."""
+        if self.db_manager.is_user_vip(user_id):
+            return True
+
         placeholders = ", ".join(["%s"] * len(self.ACTIVE_STATUSES))
         status_filter = f"statut IN ({placeholders})"
 
@@ -158,14 +167,18 @@ class FormulaireManager:
                 msg = (
                     "🚫 <b>Service complet</b>\n\n"
                     "Le plafond global de demandes simultanées sur la plateforme a été atteint.\n"
-                    "Merci de réessayer un peu plus tard."
+                    "Merci de réessayer un peu plus tard.\n\n"
+                    "<i>⭐ Devenez VIP pour créer des demandes sans restriction de quota !</i>"
                 )
                 if update.callback_query:
                     await update.callback_query.answer("Plafond global atteint.", show_alert=True)
                     await update.callback_query.edit_message_text(
                         msg,
                         parse_mode="HTML",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]])
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("⭐ Passer VIP", callback_data="menu_vip_shop")],
+                            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                        ])
                     )
                 elif update.message:
                     await update.message.reply_text(msg, parse_mode="HTML")
@@ -186,14 +199,18 @@ class FormulaireManager:
                 msg = (
                     "⚠️ <b>Limite atteinte</b>\n\n"
                     f"Vous avez déjà <b>{user_actif}/{max_user}</b> demande(s) en cours de traitement.\n"
-                    "Attendez qu'une demande soit finalisée avant d'en ouvrir une nouvelle."
+                    "Attendez qu'une demande soit finalisée avant d'en ouvrir une nouvelle.\n\n"
+                    "<i>⭐ Devenez VIP pour bénéficier de demandes illimitées !</i>"
                 )
                 if update.callback_query:
                     await update.callback_query.answer("Quota individuel atteint.", show_alert=True)
                     await update.callback_query.edit_message_text(
                         msg,
                         parse_mode="HTML",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]])
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("⭐ Passer VIP", callback_data="menu_vip_shop")],
+                            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                        ])
                     )
                 elif update.message:
                     await update.message.reply_text(msg, parse_mode="HTML")
@@ -392,7 +409,7 @@ class FormulaireManager:
             )
             return self.INSTAGRAM
         except Exception as exc:
-            logger.error("Erreur lors de la capture photo: %s", exc)
+            logger.error("Erreur lors de la capture photo : %s", exc)
             await update.message.reply_text(
                 "❌ Une erreur est survenue lors de la réception de la photo. Merci de réessayer.",
                 reply_markup=self.navigation.create_navigation_keyboard(self.PHOTO),
@@ -547,8 +564,8 @@ class FormulaireManager:
         demande["prioritaire"] = False
         demande["montant"] = 0
 
-        await self.save_demande(update, context)
-        return ConversationHandler.END
+        # Vérification si l'utilisateur est VIP pour proposer le choix du référent
+        return await self.prompt_admin_selection_or_save(update, context)
 
     async def montant(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.message.text:
@@ -561,8 +578,7 @@ class FormulaireManager:
             demande["montant"] = val
             demande["prioritaire"] = True
 
-            await self.save_demande(update, context)
-            return ConversationHandler.END
+            return await self.prompt_admin_selection_or_save(update, context)
         except ValidationError as err:
             await update.message.reply_text(
                 f"❌ {err}\n\nVeuillez ressaisir un montant valide :",
@@ -570,6 +586,57 @@ class FormulaireManager:
                 reply_markup=self.navigation.create_navigation_keyboard(self.MONTANT),
             )
             return self.MONTANT
+
+    async def prompt_admin_selection_or_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Si l'utilisateur est VIP, lui propose de choisir son admin référent. Sinon, enregistre."""
+        user = update.effective_user
+        if not user:
+            return ConversationHandler.END
+
+        if self.db_manager.is_user_vip(user.id):
+            equipe = self.db_manager.get_available_admins_for_selection()
+            kb_rows = []
+
+            for member in equipe:
+                role_icon = "👑" if member.get("role") == "Owner" else "🦈"
+                alias = member.get("alias", f"Admin_{member['user_id']}")
+                kb_rows.append([
+                    InlineKeyboardButton(
+                        f"{role_icon} {alias}",
+                        callback_data=f"vip_assign_admin_{member['user_id']}"
+                    )
+                ])
+
+            kb_rows.append([InlineKeyboardButton("🎲 Premier disponible (Aléatoire)", callback_data="vip_assign_admin_0")])
+            kb_rows.append([InlineKeyboardButton("⬅️ Retour", callback_data=f"form_back_{self.CHOIX_ADMIN}")])
+            kb_rows.append([InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")])
+
+            msg = (
+                "⭐ <b>Avantage Membre VIP : Choix du Référent</b>\n\n"
+                "Sélectionnez le membre de l'équipe qui prendra personnellement en charge votre demande :"
+            )
+            if update.callback_query:
+                await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb_rows))
+            else:
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb_rows))
+            return self.CHOIX_ADMIN
+
+        await self.save_demande(update, context)
+        return ConversationHandler.END
+
+    async def handle_vip_admin_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Intercepte le choix de l'administrateur référent par le membre VIP."""
+        query = update.callback_query
+        if not query or not query.data:
+            return self.CHOIX_ADMIN
+
+        await query.answer()
+        admin_selected_id = int(query.data.replace("vip_assign_admin_", ""))
+        demande = context.user_data.setdefault("demande", {})
+        demande["target_admin_id"] = admin_selected_id if admin_selected_id > 0 else None
+
+        await self.save_demande(update, context)
+        return ConversationHandler.END
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("demande", None)
@@ -582,13 +649,16 @@ class FormulaireManager:
         return ConversationHandler.END
 
     async def save_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enregistre définitivement la demande dans MySQL et diffuse l'alerte filtrée aux admins."""
+        """Enregistre définitivement la demande dans MySQL et applique l'attribution ciblée si VIP."""
         demande = context.user_data.get("demande", {})
         user_id = update.effective_user.id if update.effective_user else None
 
         if not user_id or "prenom" not in demande:
             logger.error("Tentative de sauvegarde d'une demande invalide ou incomplète.")
             return
+
+        target_admin_id = demande.get("target_admin_id")
+        statut_initial = "🔄 En cours" if target_admin_id else "📨 Reçue"
 
         try:
             with self.db_manager.get_cursor() as cursor:
@@ -602,8 +672,9 @@ class FormulaireManager:
                     """
                     INSERT INTO demandes (
                         user_id, prenom, nom, age, localisation, photo_id,
-                        instagram, snapchat, details, prioritaire, montant, statut, request_number
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        instagram, snapchat, details, prioritaire, montant, statut,
+                        admin_en_charge, request_number
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         int(user_id),
@@ -617,26 +688,42 @@ class FormulaireManager:
                         demande.get("details"),
                         demande.get("prioritaire", False),
                         demande.get("montant", 0),
-                        "📨 Reçue",
+                        statut_initial,
+                        target_admin_id,
                         next_num,
                     ),
                 )
                 demande_id = cursor.lastrowid
 
+                # Si un admin dédié a été sélectionné, l'inscrire directement dans ses suivis
+                if target_admin_id:
+                    cursor.execute(
+                        """
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, statut_suivi)
+                        VALUES (%s, %s, NOW(), 'active')
+                        ON DUPLICATE KEY UPDATE statut_suivi = 'active'
+                        """,
+                        (demande_id, target_admin_id)
+                    )
+
             context.user_data.pop("demande", None)
-            logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s", next_num, demande_id, user_id)
+            logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s (Assigné : %s)", next_num, demande_id, user_id, target_admin_id)
 
             type_txt = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
             montant_txt = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
             nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+
+            referent_txt = ""
+            if target_admin_id:
+                alias = self.db_manager.get_admin_alias(target_admin_id)
+                referent_txt = f"\n👨‍💼 <b>Référent assigné :</b> {alias}"
 
             recap = (
                 f"✅ <b>Demande n°{next_num} enregistrée avec succès !</b>\n\n"
                 f"👤 <b>Identité :</b> {nom_complet}\n"
                 f"🎂 <b>Âge :</b> {demande.get('age')} ans\n"
                 f"📍 <b>Localisation :</b> {demande.get('localisation')}\n"
-                f"🎯 <b>Type :</b> {type_txt}{montant_txt}\n\n"
-                "Elle sera prise en charge prochainement.\n"
+                f"🎯 <b>Type :</b> {type_txt}{montant_txt}{referent_txt}\n\n"
                 "Tapez /demandes pour suivre son avancement."
             )
 
@@ -645,16 +732,60 @@ class FormulaireManager:
             elif update.message:
                 await update.message.reply_text(recap, parse_mode="HTML")
 
-            # Diffusion filtrée selon les préférences de chaque admin
-            await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet, demande)
+            # Notification à l'admin ciblé ou diffusion générale
+            if target_admin_id:
+                await self._send_targeted_admin_alert(context, target_admin_id, demande_id, next_num, nom_complet, demande)
+            else:
+                await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet, demande)
 
         except Exception as exc:
-            logger.error("Erreur lors de la sauvegarde de la demande: %s", exc, exc_info=True)
+            logger.error("Erreur lors de la sauvegarde de la demande : %s", exc, exc_info=True)
             err_msg = "❌ Erreur technique lors de la sauvegarde. Veuillez contacter un administrateur."
             if update.callback_query:
                 await update.callback_query.edit_message_text(err_msg)
             elif update.message:
                 await update.message.reply_text(err_msg)
+
+    async def _send_targeted_admin_alert(
+        self, context: ContextTypes.DEFAULT_TYPE, admin_id: int, demande_id: int, req_num: int, nom_complet: str, demande: dict
+    ):
+        """Envoie une alerte directe et personnalisée à l'administrateur choisi par le client VIP."""
+        prio_icon = "💎" if demande.get("prioritaire") else "📝"
+        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
+        montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
+
+        alert_text = (
+            f"👑 <b>NOUVELLE DEMANDE VIP ASSIGNÉE (#{req_num})</b>\n\n"
+            f"Un client VIP vous a sélectionné comme référent pour traiter sa demande :\n\n"
+            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
+            f"📍 <b>Localisation :</b> {demande.get('localisation')}\n"
+            f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}\n\n"
+            "<i>La demande a été ajoutée directement à vos suivis.</i>"
+        )
+        alert_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")],
+            [InlineKeyboardButton("💬 Contacter le client", callback_data=f"contacter_{demande_id}")]
+        ])
+
+        try:
+            photo_id = demande.get("photo_id")
+            if photo_id:
+                await context.bot.send_photo(
+                    chat_id=admin_id,
+                    photo=photo_id,
+                    caption=alert_text,
+                    parse_mode="HTML",
+                    reply_markup=alert_kb
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=alert_text,
+                    parse_mode="HTML",
+                    reply_markup=alert_kb
+                )
+        except Exception as err:
+            logger.warning("Impossible de notifier l'admin assigné %s : %s", admin_id, err)
 
     async def _broadcast_new_demande_alert(
         self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict
@@ -685,7 +816,6 @@ class FormulaireManager:
                     continue
 
                 is_silent = (notif_mode == "silent")
-
                 photo_id = demande.get("photo_id")
                 if photo_id:
                     await context.bot.send_photo(

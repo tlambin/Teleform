@@ -11,11 +11,16 @@ logger = logging.getLogger(__name__)
 
 
 class OwnerHandlers:
-    """Gestionnaire des opérations système, des statistiques et des droits administrateurs."""
+    """Gestionnaire des opérations système, des statistiques, des admins et des membres VIP."""
 
     WAITING_ADMIN_ID = 1
     WAITING_ADMIN_REMOVE = 2
     WAITING_CONFIRMATION = 3
+
+    # États pour la gestion VIP
+    WAITING_VIP_USER = 10
+    WAITING_VIP_DURATION = 11
+    WAITING_VIP_REMOVE = 12
 
     def __init__(self, config, db_manager):
         self.config = config
@@ -165,6 +170,9 @@ class OwnerHandlers:
             await self.run_maintenance(update, context)
         elif data == "bot_stats":
             await self.show_statistics(update, context)
+        elif data == "gerer_vips":
+            msg, kb = self.interface.get_gerer_vips_menu()
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
         elif data.startswith("perm_admin_"):
             admin_target_id = int(data.replace("perm_admin_", ""))
             await self.show_admin_permissions_menu(update, context, admin_target_id)
@@ -333,7 +341,6 @@ class OwnerHandlers:
             self.config.add_admin(target_id)
             logger.info("Admin ajouté: %s (%s)", target_id, alias)
 
-            # Notification au nouvel admin
             try:
                 welcome_msg = (
                     "🎉 <b>Bienvenue dans l'équipe d'administration !</b>\n\n"
@@ -529,6 +536,208 @@ class OwnerHandlers:
             await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
         return ConversationHandler.END
 
+    # ==================== GESTION DES MEMBRES VIP (Owner Only) ====================
+
+    async def start_add_vip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Ouvre le dialogue pour promouvoir manuellement un utilisateur en VIP."""
+        query = update.callback_query
+        if not query or not self.config.is_owner(update.effective_user.id):
+            return ConversationHandler.END
+
+        await query.edit_message_text(
+            "⭐ <b>Promouvoir un Membre VIP</b>\n\n"
+            "Envoyez l'<b>ID numérique</b> ou le <b>@username</b> du compte à promouvoir :",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]])
+        )
+        return self.WAITING_VIP_USER
+
+    async def process_vip_target_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Identifie le compte et demande la durée de l'accès VIP."""
+        if not update.message or not update.message.text:
+            return self.WAITING_VIP_USER
+
+        saisie = update.message.text.strip().replace("@", "")
+
+        try:
+            with self.db_manager.get_cursor() as cursor:
+                if saisie.isdigit():
+                    cursor.execute("SELECT * FROM users WHERE user_id = %s", (int(saisie),))
+                else:
+                    cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(%s)", (saisie,))
+                user_data = cursor.fetchone()
+
+            if not user_data:
+                await update.message.reply_text(
+                    f"❌ Utilisateur <code>{saisie}</code> introuvable.\n"
+                    "Il doit obligatoirement avoir déjà démarré le bot (/start).",
+                    parse_mode="HTML"
+                )
+                return self.WAITING_VIP_USER
+
+            context.user_data["target_vip_user"] = user_data
+
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⭐ 1 Mois (30 jours)", callback_data="vip_dur_30")],
+                [InlineKeyboardButton("⭐ 3 Mois (90 jours)", callback_data="vip_dur_90")],
+                [InlineKeyboardButton("👑 À Vie (Illimité)", callback_data="vip_dur_lifetime")],
+                [InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]
+            ])
+
+            nom_client = user_data.get("first_name") or user_data.get("username") or str(user_data["user_id"])
+            await update.message.reply_text(
+                f"👤 <b>Compte ciblé :</b> {nom_client} (ID : <code>{user_data['user_id']}</code>)\n\n"
+                "Choisissez la durée du statut VIP ou tapez au clavier le <b>nombre de jours</b> souhaité :",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+            return self.WAITING_VIP_DURATION
+
+        except Exception as exc:
+            logger.error("Erreur identification VIP cible: %s", exc)
+            await update.message.reply_text("❌ Une erreur technique est survenue.")
+            return ConversationHandler.END
+
+    async def process_vip_duration_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Enregistre le statut VIP suite à un bouton ou une saisie de jours."""
+        target_user = context.user_data.pop("target_vip_user", None)
+        if not target_user:
+            return ConversationHandler.END
+
+        target_id = target_user["user_id"]
+        duration_days = None
+
+        if update.callback_query:
+            query = update.callback_query
+            await query.answer()
+            data = query.data
+            if data == "vip_dur_30":
+                duration_days = 30
+            elif data == "vip_dur_90":
+                duration_days = 90
+            elif data == "vip_dur_lifetime":
+                duration_days = None
+        elif update.message and update.message.text:
+            text = update.message.text.strip()
+            if text.isdigit() and int(text) > 0:
+                duration_days = int(text)
+            else:
+                await update.message.reply_text("❌ Veuillez saisir un nombre entier de jours ou utiliser les boutons :")
+                context.user_data["target_vip_user"] = target_user
+                return self.WAITING_VIP_DURATION
+
+        # Application en base
+        self.db_manager.set_user_vip(target_id, is_vip=True, duration_days=duration_days)
+
+        # Notification au client promu
+        try:
+            type_str = f"pendant {duration_days} jours" if duration_days else "à vie"
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    f"🎉 <b>Félicitations !</b>\n\n"
+                    f"Le propriétaire vous a accordé le <b>Statut Membre VIP</b> ({type_str}) !\n\n"
+                    "Vos privilèges sont désormais actifs :\n"
+                    "• Demandes illimitées sans quotas\n"
+                    "• Choix du référent lors de la création\n"
+                    "• Contact direct avec l'admin en charge\n"
+                    "• Bouton de relance prioritaire hebdomadaire"
+                ),
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+        dur_txt = f"{duration_days} jours" if duration_days else "À vie"
+        succes_msg = f"✅ <b>Statut VIP activé pour {target_user.get('first_name', target_id)}</b> ({dur_txt}) !"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Gestion VIPs", callback_data="gerer_vips")]])
+
+        if update.callback_query:
+            await update.callback_query.edit_message_text(succes_msg, parse_mode="HTML", reply_markup=kb)
+        elif update.message:
+            await update.message.reply_text(succes_msg, parse_mode="HTML", reply_markup=kb)
+
+        return ConversationHandler.END
+
+    async def start_remove_vip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche la liste des VIPs actifs pour révocation."""
+        query = update.callback_query
+        if not query or not self.config.is_owner(update.effective_user.id):
+            return ConversationHandler.END
+
+        vips = self.db_manager.get_vip_users_list()
+        if not vips:
+            await query.edit_message_text(
+                "📭 Aucun membre VIP actif à révoquer.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_vips")]])
+            )
+            return ConversationHandler.END
+
+        lines = ["⭐ <b>Révocation de Membre VIP</b>\n", f"Membres actifs : <b>{len(vips)}</b>\n"]
+        for idx, v in enumerate(vips, 1):
+            nom = v.get("first_name") or "Utilisateur"
+            pseudo = f"(@{v['username']})" if v.get("username") else ""
+            lines.append(f"{idx}. <b>{nom}</b> {pseudo} — ID: <code>{v['user_id']}</code>")
+
+        lines.append("\nEnvoyez le <b>numéro</b> de la personne à révoquer :")
+        context.user_data["vip_remove_list"] = vips
+
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]])
+        )
+        return self.WAITING_VIP_REMOVE
+
+    async def process_vip_remove_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Valide et supprime le statut VIP de l'utilisateur choisi."""
+        if not update.message or not update.message.text:
+            return self.WAITING_VIP_REMOVE
+
+        choix = update.message.text.strip()
+        vips = context.user_data.pop("vip_remove_list", [])
+
+        if not choix.isdigit():
+            await update.message.reply_text("❌ Veuillez saisir un numéro de la liste :")
+            context.user_data["vip_remove_list"] = vips
+            return self.WAITING_VIP_REMOVE
+
+        idx = int(choix) - 1
+        if idx < 0 or idx >= len(vips):
+            await update.message.reply_text(f"❌ Numéro hors plage (1 à {len(vips)}) :")
+            context.user_data["vip_remove_list"] = vips
+            return self.WAITING_VIP_REMOVE
+
+        selected = vips[idx]
+        target_id = selected["user_id"]
+        self.db_manager.set_user_vip(target_id, is_vip=False)
+
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text="ℹ️ Votre statut Membre VIP a pris fin.",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+
+        await update.message.reply_text(
+            f"✅ <b>Statut VIP révoqué pour {selected.get('first_name', target_id)}.</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Gestion VIPs", callback_data="gerer_vips")]])
+        )
+        return ConversationHandler.END
+
+    async def cancel_vip_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Interrompt l'action VIP en cours."""
+        context.user_data.pop("target_vip_user", None)
+        context.user_data.pop("vip_remove_list", None)
+        query = update.callback_query
+        if query:
+            msg, kb = self.interface.get_gerer_vips_menu()
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+        return ConversationHandler.END
+
     # ==================== STATISTIQUES ====================
 
     async def show_statistics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -541,6 +750,9 @@ class OwnerHandlers:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute("SELECT COUNT(*) AS total FROM users")
                 total_users = cursor.fetchone()["total"]
+
+                cursor.execute("SELECT COUNT(*) AS total FROM users WHERE is_vip = TRUE AND (vip_until IS NULL OR vip_until > NOW())")
+                total_vips = cursor.fetchone()["total"]
 
                 cursor.execute("SELECT COUNT(*) AS total FROM demandes")
                 total_demandes = cursor.fetchone()["total"]
@@ -562,6 +774,7 @@ class OwnerHandlers:
             lines = [
                 "📈 <b>Statistiques Générales du Bot</b>\n",
                 f"👥 <b>Utilisateurs enregistrés :</b> {total_users}",
+                f"⭐ <b>Membres VIP actifs :</b> {total_vips}",
                 f"📝 <b>Demandes en base :</b> {total_demandes}",
                 f"📦 <b>Demandes archivées :</b> {total_archives}",
                 f"💎 <b>Demandes prioritaires :</b> {total_prio}",
