@@ -1,4 +1,4 @@
-"""Formulaire de création de demandes avec vérification des quotas et choix du référent VIP."""
+"""Formulaire de création de demandes avec vérification des quotas, choix du référent VIP et validation des réseaux sociaux."""
 
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -53,7 +53,7 @@ class FormulaireManager:
             self.CHOIX_ADMIN: self.PRIORITAIRE,
         }
 
-        # Champs facultatifs
+        # Champs facultatifs (Snapchat est géré dynamiquement selon la présence d'Instagram)
         self.skippable_fields = {
             self.NOM, self.INSTAGRAM, self.SNAPCHAT, self.DETAILS
         }
@@ -427,6 +427,7 @@ class FormulaireManager:
                 return await self.skip_instagram(update, context)
 
             context.user_data.setdefault("demande", {})["instagram"] = val
+            # Comme Instagram est renseigné, Snapchat est facultatif
             await update.message.reply_text(
                 f"✅ Instagram enregistré : <b>@{val}</b>\n\n"
                 "Indiquez son nom d'utilisateur <b>Snapchat</b> (ou passez) :",
@@ -444,8 +445,13 @@ class FormulaireManager:
 
     async def skip_instagram(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.setdefault("demande", {})["instagram"] = None
-        text = "⏭️ Instagram ignoré.\n\nIndiquez son compte <b>Snapchat</b> (ou passez) :"
-        kb = self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=True)
+        text = (
+            "⏭️ Instagram ignoré.\n\n"
+            "⚠️ <b>Au moins un réseau social est obligatoire.</b>\n"
+            "Veuillez indiquer son compte <b>Snapchat</b> :"
+        )
+        # include_skip=False car Instagram a été ignoré : Snapchat est obligatoire
+        kb = self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=False)
 
         if update.callback_query:
             await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
@@ -472,15 +478,37 @@ class FormulaireManager:
             )
             return self.DETAILS
         except ValidationError as err:
+            demande = context.user_data.get("demande", {})
+            has_insta = bool(demande.get("instagram"))
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir son compte Snapchat ou passer :",
+                f"❌ {err}\n\nVeuillez ressaisir son compte Snapchat" + (" ou passer :" if has_insta else " :"),
                 parse_mode="HTML",
-                reply_markup=self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=True),
+                reply_markup=self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=has_insta),
             )
             return self.SNAPCHAT
 
     async def skip_snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        context.user_data.setdefault("demande", {})["snapchat"] = None
+        demande = context.user_data.setdefault("demande", {})
+
+        # Blocage strict si Instagram n'a pas été renseigné
+        if not demande.get("instagram"):
+            msg = (
+                "🚫 <b>Réseau social obligatoire</b>\n\n"
+                "Vous devez obligatoirement fournir au moins un compte (<b>Instagram</b> ou <b>Snapchat</b>).\n\n"
+                "Saisissez son pseudo Snapchat ci-dessous ou revenez à l'étape précédente pour renseigner Instagram :"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.SNAPCHAT}")],
+                [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+            ])
+
+            if update.callback_query:
+                await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            else:
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+            return self.SNAPCHAT
+
+        demande["snapchat"] = None
         text = "⏭️ Snapchat ignoré.\n\nAvez-vous des détails ou remarques supplémentaires à ajouter ?"
         kb = self.navigation.create_navigation_keyboard(self.DETAILS, include_skip=True)
 

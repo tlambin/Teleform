@@ -130,6 +130,7 @@ class NavigationManager:
     async def handle_back(self, query, context, current_state):
         """Recule d'une étape dans la machine à états."""
         demande = context.user_data.get("demande", {})
+        has_insta = bool(demande.get("instagram"))
 
         # Gestion spécifique du retour depuis le choix d'admin VIP
         if current_state == self.form.CHOIX_ADMIN:
@@ -170,8 +171,11 @@ class NavigationManager:
                 "keyboard": self.create_navigation_keyboard(self.form.INSTAGRAM, include_skip=True),
             },
             self.form.SNAPCHAT: {
-                "text": "📝 <b>Retour - Snapchat</b>\n\nSon compte Snapchat :",
-                "keyboard": self.create_navigation_keyboard(self.form.SNAPCHAT, include_skip=True),
+                "text": (
+                    "📝 <b>Retour - Snapchat</b>\n\n"
+                    + ("Son compte Snapchat (ou passez) :" if has_insta else "⚠️ <b>Au moins un réseau est requis.</b>\nSon compte Snapchat :")
+                ),
+                "keyboard": self.create_navigation_keyboard(self.form.SNAPCHAT, include_skip=has_insta),
             },
             self.form.DETAILS: {
                 "text": "📝 <b>Retour - Détails</b>\n\nDes précisions ou remarques à apporter ?",
@@ -256,15 +260,37 @@ class NavigationManager:
 
     async def _skip_instagram(self, query, context):
         context.user_data.setdefault("demande", {})["instagram"] = None
+        text = (
+            "⏭️ <b>Instagram ignoré</b>\n\n"
+            "⚠️ <b>Au moins un réseau social est obligatoire.</b>\n"
+            "Indiquez son compte <b>Snapchat</b> :"
+        )
+        # Snapchat devient obligatoire car Instagram est vide
         await query.edit_message_text(
-            "⏭️ <b>Instagram ignoré</b>\n\nIndiquez son compte <b>Snapchat</b> (ou passez) :",
+            text,
             parse_mode="HTML",
-            reply_markup=self.create_navigation_keyboard(self.form.SNAPCHAT, include_skip=True),
+            reply_markup=self.create_navigation_keyboard(self.form.SNAPCHAT, include_skip=False),
         )
         return self.form.SNAPCHAT
 
     async def _skip_snapchat(self, query, context):
-        context.user_data.setdefault("demande", {})["snapchat"] = None
+        demande = context.user_data.setdefault("demande", {})
+
+        # Blocage si Instagram n'a pas été renseigné
+        if not demande.get("instagram"):
+            msg = (
+                "🚫 <b>Réseau social obligatoire</b>\n\n"
+                "Vous devez obligatoirement fournir au moins un compte (<b>Instagram</b> ou <b>Snapchat</b>).\n\n"
+                "Saisissez son identifiant Snapchat ou revenez à l'étape précédente pour renseigner Instagram :"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.form.SNAPCHAT}")],
+                [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+            ])
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            return self.form.SNAPCHAT
+
+        demande["snapchat"] = None
         await query.edit_message_text(
             "⏭️ <b>Snapchat ignoré</b>\n\nAvez-vous des détails ou remarques supplémentaires à ajouter ?",
             parse_mode="HTML",
