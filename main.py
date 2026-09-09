@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Point d'entrée principal de l'application Telegram."""
+
 import logging
 import os
 import sys
@@ -56,7 +58,7 @@ PARIS_TZ = pytz.timezone("Europe/Paris")
 def check_log_permissions() -> bool:
     """Vérifie la possibilité d'écrire dans le fichier de log local."""
     try:
-        with open(log_file, "a", encoding="utf-8") as _:
+        with open(log_file, "a", encoding="utf-8"):
             pass
         logger.info("Permissions logs vérifiées : %s", log_file)
         return True
@@ -74,7 +76,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
     now_paris = datetime.now(PARIS_TZ)
     current_hour = now_paris.hour
     current_weekday = now_paris.weekday()  # 0 = Lundi, 6 = Dimanche
-    current_monthday = now_paris.day       # 1 à 31
+    current_monthday = now_paris.day        # 1 à 31
     today_date = now_paris.date()
 
     admin_prefs_list = db_manager.get_all_admin_preferences()
@@ -86,25 +88,20 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
         heure = pref.get("rappel_heure", 18)
         last_date = pref.get("last_rappel_date")
 
-        # Mode inactif
         if rappel_mode == "off":
             continue
 
-        # Vérification horaire
         if current_hour != heure:
             continue
 
-        # Empêche le doublon le même jour
         if str(last_date) == str(today_date):
             continue
 
-        # Vérification de la périodicité
         if freq == "weekly" and current_weekday != pref.get("rappel_jour_semaine", 6):
             continue
         elif freq == "monthly" and current_monthday != pref.get("rappel_jour_mois", 1):
             continue
 
-        # Récupération des demandes en cours
         active_demandes = []
         try:
             with db_manager.get_cursor() as cursor:
@@ -116,7 +113,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
                     WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente', '⚠️ Difficile')
                     ORDER BY ds.date_suivi ASC
                     """,
-                    (user_id,),
+                    (int(user_id),),
                 )
                 active_demandes = cursor.fetchall()
         except Exception as db_err:
@@ -161,6 +158,8 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
 
 
 class TelegramBot:
+    """Orchestrateur de l'application Telegram."""
+
     def __init__(self, config: Config, db_manager):
         self.db_manager = db_manager
         self.config = config
@@ -401,7 +400,6 @@ if __name__ == "__main__":
         logger.info("✅ Base de données initialisée")
 
         logger.info("2. Configuration avec cache intelligent...")
-        config = Config()
         config.set_db_manager(db_manager)
         logger.info("Admins chargés au démarrage : %s", config.admin_ids)
 

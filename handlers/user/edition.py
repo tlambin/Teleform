@@ -29,13 +29,17 @@ class EditionManager:
     async def handle_modify_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Affiche le menu de sélection du champ à modifier."""
         query = update.callback_query
-        if not query:
+        if not query or not update.effective_user:
             return
 
         await query.answer()
-        demande_id = int(data.replace("modify_", ""))
+        try:
+            demande_id = int(data.replace("modify_", ""))
+        except (ValueError, TypeError):
+            await query.answer("❌ Identifiant de demande invalide.", show_alert=True)
+            return
 
-        if not self._verify_request_ownership(demande_id, query.from_user.id):
+        if not self._verify_request_ownership(demande_id, update.effective_user.id):
             await query.edit_message_text("❌ Vous n'êtes pas autorisé à modifier cette demande.")
             return
 
@@ -58,12 +62,12 @@ class EditionManager:
     async def handle_edit_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Enclenche le mode écoute pour la modification d'un champ précis."""
         query = update.callback_query
-        if not query:
+        if not query or not update.effective_user:
             return
 
         await query.answer()
         parts = data.split("_")
-        if len(parts) != 3:
+        if len(parts) != 3 or not parts[2].isdigit():
             await query.answer("❌ Requête invalide", show_alert=True)
             return
 
@@ -74,7 +78,7 @@ class EditionManager:
             await query.answer("❌ Champ non modifiable", show_alert=True)
             return
 
-        if not self._verify_request_ownership(demande_id, query.from_user.id):
+        if not self._verify_request_ownership(demande_id, update.effective_user.id):
             await query.edit_message_text("❌ Action non autorisée.")
             return
 
@@ -88,13 +92,17 @@ class EditionManager:
     async def handle_delete_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Demande confirmation avant suppression définitive."""
         query = update.callback_query
-        if not query:
+        if not query or not update.effective_user:
             return
 
         await query.answer()
-        demande_id = int(data.replace("delete_", ""))
+        try:
+            demande_id = int(data.replace("delete_", ""))
+        except (ValueError, TypeError):
+            await query.answer("❌ Identifiant invalide.", show_alert=True)
+            return
 
-        if not self._verify_request_ownership(demande_id, query.from_user.id):
+        if not self._verify_request_ownership(demande_id, update.effective_user.id):
             await query.edit_message_text("❌ Action non autorisée.")
             return
 
@@ -181,13 +189,17 @@ class EditionManager:
     async def handle_confirm_delete(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Supprime la demande et ses dépendances après confirmation via transaction atomique."""
         query = update.callback_query
-        if not query:
+        if not query or not update.effective_user:
             return
 
         await query.answer()
-        demande_id = int(data.replace("confirm_delete_", ""))
+        try:
+            demande_id = int(data.replace("confirm_delete_", ""))
+        except (ValueError, TypeError):
+            await query.answer("❌ Identifiant invalide.", show_alert=True)
+            return
 
-        if not self._verify_request_ownership(demande_id, query.from_user.id):
+        if not self._verify_request_ownership(demande_id, update.effective_user.id):
             await query.edit_message_text("❌ Action non autorisée.")
             return
 
@@ -198,12 +210,10 @@ class EditionManager:
 
         try:
             with self.db_manager.transaction() as cursor:
-                # 1. Nettoyage des suivis associés
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
-                # 2. Suppression de la demande principale
                 cursor.execute("DELETE FROM demandes WHERE id = %s", (demande_id,))
 
-            logger.info("Demande #%s et ses liaisons supprimées par l'utilisateur %s", demande_id, query.from_user.id)
+            logger.info("Demande #%s et ses liaisons supprimées par l'utilisateur %s", demande_id, update.effective_user.id)
             await query.edit_message_text(
                 f"✅ <b>Demande n°{demande.get('request_number', demande_id)} supprimée avec succès.</b>",
                 parse_mode="HTML",
@@ -213,28 +223,28 @@ class EditionManager:
                 ]])
             )
         except Exception as exc:
-            logger.error("Erreur suppression demande %s: %s", demande_id, exc, exc_info=True)
+            logger.error("Erreur suppression demande %s : %s", demande_id, exc, exc_info=True)
             await query.edit_message_text("❌ Une erreur technique est survenue lors de la suppression.")
 
     def _verify_request_ownership(self, demande_id: int, user_id: int) -> bool:
         """Contrôle la correspondance entre l'utilisateur et le créateur de la demande."""
         try:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("SELECT user_id FROM demandes WHERE id = %s", (demande_id,))
+                cursor.execute("SELECT user_id FROM demandes WHERE id = %s", (int(demande_id),))
                 row = cursor.fetchone()
-                return bool(row and row["user_id"] == user_id)
+                return bool(row and int(row["user_id"]) == int(user_id))
         except Exception as exc:
-            logger.error("Erreur contrôle propriété demande %s: %s", demande_id, exc)
+            logger.error("Erreur contrôle propriété demande %s : %s", demande_id, exc)
             return False
 
     def _get_request_details(self, demande_id: int) -> dict:
         """Récupère l'intégralité d'un enregistrement de demande."""
         try:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("SELECT * FROM demandes WHERE id = %s", (demande_id,))
+                cursor.execute("SELECT * FROM demandes WHERE id = %s", (int(demande_id),))
                 return cursor.fetchone()
         except Exception as exc:
-            logger.error("Erreur extraction détails demande %s: %s", demande_id, exc)
+            logger.error("Erreur extraction détails demande %s : %s", demande_id, exc)
             return None
 
     def _update_field_in_database(self, demande_id: int, field_name: str, value) -> bool:
@@ -245,10 +255,10 @@ class EditionManager:
         query = f"UPDATE demandes SET {field_name} = %s, date_modification = NOW() WHERE id = %s"
         try:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute(query, (value, demande_id))
+                cursor.execute(query, (value, int(demande_id)))
                 return cursor.rowcount > 0
         except Exception as exc:
-            logger.error("Erreur mise à jour SQL (%s) sur demande %s: %s", field_name, demande_id, exc)
+            logger.error("Erreur mise à jour SQL (%s) sur demande %s : %s", field_name, demande_id, exc)
             return False
 
     def _validate_field_input(self, field_name: str, user_input: str):

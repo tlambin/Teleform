@@ -5,6 +5,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 from utils.interface_manager import InterfaceManager
 from utils.maintenance import check_storage_usage, daily_maintenance
+from .admin.alias import AliasManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class OwnerHandlers:
         self.config = config
         self.db_manager = db_manager
         self.interface = InterfaceManager(config, db_manager)
+        self.alias_manager = AliasManager(db_manager, config)
         logger.info("OwnerHandlers initialisé")
 
     async def run_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -171,9 +173,7 @@ class OwnerHandlers:
         elif data.startswith("owner_edit_alias_"):
             admin_target_id = int(data.replace("owner_edit_alias_", ""))
             context.user_data["target_alias_user_id"] = admin_target_id
-            from handlers.admin.alias import AliasManager
-            alias_mgr = AliasManager(self.db_manager, self.config)
-            await alias_mgr.modifier_alias(update, context)
+            await self.alias_manager.modifier_alias(update, context)
 
     # ==================== GESTION DES PERMISSIONS ADMIN ====================
 
@@ -333,7 +333,7 @@ class OwnerHandlers:
             self.config.add_admin(target_id)
             logger.info("Admin ajouté: %s (%s)", target_id, alias)
 
-            # 1. Envoi de la notification et de la proposition d'alias au nouvel administrateur
+            # Notification au nouvel admin
             try:
                 welcome_msg = (
                     "🎉 <b>Bienvenue dans l'équipe d'administration !</b>\n\n"
@@ -353,11 +353,10 @@ class OwnerHandlers:
                     parse_mode="HTML",
                     reply_markup=welcome_kb
                 )
-                logger.info("Message de bienvenue et proposition d'alias envoyés à l'admin %s", target_id)
+                logger.info("Notification envoyée à l'admin %s", target_id)
             except Exception as notif_err:
-                logger.warning("Impossible d'envoyer la notification de bienvenue à l'admin %s : %s", target_id, notif_err)
+                logger.warning("Notification impossible pour l'admin %s : %s", target_id, notif_err)
 
-            # 2. Confirmation affichée au propriétaire
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛡️ Régler ses permissions", callback_data=f"perm_admin_{target_id}")],
                 [InlineKeyboardButton("👥 Gestion Admins", callback_data="gerer_admins")],
@@ -369,7 +368,6 @@ class OwnerHandlers:
                 f"👤 <b>Nom :</b> {user_data.get('first_name', '')}\n"
                 f"🆔 <b>ID :</b> <code>{target_id}</code>\n"
                 f"🏷️ <b>Alias provisoire :</b> <code>{alias}</code>\n\n"
-                "📨 <i>Une notification privée a été envoyée au nouvel administrateur l'invitant à définir son alias unique.</i>\n"
                 "Vous pouvez configurer ses permissions de traitement ci-dessous :",
                 parse_mode="HTML",
                 reply_markup=keyboard

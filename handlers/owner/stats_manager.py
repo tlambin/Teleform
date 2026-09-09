@@ -35,16 +35,27 @@ class StatsManager:
             ])
 
             if update.callback_query:
-                await update.callback_query.edit_message_text(
-                    message, parse_mode="HTML", reply_markup=keyboard
-                )
+                query = update.callback_query
+                if query.message and query.message.photo:
+                    chat_id = query.message.chat_id
+                    await query.message.delete()
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                    )
+                else:
+                    await query.edit_message_text(
+                        message, parse_mode="HTML", reply_markup=keyboard
+                    )
             elif update.message:
                 await update.message.reply_text(
                     message, parse_mode="HTML", reply_markup=keyboard
                 )
 
         except Exception as exc:
-            logger.error("Erreur calcul statistiques complètes: %s", exc, exc_info=True)
+            logger.error("Erreur calcul statistiques complètes : %s", exc, exc_info=True)
             err_msg = "❌ Erreur technique lors du calcul des statistiques."
             if update.callback_query:
                 await update.callback_query.edit_message_text(err_msg)
@@ -93,6 +104,7 @@ class StatsManager:
             )
             stats["demandes_today"] = cursor.fetchone()["total"]
 
+            # Cumul financier (actives + archives)
             cursor.execute(
                 """
                 SELECT
@@ -103,11 +115,25 @@ class StatsManager:
                 FROM demandes
                 """
             )
-            prio_data = cursor.fetchone()
-            stats["nb_prio"] = prio_data["nb_prio"] or 0
-            stats["nb_std"] = prio_data["nb_std"] or 0
-            stats["total_montant"] = float(prio_data["total_montant"])
-            stats["avg_montant"] = float(prio_data["avg_montant"])
+            prio_data = cursor.fetchone() or {}
+
+            cursor.execute(
+                """
+                SELECT
+                    COALESCE(SUM(montant), 0) AS montant_archives
+                FROM archives
+                WHERE prioritaire = 1
+                """
+            )
+            arch_data = cursor.fetchone() or {}
+
+            montant_actif = float(prio_data.get("total_montant") or 0.0)
+            montant_arch = float(arch_data.get("montant_archives") or 0.0)
+
+            stats["nb_prio"] = int(prio_data.get("nb_prio") or 0)
+            stats["nb_std"] = int(prio_data.get("nb_std") or 0)
+            stats["total_montant"] = round(montant_actif + montant_arch, 2)
+            stats["avg_montant"] = float(prio_data.get("avg_montant") or 0.0)
 
             # Répartition par statut
             cursor.execute(
@@ -140,16 +166,16 @@ class StatsManager:
             f"• Actives : <b>{stats.get('total_demandes', 0)}</b>",
             f"• Reçues aujourd'hui : <b>{stats.get('demandes_today', 0)}</b>",
             f"• Archivées : <b>{stats.get('total_archives', 0)}</b>",
-            f"• Répartition : 💎 <b>{stats.get('nb_prio', 0)}</b> prioritaires | 📝 <b>{stats.get('nb_std', 0)}</b> standard",
-            f"• Montant cumulé : <b>{stats.get('total_montant', 0.0):.2f}€</b> (moyenne prio : {stats.get('avg_montant', 0.0):.2f}€)\n",
-            "📊 <b>Statuts actuels :</b>"
+            f"• Répartition actives : 💎 <b>{stats.get('nb_prio', 0)}</b> prioritaires | 📝 <b>{stats.get('nb_std', 0)}</b> standard",
+            f"• Montant cumulé total : <b>{stats.get('total_montant', 0.0):.2f} €</b> (moyenne prio : {stats.get('avg_montant', 0.0):.2f} €)\n",
+            "📊 <b>Statuts des demandes en cours :</b>"
         ]
 
         for s in stats.get("statuts", []):
             lines.append(f"• {s['statut']} : {s['count']}")
 
-        lines.append(f"\n💾 <b>Ressources Système :</b>")
-        lines.append(f"• Stockage local : <b>{storage:.1f} Mo / 512 Mo</b> ({(storage/512)*100:.1f}%)")
+        lines.append("\n💾 <b>Ressources Système :</b>")
+        lines.append(f"• Stockage local : <b>{storage:.1f} Mo / 512 Mo</b> ({(storage / 512) * 100:.1f} %)")
         lines.append(f"• Base de données : <b>{db_size} Mo</b>")
 
         return "\n".join(lines)

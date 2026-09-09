@@ -1,7 +1,6 @@
 """Formulaire de création de demandes avec vérification des quotas."""
 
 import logging
-from functools import wraps
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     CallbackQueryHandler,
@@ -19,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 class FormulaireManager:
     """Gestionnaire du formulaire guidé de création de demande."""
+
+    ACTIVE_STATUSES = ("📨 Reçue", "⏳ En attente", "🔄 En cours", "⚠️ Difficile")
 
     def __init__(self, db_manager, config, account_manager):
         self.db_manager = db_manager
@@ -139,14 +140,17 @@ class FormulaireManager:
 
     async def _check_quotas(self, update: Update, user_id: int) -> bool:
         """Vérifie que les quotas global et personnel ne sont pas atteints."""
-        active_statuses = ("'📨 Reçue'", "'⏳ En attente'", "'🔄 En cours'", "'⚠️ Difficile'")
-        status_filter = f"statut IN ({', '.join(active_statuses)})"
+        placeholders = ", ".join(["%s"] * len(self.ACTIVE_STATUSES))
+        status_filter = f"statut IN ({placeholders})"
 
-        # 1. Vérification du quota global
+        # 1. Quota global
         max_total = self.config.get_max_total_demandes()
         if max_total > 0:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute(f"SELECT COUNT(*) AS total FROM demandes WHERE {status_filter}")
+                cursor.execute(
+                    f"SELECT COUNT(*) AS total FROM demandes WHERE {status_filter}",
+                    self.ACTIVE_STATUSES
+                )
                 row = cursor.fetchone()
                 total_actif = row["total"] if row else 0
 
@@ -167,13 +171,13 @@ class FormulaireManager:
                     await update.message.reply_text(msg, parse_mode="HTML")
                 return False
 
-        # 2. Vérification du quota personnel
+        # 2. Quota individuel
         max_user = self.config.get_max_demandes_per_user()
         if max_user > 0:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     f"SELECT COUNT(*) AS count_user FROM demandes WHERE user_id = %s AND {status_filter}",
-                    (user_id,)
+                    (int(user_id), *self.ACTIVE_STATUSES)
                 )
                 row = cursor.fetchone()
                 user_actif = row["count_user"] if row else 0
@@ -590,7 +594,7 @@ class FormulaireManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     "SELECT COALESCE(MAX(request_number), 0) + 1 AS next_num FROM demandes WHERE user_id = %s",
-                    (user_id,),
+                    (int(user_id),),
                 )
                 next_num = cursor.fetchone()["next_num"]
 
@@ -602,7 +606,7 @@ class FormulaireManager:
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        user_id,
+                        int(user_id),
                         demande.get("prenom"),
                         demande.get("nom"),
                         demande.get("age"),
@@ -623,7 +627,7 @@ class FormulaireManager:
             logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s", next_num, demande_id, user_id)
 
             type_txt = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
-            montant_txt = f" ({demande.get('montant', 0):.2f}€)" if demande.get("prioritaire") else ""
+            montant_txt = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
             nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
 
             recap = (
@@ -658,7 +662,7 @@ class FormulaireManager:
         """Avertit l'équipe en appliquant les préférences (sonore, silencieux ou coupé)."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_str = f" ({demande.get('montant', 0):.2f}€)" if demande.get("prioritaire") else ""
+        montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
 
         alert_text = (
             f"🔔 <b>Nouvelle demande disponible #{req_num}</b>\n\n"

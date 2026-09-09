@@ -3,7 +3,6 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from utils.validators import convert_utc_to_paris
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +21,15 @@ class BotManager:
         self.interface = interface_manager
 
     async def bot_on(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Active l'acceptation globale des demandes."""
+        """Active l'acceptation globale des demandes et coupe le mode maintenance."""
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
             return
 
         try:
-            self.db_manager.set_bot_active(True)
+            self.config.enable_demandes()
+            self.db_manager.set_config_value("maintenance_mode", "false")
             logger.info("Bot activé par le propriétaire %s", user.id)
 
             msg = (
@@ -38,9 +38,9 @@ class BotManager:
                 "📊 Toutes les commandes sont actives."
             )
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔴 Désactiver", callback_data="bot_off")],
+                [InlineKeyboardButton("🔴 Suspendre", callback_data="bot_off")],
                 [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
+                [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
             ])
 
             await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
@@ -62,7 +62,7 @@ class BotManager:
             return
 
         try:
-            self.db_manager.set_bot_active(False)
+            self.config.disable_demandes()
             logger.info("Demandes suspendues par le propriétaire %s", user.id)
 
             msg = (
@@ -73,7 +73,7 @@ class BotManager:
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🟢 Réactiver", callback_data="bot_on")],
                 [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
+                [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
             ])
 
             await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
@@ -96,7 +96,7 @@ class BotManager:
 
         try:
             self.db_manager.set_config_value("maintenance_mode", "true")
-            self.db_manager.set_bot_active(False)
+            self.config.disable_demandes()
             logger.info("Mode maintenance enclenché par %s", user.id)
 
             msg = (
@@ -106,7 +106,7 @@ class BotManager:
             )
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🟢 Réactiver le service", callback_data="bot_on")],
-                [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
+                [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
             ])
 
             await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
@@ -127,7 +127,7 @@ class BotManager:
             return
 
         try:
-            is_active = self.db_manager.is_bot_active()
+            is_active = self.config.are_demandes_enabled()
             is_maint = self.db_manager.get_config_value("maintenance_mode", "false") == "true"
 
             if is_maint:
@@ -152,7 +152,7 @@ class BotManager:
                     InlineKeyboardButton("🔴 Couper", callback_data="bot_off")
                 ],
                 [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Menu Owner", callback_data="start_menu")]
+                [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
             ])
 
             if update.callback_query:

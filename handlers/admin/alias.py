@@ -23,6 +23,7 @@ class AliasManager:
     def get_admin_alias(self, admin_user_id: int) -> str:
         """Récupère l'alias de l'administrateur avec génération automatique en fallback."""
         try:
+            admin_user_id = int(admin_user_id)
             if self.config.is_owner(admin_user_id):
                 return self.db_manager.get_config_value("owner_alias", self.DEFAULT_OWNER_ALIAS)
 
@@ -69,19 +70,21 @@ class AliasManager:
 
     def _save_admin_alias(self, admin_user_id: int, alias: str):
         """Sauvegarde l'alias en base de données."""
+        clean_alias = alias.strip()
         if self.config.is_owner(admin_user_id):
-            self.db_manager.set_config_value("owner_alias", alias)
+            self.db_manager.set_config_value("owner_alias", clean_alias)
         else:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     "UPDATE admins SET alias = %s WHERE user_id = %s",
-                    (alias, admin_user_id),
+                    (clean_alias, admin_user_id),
                 )
         self.db_manager.clear_cache(f"alias_{admin_user_id}")
 
     def _is_alias_unique(self, new_alias: str, current_user_id: int) -> bool:
         """Contrôle la disponibilité d'un pseudonyme."""
         try:
+            current_user_id = int(current_user_id)
             owner_alias = self.db_manager.get_config_value("owner_alias", self.DEFAULT_OWNER_ALIAS)
             if owner_alias.lower() == new_alias.lower() and not self.config.is_owner(current_user_id):
                 return False
@@ -115,10 +118,12 @@ class AliasManager:
                 await query.answer("❌ Accès non autorisé.", show_alert=True)
             return ConversationHandler.END
 
-        # Détection de la cible depuis le callback 'owner_edit_alias_<id>'
         data = query.data if query and query.data else ""
         if is_owner and data.startswith("owner_edit_alias_"):
-            target_id = int(data.replace("owner_edit_alias_", ""))
+            try:
+                target_id = int(data.replace("owner_edit_alias_", ""))
+            except (IndexError, ValueError):
+                target_id = user_id
             context.user_data["target_alias_user_id"] = target_id
         else:
             target_id = context.user_data.get("target_alias_user_id", user_id)
@@ -142,7 +147,6 @@ class AliasManager:
 
         target_alias = self.get_admin_alias(target_id)
 
-        # Message d'avertissement adapté
         if not is_owner and target_id == user_id:
             avertissement = (
                 "⚠️ <b>Attention :</b> Vous ne disposez que d'<b>une seule modification</b> pour définir votre alias. "
@@ -151,7 +155,7 @@ class AliasManager:
             retour_btn = InlineKeyboardButton("❌ Annuler", callback_data="cancel_alias_change")
         elif is_owner and target_id != user_id:
             avertissement = (
-                f"👑 <b>Gestion Propriétaire</b>\n"
+                "👑 <b>Gestion Propriétaire</b>\n"
                 f"Modification forcée de l'alias pour l'admin (ID : <code>{target_id}</code>).\n\n"
             )
             retour_btn = InlineKeyboardButton("❌ Annuler", callback_data=f"perm_admin_{target_id}")
@@ -188,7 +192,6 @@ class AliasManager:
         if not self.config.is_admin(user_id):
             return ConversationHandler.END
 
-        # Récupération de la cible sans la détruire immédiatement
         target_id = context.user_data.get("target_alias_user_id", user_id)
         new_alias = update.message.text.strip()
 
@@ -212,13 +215,9 @@ class AliasManager:
             return self.WAITING_ALIAS
 
         try:
-            # Enregistrement pour target_id (l'admin cible ou l'owner lui-même)
             self._save_admin_alias(target_id, new_alias)
-
-            # Nettoyage de la variable de contexte
             context.user_data.pop("target_alias_user_id", None)
 
-            # Verrouillage uniquement si c'est l'admin lui-même qui le modifie
             verrou_txt = ""
             if not is_owner and target_id == user_id:
                 self.db_manager.lock_admin_alias(user_id)

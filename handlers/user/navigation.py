@@ -82,12 +82,19 @@ class NavigationManager:
 
         await query.answer()
         parts = query.data.split("_")
+        if len(parts) < 2:
+            return None
+
         action = parts[1]  # back, skip, cancel
 
         if action == "cancel":
             return await self.handle_cancel(query, context)
 
-        current_state = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+        try:
+            current_state = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+        except (IndexError, ValueError):
+            current_state = None
+
         if current_state is None:
             return None
 
@@ -154,20 +161,34 @@ class NavigationManager:
 
         screen = back_screens.get(previous_state)
         if screen:
-            try:
-                await query.edit_message_text(
-                    screen["text"],
+            is_current_photo = bool(query.message and query.message.photo)
+            chat_id = query.message.chat_id if query.message else None
+
+            if is_current_photo and chat_id:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=screen["text"],
                     parse_mode="HTML",
                     reply_markup=screen["keyboard"],
                 )
-            except Exception:
-                # Si le message source était une photo ou non éditable en texte
-                if query.message:
-                    await query.message.reply_text(
+            else:
+                try:
+                    await query.edit_message_text(
                         screen["text"],
                         parse_mode="HTML",
                         reply_markup=screen["keyboard"],
                     )
+                except Exception:
+                    if query.message:
+                        await query.message.reply_text(
+                            screen["text"],
+                            parse_mode="HTML",
+                            reply_markup=screen["keyboard"],
+                        )
             return previous_state
 
         return current_state
@@ -226,6 +247,7 @@ class NavigationManager:
     async def handle_cancel(self, query, context):
         """Nettoie le contexte et clôt le ConversationHandler."""
         context.user_data.pop("demande", None)
+        context.user_data.pop("user_id", None)
         await query.edit_message_text(
             "❌ <b>Création de demande annulée</b>\n\n"
             "Tapez /start pour revenir au menu principal.",

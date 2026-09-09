@@ -16,19 +16,20 @@ class ValidationError(Exception):
 
 def convert_utc_to_paris(utc_datetime) -> datetime:
     """Convertit un datetime (ou chaîne ISO/SQL) UTC vers le fuseau horaire Europe/Paris."""
+    paris_tz = pytz.timezone("Europe/Paris")
     if utc_datetime is None:
-        return datetime.now(pytz.timezone("Europe/Paris"))
+        return datetime.now(paris_tz)
 
     if isinstance(utc_datetime, str):
+        cleaned = utc_datetime.replace("T", " ").replace("Z", "")
         try:
-            utc_datetime = datetime.fromisoformat(utc_datetime)
+            utc_datetime = datetime.fromisoformat(cleaned)
         except ValueError:
             try:
-                utc_datetime = datetime.strptime(utc_datetime[:19], "%Y-%m-%d %H:%M:%S")
+                utc_datetime = datetime.strptime(cleaned[:19], "%Y-%m-%d %H:%M:%S")
             except Exception:
-                return datetime.now(pytz.timezone("Europe/Paris"))
+                return datetime.now(paris_tz)
 
-    paris_tz = pytz.timezone("Europe/Paris")
     if utc_datetime.tzinfo is None:
         utc_datetime = pytz.utc.localize(utc_datetime)
 
@@ -51,19 +52,19 @@ class Validators:
 
     @staticmethod
     def validate_amount(amount_str: str) -> float:
-        """Valide le montant des demandes prioritaires (entre 5€ et 10 000€)."""
+        """Valide le montant des demandes prioritaires (entre 5 € et 10 000 €)."""
         try:
-            amount_str = amount_str.replace(",", ".").strip()
-            amount = float(amount_str)
+            amount_clean = amount_str.replace(",", ".").strip()
+            amount = float(amount_clean)
 
             if amount < 5.0:
-                raise ValidationError("Le montant minimum pour une demande prioritaire est de 5€.")
+                raise ValidationError("Le montant minimum pour une demande prioritaire est de 5 €.")
             if amount > 10000.0:
-                raise ValidationError("Le montant maximum autorisé est de 10 000€.")
+                raise ValidationError("Le montant maximum autorisé est de 10 000 €.")
 
             return round(amount, 2)
         except ValueError:
-            raise ValidationError("Format de montant invalide (ex: 15 ou 25.50).")
+            raise ValidationError("Format de montant invalide (ex : 15 ou 25.50).")
 
     @staticmethod
     def validate_instagram(username: str) -> Optional[str]:
@@ -195,24 +196,23 @@ class Validators:
     def validate_alias_uniqueness(db_manager, alias: str, exclude_user_id: int = None) -> Tuple[bool, str]:
         """Contrôle l'unicité de l'alias contre la table admins et la table config (owner)."""
         try:
-            # Vérification contre l'alias propriétaire en table config
+            clean_alias = alias.strip()
             owner_alias = db_manager.get_config_value("owner_alias", "Propriétaire")
-            if owner_alias and owner_alias.lower() == alias.strip().lower():
-                owner_id = db_manager.get_owner_id()
-                if not (exclude_user_id and exclude_user_id == owner_id):
+            if owner_alias and owner_alias.lower() == clean_alias.lower():
+                owner_id = int(db_manager.get_owner_id())
+                if not (exclude_user_id and int(exclude_user_id) == owner_id):
                     return False, "Cet alias est réservé au compte propriétaire."
 
-            # Vérification dans la table admins
             with db_manager.get_cursor() as cursor:
                 if exclude_user_id:
                     cursor.execute(
                         "SELECT user_id FROM admins WHERE LOWER(alias) = LOWER(%s) AND user_id != %s",
-                        (alias.strip(), exclude_user_id),
+                        (clean_alias, int(exclude_user_id)),
                     )
                 else:
                     cursor.execute(
                         "SELECT user_id FROM admins WHERE LOWER(alias) = LOWER(%s)",
-                        (alias.strip(),),
+                        (clean_alias,),
                     )
 
                 if cursor.fetchone():
@@ -220,7 +220,7 @@ class Validators:
 
             return True, ""
         except Exception as exc:
-            logger.error("Erreur contrôle unicité alias: %s", exc)
+            logger.error("Erreur contrôle unicité alias : %s", exc)
             return False, "Erreur technique lors de la vérification de l'alias."
 
     @staticmethod
@@ -262,7 +262,7 @@ class Validators:
             ),
             "montant": (
                 "<b>Règles pour le montant :</b>\n"
-                "• Minimum 5€, maximum 10 000€\n"
+                "• Minimum 5 €, maximum 10 000 €\n"
                 "• Format numérique (ex : 20 ou 15.50)"
             ),
             "instagram": (

@@ -134,7 +134,6 @@ class InterfaceManager:
                         f"  🛡️ <i>Accès : {res_label} | {type_label}</i>\n\n"
                     )
 
-                    # Deux boutons par administrateur : Droits & Profil
                     keyboard.append([
                         InlineKeyboardButton(f"🛡️ Droits : {admin['alias']}", callback_data=f"perm_admin_{admin['user_id']}"),
                         InlineKeyboardButton("📊 Stats", callback_data=f"profil_admin_{admin['user_id']}")
@@ -239,9 +238,14 @@ class InterfaceManager:
 
     def _get_user_role(self, user_id: int) -> str:
         """Détermine le rôle de l'utilisateur."""
-        if self.config.is_owner(user_id):
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return "user"
+
+        if self.config.is_owner(uid):
             return "owner"
-        if self.config.is_admin(user_id):
+        if self.config.is_admin(uid):
             return "admin"
         return "user"
 

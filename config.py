@@ -1,3 +1,5 @@
+"""Configuration centralisée avec synchronisation base de données et cache."""
+
 import logging
 import os
 import threading
@@ -15,7 +17,7 @@ class Config:
         self._setup_basic_config()
         self._setup_database_config()
         self._setup_cache_system()
-        self._setup_limits_and_paths()
+        self._setup_paths()
 
     def _validate_required_env_vars(self):
         """Valide la présence des variables d'environnement critiques."""
@@ -45,7 +47,7 @@ class Config:
         self._admin_cache_lock = threading.Lock()
 
     def _setup_database_config(self):
-        """Configuration de la connexion MySQL."""
+        """Configuration de connexion pour DatabaseManager."""
         port_str = os.getenv('DB_PORT', '3306')
         port = int(port_str) if port_str.isdigit() else 3306
 
@@ -55,15 +57,12 @@ class Config:
             'user': os.getenv('DB_USER'),
             'password': os.getenv('DB_PASSWORD'),
             'database': os.getenv('DB_NAME'),
-            'autocommit': True,
-            'connect_timeout': 5,
+            'connect_timeout': 10,
             'charset': 'utf8mb4'
         }
 
-    def _setup_limits_and_paths(self):
-        """Configuration des chemins et limites opérationnelles."""
-        self.MAX_STORAGE_MB = 400
-        self.CACHE_TIMEOUT = 300
+    def _setup_paths(self):
+        """Initialise les dossiers système."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.LOG_DIR = os.path.join(base_dir, "logs")
         os.makedirs(self.LOG_DIR, exist_ok=True)
@@ -87,11 +86,15 @@ class Config:
         except Exception as e:
             logger.error("Erreur chargement owner alias: %s", e)
 
-    def load_admins(self, db_manager):
+    def load_admins(self, db_manager=None):
         """Charge la liste des administrateurs depuis MySQL."""
+        mgr = db_manager or self._db_manager
+        if not mgr:
+            return
+
         with self._admin_cache_lock:
             try:
-                with db_manager.get_cursor() as cursor:
+                with mgr.get_cursor() as cursor:
                     cursor.execute("SELECT user_id FROM admins")
                     rows = cursor.fetchall()
 
@@ -104,16 +107,23 @@ class Config:
 
                     self.admin_ids = new_admins
                     self._admin_cache_loaded = True
-                    logger.info("Cache admin rechargé : %s administrateurs", len(self.admin_ids))
+                    logger.info("Cache admin rechargé : %d administrateurs", len(self.admin_ids))
 
             except Exception as e:
                 logger.error("Erreur critique load_admins : %s", e)
                 self.admin_ids = set()
                 self._admin_cache_loaded = False
 
+    def reload_admins(self):
+        """Recharge les administrateurs à chaud."""
+        self.load_admins(self._db_manager)
+
     def is_owner(self, user_id):
         """Vérifie si l'utilisateur est le propriétaire."""
-        return int(user_id) == self.OWNER_ID
+        try:
+            return int(user_id) == self.OWNER_ID
+        except (ValueError, TypeError):
+            return False
 
     def is_admin(self, user_id, secure_mode=False):
         """Vérifie si l'utilisateur possède les privilèges d'administration."""
@@ -133,7 +143,7 @@ class Config:
 
         return user_id_int in self.admin_ids
 
-    def _verify_admin_hybrid(self, user_id_int):
+    def _verify_admin_hybrid(self, user_id_int: int):
         """Contrôle en cache puis fallback direct en base."""
         if user_id_int in self.admin_ids:
             return True
@@ -159,16 +169,18 @@ class Config:
     def add_admin(self, user_id):
         """Ajoute un admin au cache local."""
         with self._admin_cache_lock:
-            self.admin_ids.add(int(user_id))
+            try:
+                self.admin_ids.add(int(user_id))
+            except (ValueError, TypeError):
+                pass
 
     def remove_admin(self, user_id):
         """Retire un admin du cache local."""
         with self._admin_cache_lock:
-            self.admin_ids.discard(int(user_id))
-
-    def reload_admins(self, db_manager):
-        """Recharge les administrateurs à chaud."""
-        self.load_admins(db_manager)
+            try:
+                self.admin_ids.discard(int(user_id))
+            except (ValueError, TypeError):
+                pass
 
     def enable_demandes(self):
         """Active l'acceptation des demandes (synchronisé en base)."""

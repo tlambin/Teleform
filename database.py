@@ -1,9 +1,11 @@
 """Module centralisé de gestion de la base de données MySQL avec pool de connexions et transactions."""
 
 import logging
+import os
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error, pooling
 
@@ -26,9 +28,6 @@ class DatabaseManager:
 
     def _init_connection_pool(self):
         """Initialise le pool de connexions MySQL avec chargement direct du .env."""
-        import os
-        from dotenv import load_dotenv
-
         env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
         if os.path.exists(env_path):
             load_dotenv(dotenv_path=env_path, override=True)
@@ -623,7 +622,7 @@ class DatabaseManager:
         """Calcule l'ensemble des métriques de performance et de charge d'un administrateur ou du propriétaire."""
         try:
             admin_id = int(admin_id)
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
         is_owner = self.config.is_owner(admin_id)
@@ -707,7 +706,7 @@ class DatabaseManager:
         """Calcule le profil statistique complet d'un demandeur avec compatibilité first_name/prenom."""
         try:
             user_id = int(user_id)
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
         stats = {
@@ -727,19 +726,28 @@ class DatabaseManager:
 
         try:
             with self.get_cursor() as cursor:
-                # 1. Infos utilisateur dans la table users (gère first_name ou prenom sans crash)
+                # 1. Résolution stricte de l'utilisateur si demande_id est fourni
+                if demande_id:
+                    cursor.execute("SELECT user_id, prenom, nom, date_creation FROM demandes WHERE id = %s", (demande_id,))
+                    d_origin = cursor.fetchone()
+                    if d_origin and d_origin.get("user_id"):
+                        user_id = int(d_origin["user_id"])
+                        stats["user_id"] = user_id
+                        stats["date_inscription"] = d_origin.get("date_creation")
+
+                # 2. Lecture du profil dans la table users
                 try:
                     cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
                     u_row = cursor.fetchone()
                     if u_row:
                         stats["username"] = u_row.get("username")
                         stats["prenom"] = u_row.get("first_name") or u_row.get("prenom") or "Utilisateur"
-                        stats["date_inscription"] = u_row.get("date_inscription")
+                        stats["date_inscription"] = u_row.get("date_inscription") or stats["date_inscription"]
                         stats["derniere_activite"] = u_row.get("derniere_activite")
                 except Exception as e_user:
-                    logger.debug("Info lecture users: %s", e_user)
+                    logger.debug("Info lecture table users: %s", e_user)
 
-                # 2. Statistiques des demandes actives
+                # 3. Comptabilisation des demandes actives
                 cursor.execute(
                     """
                     SELECT 
@@ -757,7 +765,7 @@ class DatabaseManager:
                 )
                 d_row = cursor.fetchone()
 
-                # 3. Statistiques des archives
+                # 4. Comptabilisation des archives
                 cursor.execute(
                     """
                     SELECT 

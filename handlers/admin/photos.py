@@ -34,9 +34,9 @@ class PhotosManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT d.*, u.username, u.first_name AS user_first_name
+                    SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name
                     FROM demandes d
-                    JOIN users u ON d.user_id = u.user_id
+                    LEFT JOIN users u ON d.user_id = u.user_id
                     WHERE d.id = %s
                     """,
                     (demande_id,),
@@ -44,6 +44,7 @@ class PhotosManager:
                 demande = cursor.fetchone()
 
             if not demande or not demande.get("photo_id"):
+                await query.answer("❌ Aucune photo associée à cette demande.", show_alert=True)
                 return
 
             priorite_icon = "💎" if demande.get("prioritaire") else "📝"
@@ -70,7 +71,6 @@ class PhotosManager:
             caption_lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
             caption = "\n".join(caption_lines)
 
-            # Sécurité limite 1024 caractères Telegram pour les captions
             if len(caption) > 1000:
                 caption = caption[:997] + "..."
 
@@ -78,6 +78,9 @@ class PhotosManager:
                 [
                     InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande['id']}"),
                     InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}")
+                ],
+                [
+                    InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
                 ],
                 [
                     InlineKeyboardButton("📄 Revenir au texte", callback_data=f"retour_texte_{demande['id']}")
@@ -114,9 +117,9 @@ class PhotosManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT d.*, u.username, u.first_name AS user_first_name
+                    SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name
                     FROM demandes d
-                    JOIN users u ON d.user_id = u.user_id
+                    LEFT JOIN users u ON d.user_id = u.user_id
                     WHERE d.id = %s
                     """,
                     (demande_id,),
@@ -162,14 +165,19 @@ class PhotosManager:
                     InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}")
                 ],
                 [
+                    InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
+                ],
+                [
                     InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")
                 ]
             ]
 
-            # Telegram n'autorise pas la conversion directe d'un message photo en message texte pur :
-            # on supprime le message média actuel et on envoie le message texte propre.
             chat_id = query.message.chat_id
-            await query.message.delete()
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="\n".join(lines),

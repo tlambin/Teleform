@@ -1,6 +1,5 @@
 """Routeur principal des actions et callbacks d'administration avec relais groupé."""
 
-import asyncio
 import logging
 from telegram import (
     InlineKeyboardButton,
@@ -139,23 +138,12 @@ class AdminHandlers:
                 )
 
             else:
-                logger.warning("Callback admin non intercepté: %s", data)
+                logger.warning("Callback admin non intercepté : %s", data)
                 await query.answer("Action non reconnue.", show_alert=True)
 
         except Exception as exc:
             logger.error("Erreur callback admin '%s': %s", data, exc, exc_info=True)
             await self._handle_callback_error(query)
-
-    async def _route_suivi_pagination(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        parts = data.split("_")
-        page = 0
-        if len(parts) >= 3 and parts[-1].isdigit():
-            current_idx = int(parts[-1])
-            if "prev" in data:
-                page = max(0, current_idx - 1)
-            elif "next" in data:
-                page = current_idx + 1
-        await self.suivi.show_demandes_suivies_page(update, context, page)
 
     async def _prompt_contact_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Demande d'abord si l'utilisateur doit pouvoir répondre."""

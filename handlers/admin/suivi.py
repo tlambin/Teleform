@@ -51,11 +51,9 @@ class SuiviManager:
         elif data.startswith("suivi_set_sort_"):
             critere = data.replace("suivi_set_sort_", "")
             if settings["sort_by"] == critere:
-                # Alterne l'ordre si on reclique sur le même critère
                 settings["order"] = "ASC" if settings["order"] == "DESC" else "DESC"
             else:
                 settings["sort_by"] = critere
-                # Ordre par défaut selon la nature de la colonne
                 settings["order"] = "ASC" if critere in ("nom", "age", "statut") else "DESC"
             await self.show_sort_menu(update, context)
             return
@@ -233,11 +231,11 @@ class SuiviManager:
             params.extend([pat] * 6)
 
         query_sql = f"""
-            SELECT d.*, u.username, u.first_name AS user_first_name,
-                   ds.date_suivi, ds.notes_admin
+            SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name,
+                   ds.date_suivi
             FROM demandes d
             JOIN demandes_suivi ds ON d.id = ds.demande_id
-            JOIN users u ON d.user_id = u.user_id
+            LEFT JOIN users u ON d.user_id = u.user_id
             WHERE {' AND '.join(sql_where)}
             ORDER BY d.prioritaire DESC, {sort_column} {order}
         """
@@ -311,7 +309,7 @@ class SuiviManager:
                     """
                     INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
                     VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE
+                    ON DUPLICATE KEY UPDATE 
                         admin_id = VALUES(admin_id),
                         derniere_action = NOW(),
                         statut_suivi = 'active'
@@ -320,7 +318,7 @@ class SuiviManager:
                 )
                 cursor.execute(
                     """
-                    UPDATE demandes
+                    UPDATE demandes 
                     SET statut = '🔄 En cours', admin_en_charge = %s, date_modification = NOW()
                     WHERE id = %s
                     """,
@@ -444,7 +442,6 @@ class SuiviManager:
     def _build_suivi_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
         """Clavier avec actions, consultation profil demandeur, pagination et tri."""
         demande_id = demande["id"]
-        demande_user_id = demande["user_id"]
         buttons = []
 
         # Actions principales

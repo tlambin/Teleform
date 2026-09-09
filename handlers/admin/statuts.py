@@ -3,7 +3,6 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from utils.validators import convert_utc_to_paris
 from .alias import AliasManager
 
 logger = logging.getLogger(__name__)
@@ -103,7 +102,7 @@ class StatutsManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT d.*, u.username, u.first_name AS user_first_name
+                    SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name
                     FROM demandes d
                     LEFT JOIN users u ON d.user_id = u.user_id
                     WHERE d.id = %s
@@ -157,7 +156,7 @@ class StatutsManager:
                     (nouveau_statut, admin_id, demande_id),
                 )
 
-                if "En cours" in nouveau_statut or "En attente" in nouveau_statut or "Difficile" in nouveau_statut:
+                if any(k in nouveau_statut for k in ("En cours", "En attente", "Difficile")):
                     cursor.execute(
                         """
                         INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
@@ -222,7 +221,6 @@ class StatutsManager:
                     await update.message.reply_text("❌ Demande introuvable.")
                     return
 
-                # Cumul de l'historique si des tentatives existent déjà
                 prev_alias = demande.get("ancien_admin_alias")
                 prev_raison = demande.get("raison_abandon")
 
@@ -233,7 +231,6 @@ class StatutsManager:
                     nouvel_alias_str = admin_alias
                     nouvelle_raison_str = f"• <b>{admin_alias} :</b> « <i>{raison}</i> »"
 
-                # Mise à jour cumulative en base
                 cursor.execute(
                     """
                     UPDATE demandes 
@@ -246,13 +243,11 @@ class StatutsManager:
                     """,
                     (admin_id, nouvel_alias_str, nouvelle_raison_str, demande_id)
                 )
-                # Retrait de la file active de cet administrateur
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
 
             user_id_demande = demande["user_id"]
             req_num = demande.get("request_number", demande_id)
 
-            # Notification au demandeur avec le motif actuel
             abandon_keyboard = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton("🔄 Remettre en disponible", callback_data=f"reprendre_demande_{demande_id}")
@@ -282,13 +277,12 @@ class StatutsManager:
             except Exception as notif_exc:
                 logger.warning("Échec envoi motif abandon à %s: %s", user_id_demande, notif_exc)
 
-            # Confirmation à l'admin
             back_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("📋 Retour aux demandes suivies", callback_data="demandes_suivies")
             ]])
             await update.message.reply_text(
                 f"✅ <b>Demande #{req_num} passée en statut ❌ Abandonnée.</b>\n\n"
-                f"Le demandeur a été notifié avec votre motif.",
+                "Le demandeur a été notifié avec votre motif.",
                 parse_mode="HTML",
                 reply_markup=back_kb
             )
@@ -315,7 +309,6 @@ class StatutsManager:
             f"🙋 <b>Demandeur :</b> {user_display}",
         ]
 
-        # Encart d'historique cumulé si des tentatives précédentes existent
         if demande.get("raison_abandon"):
             lines.append(
                 f"\n⚠️ <b>HISTORIQUE - TENTATIVE(S) PRÉCÉDENTE(S) :</b>\n"
@@ -341,6 +334,9 @@ class StatutsManager:
             [
                 InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande['id']}"),
                 InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
+            ],
+            [
+                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
             ],
             [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")],
         ]
@@ -370,7 +366,7 @@ class StatutsManager:
 
         if demande.get("raison_abandon"):
             caption_lines.append(
-                f"⚠️ <b>Relancée après tentative(s) sans suite</b>"
+                "⚠️ <b>Relancée après tentative(s) sans suite</b>"
             )
 
         caption = "\n".join(caption_lines)
@@ -379,6 +375,9 @@ class StatutsManager:
             [
                 InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
                 InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
+            ],
+            [
+                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
             ],
             [InlineKeyboardButton("📄 Mode Texte", callback_data=f"retour_texte_{demande['id']}")],
         ])

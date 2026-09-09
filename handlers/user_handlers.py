@@ -1,3 +1,5 @@
+"""Module principal de gestion des interactions utilisateurs et demandeurs."""
+
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -11,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 class UserHandlers:
+    """Gestionnaire des routes utilisateurs, formulaires et relais de réponses."""
+
     def __init__(self, config, db_manager):
         self.config = config
         self.db_manager = db_manager
@@ -20,8 +24,18 @@ class UserHandlers:
         self.formulaire = FormulaireManager(db_manager, config, self.compte)
         self.demande = DemandeManager(db_manager, config, self.compte)
         self.edition = EditionManager(db_manager, config)
+        self._admin_handlers = None
+
+    @property
+    def admin_handlers(self):
+        """Lazy-loading du gestionnaire admin pour éviter les instanciations circulaires et répétitives."""
+        if self._admin_handlers is None:
+            from handlers.admin_handlers import AdminHandlers
+            self._admin_handlers = AdminHandlers(self.config, self.db_manager)
+        return self._admin_handlers
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Point d'entrée commande /start."""
         if not update.effective_user or not update.message:
             return
 
@@ -39,6 +53,7 @@ class UserHandlers:
         )
 
     async def handle_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Aiguillage des callbacks d'actions utilisateur."""
         query = update.callback_query
         if not query or not query.data:
             return
@@ -66,7 +81,7 @@ class UserHandlers:
                 await query.answer(clean_reason, show_alert=True)
                 return
 
-            # 3. Tentative de création d'une nouvelle demande (contrôle des quotas)
+            # 3. Création d'une nouvelle demande (contrôle des quotas)
             elif data == "new_demande":
                 can_create, reason_msg = self.demande.check_creation_quota(query.from_user.id)
                 if not can_create:
@@ -78,10 +93,9 @@ class UserHandlers:
                         ]),
                     )
                     return
-                # Lancement du formulaire
                 await self.formulaire.navigation.handle_form_navigation(update, context)
 
-            # 4. Choix demandeur : Reprise suite à un abandon admin (remise en file disponible)
+            # 4. Reprise suite à abandon admin (remise en file disponible)
             elif data.startswith("reprendre_demande_"):
                 demande_id = int(data.replace("reprendre_demande_", ""))
                 user_id = query.from_user.id
@@ -111,7 +125,7 @@ class UserHandlers:
                     await query.answer("❌ Erreur technique lors de la remise en file d'attente.", show_alert=True)
                 return
 
-            # 5. Choix demandeur : Archivage définitif (libère le quota)
+            # 5. Archivage définitif par le demandeur
             elif data.startswith("archiver_demande_"):
                 demande_id = int(data.replace("archiver_demande_", ""))
                 user_id = query.from_user.id
@@ -209,7 +223,7 @@ class UserHandlers:
             )
 
     async def handle_interface_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Routeur des boutons de navigation générale (menus, paramètres, panneaux)."""
+        """Routeur des boutons de navigation générale."""
         query = update.callback_query
         if not query or not query.data:
             return
@@ -219,7 +233,6 @@ class UserHandlers:
         first_name = query.from_user.first_name
         data = query.data
 
-        # Contrôles de sécurité
         owner_actions = {
             "gerer_admins", "admin_ajouter", "admin_supprimer",
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance",
@@ -241,7 +254,6 @@ class UserHandlers:
             await self.demande.voir_demandes(update, context)
             return
 
-        # Affichage du menu Quotas & Limites
         if data == "menu_limits":
             msg, kb = self.interface.get_limits_menu()
             if query.message and query.message.photo:
@@ -251,7 +263,6 @@ class UserHandlers:
                 await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
             return
 
-        # Traitement des boutons d'ajustement des quotas
         if data.startswith("limit_"):
             tot = self.config.get_max_total_demandes()
             usr = self.config.get_max_demandes_per_user()
@@ -288,7 +299,6 @@ class UserHandlers:
                 )
                 return
 
-            # Rafraîchissement avec les nouvelles valeurs
             msg, kb = self.interface.get_limits_menu()
             await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
             return
@@ -314,11 +324,11 @@ class UserHandlers:
             await query.answer("❌ Action indisponible.", show_alert=True)
 
     async def handle_text_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Aiguillage des messages (texte et médias) hors commandes."""
+        """Aiguillage central des messages texte et médias hors commandes."""
         if not update.message:
             return
 
-        # Saisie d'un quota au clavier par le propriétaire
+        # Saisie d'un quota par le propriétaire
         if update.message.text and context.user_data and context.user_data.get("waiting_limit_input"):
             if self.config.is_owner(update.effective_user.id):
                 raw = update.message.text.strip()
@@ -343,30 +353,22 @@ class UserHandlers:
 
         # Saisie de la raison d'abandon par un admin
         if update.message.text and context.user_data and context.user_data.get("waiting_abandon_reason"):
-            from handlers.admin_handlers import AdminHandlers
-            admin_h = AdminHandlers(self.config, self.db_manager)
-            await admin_h.statuts.process_abandon_reason(update, context)
+            await self.admin_handlers.statuts.process_abandon_reason(update, context)
             return
 
-        # Saisie de recherche dynamique dans les demandes disponibles
+        # Recherche dynamique dans les demandes disponibles
         if update.message.text and context.user_data and context.user_data.get("waiting_dispo_search"):
-            from handlers.admin_handlers import AdminHandlers
-            admin_h = AdminHandlers(self.config, self.db_manager)
-            await admin_h.dispo.handle_search_text_input(update, context)
+            await self.admin_handlers.dispo.handle_search_text_input(update, context)
             return
 
-        # Saisie de recherche dynamique dans les demandes suivies
+        # Recherche dynamique dans les demandes suivies
         if update.message.text and context.user_data and context.user_data.get("waiting_suivi_search"):
-            from handlers.admin_handlers import AdminHandlers
-            admin_h = AdminHandlers(self.config, self.db_manager)
-            await admin_h.suivi.handle_search_text_input(update, context)
+            await self.admin_handlers.suivi.handle_search_text_input(update, context)
             return
 
         # Collecte des fichiers/messages de l'Admin en cours d'envoi
         if context.user_data and context.user_data.get("contact_session"):
-            from handlers.admin_handlers import AdminHandlers
-            admin_h = AdminHandlers(self.config, self.db_manager)
-            if await admin_h.handle_collect_admin_media(update, context):
+            if await self.admin_handlers.handle_collect_admin_media(update, context):
                 return
 
         # Réponse du Demandeur vers l'Admin
@@ -402,21 +404,29 @@ class UserHandlers:
             InlineKeyboardButton("📄 Voir la fiche", callback_data=f"retour_texte_{demande_id}")
         ]])
 
-        try:
-            caption_text = (
-                f"📩 <b>Réponse du demandeur (Demande #{demande_id})</b>\n"
-                f"De : {user_label}"
-                f"{corps}"
-            )
+        header_text = (
+            f"📩 <b>Réponse du demandeur (Demande #{demande_id})</b>\n"
+            f"De : {user_label}"
+            f"{corps}"
+        )
 
-            await context.bot.copy_message(
-                chat_id=admin_id,
-                from_chat_id=msg.chat_id,
-                message_id=msg.message_id,
-                caption=caption_text,
-                parse_mode="HTML",
-                reply_markup=admin_keyboard,
-            )
+        try:
+            if msg.photo or msg.video or msg.document:
+                await context.bot.copy_message(
+                    chat_id=admin_id,
+                    from_chat_id=msg.chat_id,
+                    message_id=msg.message_id,
+                    caption=header_text,
+                    parse_mode="HTML",
+                    reply_markup=admin_keyboard,
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=header_text,
+                    parse_mode="HTML",
+                    reply_markup=admin_keyboard,
+                )
 
             await msg.reply_text(
                 "✅ <b>Votre réponse a été transmise à l'administrateur !</b>",
@@ -431,9 +441,11 @@ class UserHandlers:
             await msg.reply_text("❌ Une erreur est survenue lors de la transmission de votre message.")
 
     async def voir_demandes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Redirige vers l'affichage des demandes du client."""
         await self.demande.voir_demandes(update, context)
 
     async def _handle_cancel_demande_placeholder(self, update: Update, data: str):
+        """Vue temporaire d'annulation de demande."""
         query = update.callback_query
         if not query:
             return

@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 class DemandeManager:
     """Gestionnaire d'affichage, de navigation et de vérification des quotas."""
 
+    ACTIVE_STATUSES = ("📨 Reçue", "⏳ En attente", "🔄 En cours", "⚠️ Difficile")
+
     def __init__(self, db_manager, config, account_manager):
         self.db_manager = db_manager
         self.config = config
@@ -18,15 +20,17 @@ class DemandeManager:
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
         """Contrôle les plafonds global et individuel avant création."""
-        # Statuts considérés comme "en cours" (occupant une place de quota)
-        active_statuses = ("'📨 Reçue'", "'⏳ En attente'", "'🔄 En cours'", "'⚠️ Difficile'")
-        status_filter = f"statut IN ({', '.join(active_statuses)})"
+        placeholders = ", ".join(["%s"] * len(self.ACTIVE_STATUSES))
+        status_filter = f"statut IN ({placeholders})"
 
         # 1. Vérification du quota global
         max_total = self.config.get_max_total_demandes()
         if max_total > 0:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute(f"SELECT COUNT(*) AS total FROM demandes WHERE {status_filter}")
+                cursor.execute(
+                    f"SELECT COUNT(*) AS total FROM demandes WHERE {status_filter}",
+                    self.ACTIVE_STATUSES
+                )
                 row = cursor.fetchone()
                 total_actif = row["total"] if row else 0
 
@@ -43,7 +47,7 @@ class DemandeManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     f"SELECT COUNT(*) AS count_user FROM demandes WHERE user_id = %s AND {status_filter}",
-                    (user_id,)
+                    (int(user_id), *self.ACTIVE_STATUSES)
                 )
                 row = cursor.fetchone()
                 user_actif = row["count_user"] if row else 0
@@ -105,7 +109,7 @@ class DemandeManager:
                     WHERE user_id = %s
                     ORDER BY id DESC
                     """,
-                    (user_id,),
+                    (int(user_id),),
                 )
                 demandes = cursor.fetchall()
 
@@ -121,12 +125,27 @@ class DemandeManager:
             keyboard = self._build_navigation_keyboard(demande, page, total_pages, user_id)
 
             if edit_message and update.callback_query:
-                await update.callback_query.edit_message_text(
-                    message,
-                    parse_mode="HTML",
-                    reply_markup=keyboard,
-                    disable_web_page_preview=True
-                )
+                query = update.callback_query
+                if query.message and query.message.photo:
+                    chat_id = query.message.chat_id
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True,
+                    )
+                else:
+                    await query.edit_message_text(
+                        message,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True,
+                    )
             else:
                 target = update.message or (update.callback_query.message if update.callback_query else None)
                 if target:
@@ -134,7 +153,7 @@ class DemandeManager:
                         message,
                         parse_mode="HTML",
                         reply_markup=keyboard,
-                        disable_web_page_preview=True
+                        disable_web_page_preview=True,
                     )
 
         except Exception as exc:
@@ -144,7 +163,7 @@ class DemandeManager:
     def _format_demande_card(self, demande: dict, current_page: int, total_pages: int) -> str:
         """Met en forme la fiche d'une demande."""
         type_badge = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
-        montant_str = f" - <b>{float(demande['montant']):.2f}€</b>" if demande.get("prioritaire") else ""
+        montant_str = f" - <b>{float(demande['montant']):.2f} €</b>" if demande.get("prioritaire") else ""
         nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
 
         lignes = [
@@ -231,7 +250,15 @@ class DemandeManager:
         ])
 
         if edit_message and update.callback_query:
-            await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+            query = update.callback_query
+            if query.message and query.message.photo:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await update.effective_chat.send_message(text, parse_mode="HTML", reply_markup=keyboard)
+            else:
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
         else:
             target = update.message or (update.callback_query.message if update.callback_query else None)
             if target:
@@ -244,7 +271,15 @@ class DemandeManager:
             [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
         ])
         if edit_message and update.callback_query:
-            await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+            query = update.callback_query
+            if query.message and query.message.photo:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await update.effective_chat.send_message(text, parse_mode="HTML", reply_markup=keyboard)
+            else:
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
         else:
             target = update.message or (update.callback_query.message if update.callback_query else None)
             if target:

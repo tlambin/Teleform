@@ -288,9 +288,9 @@ class DispoManager:
             params.extend([pattern] * 6)
 
         query_sql = f"""
-            SELECT d.*, u.username, u.first_name AS user_first_name
+            SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name
             FROM demandes d
-            JOIN users u ON d.user_id = u.user_id
+            LEFT JOIN users u ON d.user_id = u.user_id
             LEFT JOIN demandes_suivi ds ON d.id = ds.demande_id AND ds.admin_id = %s
             WHERE {' AND '.join(sql_where)}
             ORDER BY d.prioritaire DESC, d.date_creation DESC
@@ -458,7 +458,6 @@ class DispoManager:
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
         """Construit le clavier d'actions enrichi avec Filtres, Aléatoire et Profil Demandeur."""
         demande_id = demande["id"]
-        demande_user_id = demande["user_id"]
         buttons = []
 
         # 1. Action directe

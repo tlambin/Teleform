@@ -3,7 +3,7 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
-from utils.validators import ValidationError, Validators, convert_utc_to_paris
+from utils.validators import convert_utc_to_paris
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,12 @@ class AdminManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT a.user_id, a.alias, a.first_name, a.username, a.date_added,
-                           u.first_name AS nom_ajouteur
+                    SELECT a.user_id, a.alias, a.date_added,
+                           u.first_name, u.username,
+                           ua.first_name AS nom_ajouteur
                     FROM admins a
-                    LEFT JOIN users u ON a.added_by = u.user_id
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    LEFT JOIN users ua ON a.added_by = ua.user_id
                     ORDER BY a.date_added ASC
                     """
                 )
@@ -57,10 +59,14 @@ class AdminManager:
 
             lines = [f"👥 <b>Équipe d'administration</b> ({len(admins)})\n"]
             for adm in admins:
-                pseudo = f"@{adm['username']}" if adm.get("username") else adm.get("first_name", "")
-                date_paris = convert_utc_to_paris(adm["date_added"])
-                date_str = date_paris.strftime("%d/%m/%Y à %H:%M")
-                par_qui = adm.get("nom_ajouteur") or "Système"
+                pseudo = f"@{adm['username']}" if adm.get("username") else (adm.get("first_name") or "")
+                dt_added = adm.get("date_added")
+                if dt_added:
+                    date_paris = convert_utc_to_paris(dt_added)
+                    date_str = date_paris.strftime("%d/%m/%Y à %H:%M")
+                else:
+                    date_str = "Inconnue"
+                par_qui = adm.get("nom_ajouteur") or "Propriétaire"
 
                 lines.append(
                     f"• <b>{adm['alias']}</b> ({pseudo})\n"
@@ -133,7 +139,7 @@ class AdminManager:
                 )
                 return self.WAITING_ADMIN_ID
 
-            target_id = user_data["user_id"]
+            target_id = int(user_data["user_id"])
 
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute("SELECT alias FROM admins WHERE user_id = %s", (target_id,))
@@ -146,16 +152,40 @@ class AdminManager:
 
                 cursor.execute(
                     """
-                    INSERT INTO admins (user_id, alias, first_name, username, date_added, added_by)
-                    VALUES (%s, %s, %s, %s, NOW(), %s)
+                    INSERT INTO admins (user_id, alias, added_by, perm_reseaux, perm_type, alias_locked, date_added)
+                    VALUES (%s, %s, %s, 'all', 'all', FALSE, NOW())
                     """,
-                    (target_id, alias, user_data.get("first_name", ""), user_data.get("username", ""), user.id)
+                    (target_id, alias, user.id)
                 )
 
             self.config.add_admin(target_id)
             logger.info("Admin promu: %s (%s) par le propriétaire", target_id, alias)
 
+            # Notification à l'administrateur promu
+            try:
+                welcome_msg = (
+                    "🎉 <b>Bienvenue dans l'équipe d'administration !</b>\n\n"
+                    "Le propriétaire vous a accordé les droits d'accès pour traiter et suivre les demandes.\n\n"
+                    f"🏷️ <b>Votre alias provisoire :</b> <code>{alias}</code>\n\n"
+                    "⚠️ <b>Important :</b> Vous avez la possibilité de choisir votre propre pseudonyme officiel.\n"
+                    "<i>Attention : vous ne disposez que d'<b>une seule modification</b>. Une fois validé, il sera verrouillé.</i>\n\n"
+                    "Cliquez ci-dessous pour le définir dès maintenant :"
+                )
+                welcome_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🏷️ DÉFINIR MON ALIAS", callback_data="modifier_alias")],
+                    [InlineKeyboardButton("🚀 Accéder au menu principal", callback_data="start_menu")]
+                ])
+                await context.bot.send_message(
+                    chat_id=target_id,
+                    text=welcome_msg,
+                    parse_mode="HTML",
+                    reply_markup=welcome_kb
+                )
+            except Exception as notif_err:
+                logger.warning("Impossible de notifier le nouvel admin %s : %s", target_id, notif_err)
+
             keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛡️ Configurer ses droits", callback_data=f"perm_admin_{target_id}")],
                 [InlineKeyboardButton("👥 Gestion Admins", callback_data="gerer_admins")],
                 [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ])
@@ -194,10 +224,11 @@ class AdminManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT user_id, alias, first_name, username, date_added
-                    FROM admins
-                    WHERE user_id != %s
-                    ORDER BY date_added DESC
+                    SELECT a.user_id, a.alias, a.date_added, u.first_name, u.username
+                    FROM admins a
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    WHERE a.user_id != %s
+                    ORDER BY a.date_added DESC
                     """,
                     (user.id,)
                 )
@@ -219,7 +250,7 @@ class AdminManager:
                 f"Administrateurs en service : <b>{len(admins)}</b>\n"
             ]
             for idx, adm in enumerate(admins, 1):
-                pseudo = f"@{adm['username']}" if adm.get("username") else adm.get("first_name", "")
+                pseudo = f"@{adm['username']}" if adm.get("username") else (adm.get("first_name") or "")
                 date_str = str(adm.get("date_added", ""))[:10]
                 lines.append(f"{idx}. <b>{adm['alias']}</b> ({pseudo}) — ID: <code>{adm['user_id']}</code> [{date_str}]")
 
@@ -268,7 +299,7 @@ class AdminManager:
             ]
         ])
 
-        pseudo = f"@{selected['username']}" if selected.get("username") else selected.get("first_name", "")
+        pseudo = f"@{selected['username']}" if selected.get("username") else (selected.get("first_name") or "")
         await update.message.reply_text(
             f"⚠️ <b>Confirmation de révocation</b>\n\n"
             f"Êtes-vous certain de vouloir retirer les accès administrateur à :\n"
@@ -294,7 +325,7 @@ class AdminManager:
             await query.edit_message_text("❌ Erreur : aucun administrateur sélectionné.")
             return ConversationHandler.END
 
-        target_id = selected["user_id"]
+        target_id = int(selected["user_id"])
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute("DELETE FROM admins WHERE user_id = %s", (target_id,))

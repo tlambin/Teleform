@@ -13,7 +13,9 @@ import psutil
 # Détection dynamique de l'emplacement du projet
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
-LOG_FILE = "/tmp/bot_output.log"
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, "bot.log")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("ManageBot")
@@ -65,7 +67,7 @@ def start_bot():
                 stdout=out_file,
                 stderr=subprocess.STDOUT,
                 cwd=BASE_DIR,
-                preexec_fn=os.setsid,  # Isole le processus dans sa propre session
+                preexec_fn=os.setsid,  # Isole le processus dans son propre groupe
             )
 
         print(f"🚀 Bot démarré avec le PID : {process.pid}")
@@ -77,14 +79,14 @@ def start_bot():
             print("✅ Bot actif et opérationnel.")
         else:
             print("⚠️ Échec potentiel lors du démarrage. Consultez les logs :")
-            print(f"   tail -n 20 {LOG_FILE}")
+            print(f"    tail -n 25 {LOG_FILE}")
 
     except Exception as exc:
         print(f"❌ Erreur lors du lancement : {exc}")
 
 
 def stop_bot():
-    """Arrête proprement le processus du bot par SIGTERM puis SIGKILL si nécessaire."""
+    """Arrête proprement le processus du bot et son groupe par SIGTERM puis SIGKILL."""
     status = get_bot_status()
     if not status.get("running"):
         print("⚠️ Aucun processus du bot n'est actuellement en cours.")
@@ -94,16 +96,27 @@ def stop_bot():
     print(f"🛑 Arrêt du bot (PID {pid})...")
 
     try:
-        os.kill(pid, signal.SIGTERM)
+        # Envoi de SIGTERM au groupe de processus complet
+        try:
+            pgid = os.getpgid(pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except Exception:
+            os.kill(pid, signal.SIGTERM)
+
         for _ in range(10):
             time.sleep(0.5)
             if not psutil.pid_exists(pid):
                 print("✅ Bot arrêté avec succès.")
                 return
 
-        # Forçage si le processus ne répond pas au signal d'arrêt gracieux
+        # Forçage si le processus ne répond pas au signal gracieux
         print("⚠️ Le processus ne répond pas, envoi de SIGKILL...")
-        os.kill(pid, signal.SIGKILL)
+        try:
+            pgid = os.getpgid(pid)
+            os.killpg(pgid, signal.SIGKILL)
+        except Exception:
+            os.kill(pid, signal.SIGKILL)
+
         time.sleep(1)
         print("✅ Processus arrêté de force.")
 
@@ -140,9 +153,26 @@ def show_status():
         print("🔴 Statut : ARRÊTÉ")
 
 
+def view_logs(lines: int = 30, follow: bool = False):
+    """Affiche les logs d'exécution du bot."""
+    if not os.path.exists(LOG_FILE):
+        print(f"⚠️ Aucun fichier de log trouvé à l'emplacement : {LOG_FILE}")
+        return
+
+    cmd = ["tail", f"-n{lines}"]
+    if follow:
+        cmd.append("-f")
+    cmd.append(LOG_FILE)
+
+    try:
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.executable} manage_bot.py [start|stop|restart|status]")
+        print(f"Usage: {sys.executable} manage_bot.py [start|stop|restart|status|logs]")
         return
 
     command = sys.argv[1].lower()
@@ -154,9 +184,12 @@ def main():
         restart_bot()
     elif command == "status":
         show_status()
+    elif command == "logs":
+        follow = "-f" in sys.argv or "--follow" in sys.argv
+        view_logs(lines=30, follow=follow)
     else:
         print(f"❌ Commande '{command}' non reconnue.")
-        print("Commandes valides : start, stop, restart, status")
+        print("Commandes valides : start, stop, restart, status, logs")
 
 
 if __name__ == "__main__":

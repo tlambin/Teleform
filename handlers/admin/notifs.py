@@ -128,7 +128,10 @@ class NotifsManager:
     async def handle_callback_routing(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Aiguillage des clics sur les préférences."""
         query = update.callback_query
-        user_id = update.effective_user.id
+        if not query or not update.effective_user:
+            return
+
+        user_id = int(update.effective_user.id)
 
         if data == "pref_new_sound":
             self.db_manager.update_admin_preference(user_id, "notif_new_mode", "sound")

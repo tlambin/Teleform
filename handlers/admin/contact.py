@@ -45,7 +45,17 @@ class ContactManager:
             InlineKeyboardButton("❌ Annuler", callback_data="cancel_contact_owner")
         ]])
 
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        if query.message and query.message.photo:
+            await query.message.delete()
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+        else:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
         return self.WAITING_ADMIN_MSG
 
     async def send_to_owner(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -56,7 +66,11 @@ class ContactManager:
 
         admin_id = update.effective_user.id
         admin_alias = self.db_manager.get_admin_alias(admin_id)
-        owner_id = self.config.OWNER_ID or self.db_manager.get_owner_id()
+
+        try:
+            owner_id = int(self.config.OWNER_ID or self.db_manager.get_owner_id())
+        except (ValueError, TypeError):
+            owner_id = 0
 
         if not owner_id:
             await msg.reply_text("❌ Le propriétaire n'est pas configuré sur le bot.")
@@ -135,9 +149,14 @@ class ContactManager:
             return ConversationHandler.END
 
         await query.answer()
-        target_admin_id = int(query.data.replace("owner_reply_to_", ""))
-        context.user_data["target_admin_reply_id"] = target_admin_id
 
+        try:
+            target_admin_id = int(query.data.replace("owner_reply_to_", ""))
+        except (ValueError, TypeError):
+            await query.answer("❌ ID d'administrateur invalide.", show_alert=True)
+            return ConversationHandler.END
+
+        context.user_data["target_admin_reply_id"] = target_admin_id
         admin_alias = self.db_manager.get_admin_alias(target_admin_id)
 
         text = (
