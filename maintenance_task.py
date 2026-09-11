@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
-"""Tâche planifiée PythonAnywhere : maintenance, keep-alive et surveillance disque."""
+"""Tâche planifiée PythonAnywhere : maintenance stockage et optimisation base de données."""
 
 import logging
 from logging.handlers import RotatingFileHandler
 import os
-import signal
 import subprocess
 import sys
 import time
-from typing import Optional, Tuple
-import psutil
 
 # Configuration du fuseau horaire
 os.environ["TZ"] = "Europe/Paris"
 if hasattr(time, "tzset"):
     time.tzset()
 
-# Résolution dynamique des chemins
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
-MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
 LOG_FILE = "/tmp/maintenance_task.log"
 
 logging.basicConfig(
@@ -29,60 +24,18 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         RotatingFileHandler(LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=2),
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),
     ],
 )
 logger = logging.getLogger("MaintenanceTask")
 
 
 class UnifiedMaintenance:
-    """Gestionnaire autonome de supervision du processus bot et d'optimisation stockage."""
+    """Gestionnaire d'optimisation stockage et d'entretien base de données."""
 
     def __init__(self, db_manager=None):
-        self.bot_script = MAIN_SCRIPT
         self.maintenance_flag = "/tmp/last_full_maintenance"
         self.db_manager = db_manager
-
-    def is_bot_running(self) -> Tuple[bool, Optional[int], Optional[float]]:
-        """Contrôle si le bot Telegram est en cours d'exécution."""
-        try:
-            current_pid = os.getpid()
-            for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time", "status"]):
-                try:
-                    if proc.info["pid"] == current_pid:
-                        continue
-
-                    # Évite les processus zombies
-                    if proc.info.get("status") == psutil.STATUS_ZOMBIE:
-                        continue
-
-                    cmdline = " ".join(proc.info.get("cmdline") or [])
-                    if self.bot_script in cmdline or ("main.py" in cmdline and BASE_DIR in cmdline):
-                        return True, proc.info["pid"], proc.info["create_time"]
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    continue
-
-            return False, None, None
-        except Exception as exc:
-            logger.error("Erreur inspection processus: %s", exc)
-            return False, None, None
-
-    def start_bot(self) -> bool:
-        """Relance le bot en arrière-plan via sys.executable."""
-        try:
-            log_dest = "/tmp/bot_output.log"
-            cmd = f"nohup {sys.executable} {self.bot_script} >> {log_dest} 2>&1 &"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-
-            if result.returncode == 0:
-                logger.info("✅ Bot relancé avec succès.")
-                return True
-
-            logger.error("❌ Échec relance bot : %s", result.stderr)
-            return False
-        except Exception as exc:
-            logger.error("Exception lors du démarrage du bot : %s", exc)
-            return False
 
     def check_storage_usage(self) -> float:
         """Calcule l'espace disque consommé dans le répertoire utilisateur (Mo)."""
@@ -125,7 +78,7 @@ class UnifiedMaintenance:
             logger.error("Erreur nettoyage caches : %s", exc)
 
     def quick_cleanup(self):
-        """Routine quotidienne de purge légère."""
+        """Routine de purge légère."""
         try:
             home = os.path.expanduser("~")
             commands = [
@@ -141,7 +94,7 @@ class UnifiedMaintenance:
             logger.error("Erreur nettoyage rapide : %s", exc)
 
     def full_maintenance(self):
-        """Maintenance complète (caches + SQL)."""
+        """Maintenance complète (stockage + SQL)."""
         try:
             logger.info("🔧 Exécution maintenance complète...")
             self.cleanup_caches()
@@ -186,7 +139,7 @@ class UnifiedMaintenance:
             logger.error("Erreur nettoyage urgence : %s", exc)
 
     def should_do_full_maintenance(self) -> bool:
-        """Détermine si la maintenance de 48 heures est due."""
+        """Vérifie si la maintenance de 48 heures est due."""
         if not os.path.exists(self.maintenance_flag):
             return True
         try:
@@ -198,31 +151,9 @@ class UnifiedMaintenance:
 
     def run(self):
         """Cycle principal d'exécution."""
-        logger.info("🔧 === Exécution tâche planifiée PythonAnywhere ===")
+        logger.info("🔧 === Exécution tâche planifiée de maintenance ===")
 
-        # 1. Vérification keep-alive du bot
-        running, pid, start_time = self.is_bot_running()
-
-        if running:
-            runtime = time.time() - (start_time or time.time())
-            hours = int(runtime // 3600)
-            minutes = int((runtime % 3600) // 60)
-            logger.info("✅ Bot actif (PID: %s, Uptime: %dh%02dm)", pid, hours, minutes)
-
-            # Redémarrage préventif si le bot tourne en continu depuis plus de 24h
-            if runtime > 24 * 3600:
-                logger.info("🔄 Redémarrage préventif (> 24h d'activité)...")
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    time.sleep(3)
-                except Exception as k_err:
-                    logger.warning("Échec arrêt gracieux : %s", k_err)
-                self.start_bot()
-        else:
-            logger.warning("⚠️ Bot arrêté — Lancement immédiat...")
-            self.start_bot()
-
-        # 2. Gestion de l'espace disque
+        # Gestion de l'espace disque
         storage_mb = self.check_storage_usage()
         storage_percent = (storage_mb / 512.0) * 100.0
         logger.info("💾 Disque utilisé : %.1f Mo / 512 Mo (%.1f%%)", storage_mb, storage_percent)
@@ -234,7 +165,7 @@ class UnifiedMaintenance:
         else:
             self.quick_cleanup()
 
-        # 3. Rapport d'inspection des répertoires
+        # Rapport des répertoires
         home = os.path.expanduser("~")
         inspect_dirs = [
             os.path.join(home, ".cache"),
@@ -246,22 +177,27 @@ class UnifiedMaintenance:
         du_res = subprocess.run(["du", "-sh"] + valid_dirs, capture_output=True, text=True)
         details = du_res.stdout.strip() if du_res.returncode == 0 else "N/A"
 
-        final_running, final_pid, _ = self.is_bot_running()
-        logger.info("📊 === Bilan de tâche planifiée ===")
-        logger.info("Statut bot : %s (PID %s)", "🟢 En ligne" if final_running else "🔴 Hors ligne", final_pid)
-        logger.info("Volumes consommés :\n%s", details)
-        logger.info("✅ Tâche planifiée terminée.")
+        logger.info("📊 Volumes consommés :\n%s", details)
+        logger.info("✅ Tâche de maintenance terminée avec succès.")
 
 
 if __name__ == "__main__":
+    db = None
     try:
         from config import Config
         from database import DatabaseManager
 
         cfg = Config()
-        db = DatabaseManager(cfg)
+        # pool_size=1 pour ne pas saturer le quota de 9 connexions MySQL
+        db = DatabaseManager(cfg, pool_size=1)
         task = UnifiedMaintenance(db)
         task.run()
     except Exception as fatal_exc:
-        logger.critical("Échec critique lors de l'exécution de la maintenance planifiée : %s", fatal_exc, exc_info=True)
+        logger.critical("Échec critique maintenance : %s", fatal_exc, exc_info=True)
         sys.exit(1)
+    finally:
+        if db and hasattr(db, "close"):
+            try:
+                db.close()
+            except Exception:
+                pass

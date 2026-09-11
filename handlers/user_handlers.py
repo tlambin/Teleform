@@ -1,5 +1,6 @@
 """Module principal de gestion des interactions utilisateurs et demandeurs."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Update
 from telegram.ext import ContextTypes
@@ -136,9 +137,9 @@ class UserHandlers:
 
                 admin_id = row.get("admin_en_charge") if row else None
                 if admin_id and self.db_manager.is_admin_paused(admin_id):
-                    alias = self.db_manager.get_admin_alias(admin_id)
+                    raw_alias = self.db_manager.get_admin_alias(admin_id)
                     await query.answer(
-                        f"⏸️ Votre référent ({alias}) est actuellement en pause. Relance impossible pour le moment.",
+                        f"⏸️ Votre référent ({raw_alias}) est actuellement en pause. Relance impossible pour le moment.",
                         show_alert=True
                     )
                     return
@@ -160,9 +161,9 @@ class UserHandlers:
 
                 admin_id = row.get("admin_en_charge") if row else None
                 if admin_id and self.db_manager.is_admin_paused(admin_id):
-                    alias = self.db_manager.get_admin_alias(admin_id)
+                    raw_alias = self.db_manager.get_admin_alias(admin_id)
                     await query.answer(
-                        f"⏸️ Votre référent ({alias}) est actuellement en pause. Relance impossible pour le moment.",
+                        f"⏸️ Votre référent ({raw_alias}) est actuellement en pause. Relance impossible pour le moment.",
                         show_alert=True
                     )
                     return
@@ -195,11 +196,10 @@ class UserHandlers:
 
                 admin_id = d_row["admin_en_charge"]
 
-                # Blocage si le référent est en pause
                 if self.db_manager.is_admin_paused(admin_id):
-                    alias = self.db_manager.get_admin_alias(admin_id)
+                    raw_alias = self.db_manager.get_admin_alias(admin_id)
                     await query.answer(
-                        f"⏸️ Votre référent ({alias}) est actuellement en pause / indisponible. Réessayez ultérieurement.",
+                        f"⏸️ Votre référent ({raw_alias}) est actuellement en pause / indisponible. Réessayez ultérieurement.",
                         show_alert=True
                     )
                     return
@@ -222,7 +222,7 @@ class UserHandlers:
                 await self.formulaire.handle_vip_admin_choice(update, context)
                 return
 
-            # 8. Reprise suite à un abandon admin (remise en file disponible)
+            # 8. Reprise suite à un abandon admin
             elif data.startswith("reprendre_demande_"):
                 demande_id = int(data.replace("reprendre_demande_", ""))
 
@@ -231,8 +231,8 @@ class UserHandlers:
                         cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
                         cursor.execute(
                             """
-                            UPDATE demandes 
-                            SET statut = '📨 Reçue', admin_en_charge = NULL, date_modification = NOW() 
+                            UPDATE demandes
+                            SET statut = '📨 Reçue', admin_en_charge = NULL, date_modification = NOW()
                             WHERE id = %s AND user_id = %s
                             """,
                             (demande_id, user_id)
@@ -362,9 +362,11 @@ class UserHandlers:
             return
 
         admin_id = row["admin_en_charge"]
-        req_num = row.get("request_number", demande_id)
+        req_num = html.escape(str(row.get("request_number", demande_id)))
         user = update.effective_user
         user_label = f"@{user.username}" if user.username else user.first_name
+        user_label_esc = html.escape(user_label or f"User_{user.id}")
+        prenom_esc = html.escape(str(row.get("prenom") or ""))
 
         if self.db_manager.is_user_vip(user.id):
             tag = "⭐ VIP"
@@ -375,7 +377,7 @@ class UserHandlers:
 
         remind_msg = (
             f"🔔 <b>RAPPEL DEMANDE #{req_num} [{tag}]</b>\n\n"
-            f"Le demandeur <b>{user_label}</b> vous relance concernant sa demande pour <b>{row['prenom']}</b>.\n"
+            f"Le demandeur <b>{user_label_esc}</b> vous relance concernant sa demande pour <b>{prenom_esc}</b>.\n"
             "Merci de consulter vos suivis ou de lui apporter une réponse."
         )
         admin_kb = InlineKeyboardMarkup([
@@ -438,23 +440,34 @@ class UserHandlers:
                 await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
             return
 
+        # Gestion synchrone des boutons de quotas (RAM + MySQL)
         if data.startswith("limit_"):
             tot = self.config.get_max_total_demandes()
             usr = self.config.get_max_demandes_per_user()
 
             if data == "limit_total_0":
                 self.config.set_max_total_demandes(0)
+                self.db_manager.set_config_value("max_total_demandes", "0")
             elif data == "limit_total_add5":
-                self.config.set_max_total_demandes(tot + 5)
+                new_tot = tot + 5
+                self.config.set_max_total_demandes(new_tot)
+                self.db_manager.set_config_value("max_total_demandes", str(new_tot))
             elif data == "limit_total_sub5":
-                self.config.set_max_total_demandes(max(0, tot - 5))
+                new_tot = max(0, tot - 5)
+                self.config.set_max_total_demandes(new_tot)
+                self.db_manager.set_config_value("max_total_demandes", str(new_tot))
 
             elif data == "limit_user_3":
                 self.config.set_max_demandes_per_user(3)
+                self.db_manager.set_config_value("max_demandes_per_user", "3")
             elif data == "limit_user_add1":
-                self.config.set_max_demandes_per_user(usr + 1)
+                new_usr = usr + 1
+                self.config.set_max_demandes_per_user(new_usr)
+                self.db_manager.set_config_value("max_demandes_per_user", str(new_usr))
             elif data == "limit_user_sub1":
-                self.config.set_max_demandes_per_user(max(1, usr - 1))
+                new_usr = max(1, usr - 1)
+                self.config.set_max_demandes_per_user(new_usr)
+                self.db_manager.set_config_value("max_demandes_per_user", str(new_usr))
 
             elif data == "limit_input_total":
                 context.user_data["waiting_limit_input"] = "total"
@@ -475,7 +488,11 @@ class UserHandlers:
                 return
 
             msg, kb = self.interface.get_limits_menu()
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            try:
+                await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            except Exception as tg_err:
+                if "Message is not modified" not in str(tg_err):
+                    logger.warning("Erreur rafraîchissement menu limites : %s", tg_err)
             return
 
         message, keyboard = self.interface.route_callback(data, user_id, first_name)
@@ -503,7 +520,7 @@ class UserHandlers:
         if not update.message:
             return
 
-        # Saisie d'un quota par le propriétaire
+        # Saisie d'un quota par le propriétaire (persistance immédiate en base)
         if update.message.text and context.user_data and context.user_data.get("waiting_limit_input"):
             if self.config.is_owner(update.effective_user.id):
                 raw = update.message.text.strip()
@@ -512,10 +529,12 @@ class UserHandlers:
                     val = int(raw)
                     if mode == "total":
                         self.config.set_max_total_demandes(val)
+                        self.db_manager.set_config_value("max_total_demandes", str(val))
                         libelle = "Illimité" if val == 0 else str(val)
                         await update.message.reply_text(f"✅ Plafond global défini à : <b>{libelle}</b>", parse_mode="HTML")
                     elif mode == "user":
                         self.config.set_max_demandes_per_user(val)
+                        self.db_manager.set_config_value("max_demandes_per_user", str(val))
                         libelle = "Illimité" if val == 0 else str(val)
                         await update.message.reply_text(f"✅ Plafond par personne défini à : <b>{libelle}</b>", parse_mode="HTML")
 
@@ -546,7 +565,7 @@ class UserHandlers:
             if await self.admin_handlers.handle_collect_admin_media(update, context):
                 return
 
-        # Réponse du Demandeur vers l'Admin (Ligne directe ou réponse standard)
+        # Réponse du Demandeur vers l'Admin
         if context.user_data and context.user_data.get("replying_to_admin"):
             await self._handle_user_reply_relay(update, context)
             return
@@ -574,8 +593,9 @@ class UserHandlers:
         badge_vip = " ⭐ <b>[VIP]</b>" if is_vip else ""
 
         user_label = f"@{user.username}" if user.username else f"{user.first_name} (ID : {user.id})"
+        user_label_esc = html.escape(user_label)
         user_comment = (msg.caption or msg.text or "").strip()
-        corps = f"\n\n« {user_comment} »" if user_comment else ""
+        corps = f"\n\n« {html.escape(user_comment)} »" if user_comment else ""
 
         admin_keyboard = InlineKeyboardMarkup([
             [
@@ -586,7 +606,7 @@ class UserHandlers:
 
         header_text = (
             f"📩 <b>Message du demandeur{badge_vip} (Demande #{demande_id})</b>\n"
-            f"De : {user_label}"
+            f"De : {user_label_esc}"
             f"{corps}"
         )
 
@@ -630,7 +650,7 @@ class UserHandlers:
         if not query:
             return
 
-        demande_id = data.replace("cancel_demande_", "")
+        demande_id = html.escape(str(data.replace("cancel_demande_", "")))
         await query.edit_message_text(
             f"🚧 <b>Annulation de demande</b>\n\n"
             f"L'annulation de la demande n°<code>{demande_id}</code> n'est pas encore activée.",

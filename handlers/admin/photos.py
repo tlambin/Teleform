@@ -1,5 +1,6 @@
 """Module de gestion de l'affichage des photos jointes aux demandes."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
@@ -27,7 +28,7 @@ class PhotosManager:
         try:
             demande_id = int(query.data.split("_")[2])
         except (IndexError, ValueError) as exc:
-            logger.error("Erreur format callback photo: %s", exc)
+            logger.error("Erreur format callback photo : %s", exc)
             return
 
         try:
@@ -49,30 +50,40 @@ class PhotosManager:
 
             priorite_icon = "💎" if demande.get("prioritaire") else "📝"
             type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-            montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
-            nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
-            user_display = f"@{demande['username']}" if demande.get("username") else (demande.get("user_first_name") or f"User {demande['user_id']}")
+            montant_str = f" ({float(demande['montant']):.2f} €)" if demande.get("prioritaire") else ""
+
+            prenom_esc = html.escape(str(demande.get("prenom") or ""))
+            nom_esc = html.escape(str(demande.get("nom") or ""))
+            nom_complet = f"{prenom_esc} {nom_esc}".strip()
+            loc_esc = html.escape(str(demande.get("localisation") or ""))
+            statut_esc = html.escape(str(demande.get("statut") or ""))
+            req_num = html.escape(str(demande.get("request_number", demande["id"])))
+
+            if demande.get("username"):
+                user_display = f"@{html.escape(demande['username'])}"
+            elif demande.get("user_first_name"):
+                user_display = html.escape(demande["user_first_name"])
+            else:
+                user_display = f"User {demande['user_id']}"
+
             date_str = str(demande.get("date_creation", ""))[:16]
 
             caption_lines = [
-                f"📷 <b>Photo de la demande #{demande.get('request_number', demande['id'])}</b>\n",
+                f"📷 <b>Photo de la demande #{req_num}</b>\n",
                 f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
-                f"📍 <b>Localisation :</b> {demande['localisation']}",
+                f"📍 <b>Localisation :</b> {loc_esc}",
                 f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-                f"📊 <b>Statut :</b> <code>{demande.get('statut')}</code>",
+                f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
                 f"🙋 <b>Demandeur :</b> {user_display}"
             ]
 
             if demande.get("details"):
-                det = demande["details"]
+                det = str(demande["details"])
                 det_court = (det[:100] + "...") if len(det) > 100 else det
-                caption_lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
+                caption_lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
 
             caption_lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
             caption = "\n".join(caption_lines)
-
-            if len(caption) > 1000:
-                caption = caption[:997] + "..."
 
             keyboard = InlineKeyboardMarkup([
                 [
@@ -96,7 +107,7 @@ class PhotosManager:
             await query.edit_message_media(media=media, reply_markup=keyboard)
 
         except Exception as exc:
-            logger.error("Erreur affichage photo intégrée %s: %s", demande_id, exc, exc_info=True)
+            logger.error("Erreur affichage photo intégrée %s : %s", demande_id, exc, exc_info=True)
 
     async def retour_texte_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Supprime le message photo et renvoie la fiche textuelle standard pour restaurer la vue."""
@@ -110,7 +121,7 @@ class PhotosManager:
         try:
             demande_id = int(query.data.split("_")[-1])
         except (IndexError, ValueError) as exc:
-            logger.error("Erreur extraction demande_id depuis %s: %s", query.data, exc)
+            logger.error("Erreur extraction demande_id depuis %s : %s", query.data, exc)
             return
 
         try:
@@ -131,30 +142,45 @@ class PhotosManager:
 
             priorite_icon = "💎" if demande.get("prioritaire") else "📝"
             type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-            montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
-            nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
-            user_display = f"@{demande['username']}" if demande.get("username") else (demande.get("user_first_name") or f"User {demande['user_id']}")
+            montant_str = f" ({float(demande['montant']):.2f} €)" if demande.get("prioritaire") else ""
+
+            prenom_esc = html.escape(str(demande.get("prenom") or ""))
+            nom_esc = html.escape(str(demande.get("nom") or ""))
+            nom_complet = f"{prenom_esc} {nom_esc}".strip()
+            loc_esc = html.escape(str(demande.get("localisation") or ""))
+            statut_esc = html.escape(str(demande.get("statut") or ""))
+            req_num = html.escape(str(demande.get("request_number", demande["id"])))
+
+            if demande.get("username"):
+                user_display = f"@{html.escape(demande['username'])}"
+            elif demande.get("user_first_name"):
+                user_display = html.escape(demande["user_first_name"])
+            else:
+                user_display = f"User {demande['user_id']}"
+
             date_str = str(demande.get("date_creation", ""))[:16]
 
             lines = [
-                f"💌 <b>Demande #{demande.get('request_number', demande['id'])}</b>\n",
+                f"💌 <b>Demande #{req_num}</b>\n",
                 f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
-                f"📍 <b>Localisation :</b> {demande['localisation']}",
+                f"📍 <b>Localisation :</b> {loc_esc}",
                 f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-                f"📊 <b>Statut :</b> <code>{demande.get('statut')}</code>",
+                f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
                 f"🙋 <b>Demandeur :</b> {user_display}"
             ]
 
             reseaux = []
             if demande.get("instagram"):
-                reseaux.append(f"📷 <a href='https://instagram.com/{demande['instagram']}'>@{demande['instagram']}</a>")
+                ig = html.escape(str(demande["instagram"]))
+                reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
             if demande.get("snapchat"):
-                reseaux.append(f"👻 <a href='https://snapchat.com/add/{demande['snapchat']}'>{demande['snapchat']}</a>")
+                snap = html.escape(str(demande["snapchat"]))
+                reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
             if reseaux:
                 lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
 
             if demande.get("details"):
-                lines.append(f"💬 <b>Détails :</b> <i>{demande['details']}</i>")
+                lines.append(f"💬 <b>Détails :</b> <i>{html.escape(str(demande['details']))}</i>")
 
             lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
 
@@ -187,4 +213,4 @@ class PhotosManager:
             )
 
         except Exception as exc:
-            logger.error("Erreur retour vue texte: %s", exc, exc_info=True)
+            logger.error("Erreur retour vue texte : %s", exc, exc_info=True)

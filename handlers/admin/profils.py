@@ -1,5 +1,6 @@
 """Module de consultation des profils statistiques pour administrateurs et utilisateurs."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -38,35 +39,35 @@ class ProfilsManager:
             return
 
         stats = self.db_manager.get_admin_stats(admin_id)
-        alias = stats["alias"]
+        alias_esc = html.escape(str(stats.get("alias") or f"Admin_{admin_id}"))
 
         if is_owner and admin_id == self.config.OWNER_ID:
             date_str = "Créateur / Propriétaire"
         else:
             date_str = stats["date_added"].strftime("%d/%m/%Y") if stats.get("date_added") else "Inconnue"
 
-        taux = stats["taux_reussite"]
+        taux = stats.get("taux_reussite", 0)
         bar = self._render_progress_bar(taux)
 
-        res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(stats["perm_reseaux"], stats["perm_reseaux"])
-        typ_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(stats["perm_type"], stats["perm_type"])
+        res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(stats.get("perm_reseaux"), str(stats.get("perm_reseaux", "all")))
+        typ_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(stats.get("perm_type"), str(stats.get("perm_type", "all")))
 
         lines = [
-            f"🦈 <b>Profil Administrateur : {alias}</b>",
+            f"🦈 <b>Profil Administrateur : {alias_esc}</b>",
             f"🆔 ID Telegram : <code>{admin_id}</code>",
-            f"📅 Dans l'équipe : <b>{date_str}</b>",
-            f"🛡️ Permissions : <i>{res_label} | {typ_label}</i>\n",
+            f"📅 Dans l'équipe : <b>{html.escape(date_str)}</b>",
+            f"🛡️ Permissions : <i>{html.escape(res_label)} | {html.escape(typ_label)}</i>\n",
             "━━━━━━━━━━━━━━━━━━━━━━",
             "📊 <b>PERFORMANCE OPÉRATIONNELLE</b>\n",
-            f"⏳ <b>En cours de traitement :</b> <code>{stats['en_cours']}</code>",
-            f"✅ <b>Demandes réussies :</b> <code>{stats['reussies']}</code>",
-            f"❌ <b>Demandes abandonnées :</b> <code>{stats['abandonnees']}</code>",
-            f"📦 <b>Total demandes clôturées :</b> <code>{stats['total_traitees']}</code>\n",
+            f"⏳ <b>En cours de traitement :</b> <code>{stats.get('en_cours', 0)}</code>",
+            f"✅ <b>Demandes réussies :</b> <code>{stats.get('reussies', 0)}</code>",
+            f"❌ <b>Demandes abandonnées :</b> <code>{stats.get('abandonnees', 0)}</code>",
+            f"📦 <b>Total demandes clôturées :</b> <code>{stats.get('total_traitees', 0)}</code>\n",
             f"📈 <b>Taux de succès :</b> <b>{taux}%</b>",
             f"{bar}\n",
             "💎 <b>GESTION PRIORITAIRE</b>",
-            f"• Demandes prioritaires : <b>{stats['prioritaires_traitees']}</b>",
-            f"• Volume financier traité : <b>{stats['montant_total']:.2f}€</b>"
+            f"• Demandes prioritaires : <b>{stats.get('prioritaires_traitees', 0)}</b>",
+            f"• Volume financier traité : <b>{stats.get('montant_total', 0.0):.2f}€</b>"
         ]
 
         text = "\n".join(lines)
@@ -126,21 +127,19 @@ class ProfilsManager:
         target_user_id = int(demande["user_id"])
         stats = self.db_manager.get_user_stats(target_user_id)
 
-        # Prénom du compte Telegram demandeur
-        prenom_demandeur = (
+        raw_prenom = (
             demande.get("user_first_name")
             or stats.get("prenom")
             or demande.get("user_username")
             or f"Utilisateur {target_user_id}"
         )
+        prenom_demandeur = html.escape(str(raw_prenom))
 
-        # Pseudo Telegram
         pseudo_val = demande.get("user_username") or stats.get("username")
-        pseudo = f"@{pseudo_val}" if pseudo_val else "Sans @username"
+        pseudo = f"@{html.escape(str(pseudo_val))}" if pseudo_val else "Sans @username"
 
-        # Dates
         dt_insc = demande.get("date_inscription") or stats.get("date_inscription") or demande.get("date_creation")
-        date_insc = dt_insc.strftime("%d/%m/%Y") if dt_insc else "Inconnue"
+        date_insc = dt_insc.strftime("%d/%m/%Y") if dt_insc and hasattr(dt_insc, "strftime") else "Inconnue"
 
         dt_act = demande.get("derniere_activite") or stats.get("derniere_activite")
         date_act = str(dt_act)[:16] if dt_act else "Inconnue"
@@ -149,16 +148,16 @@ class ProfilsManager:
             f"👤 <b>Fiche Utilisateur : {prenom_demandeur}</b>",
             f"🏷️ Pseudo : {pseudo}",
             f"🆔 ID : <code>{target_user_id}</code>\n",
-            f"📅 Inscrit le : <b>{date_insc}</b>",
-            f"⏱️ Dernière activité : <i>{date_act}</i>\n",
+            f"📅 Inscrit le : <b>{html.escape(date_insc)}</b>",
+            f"⏱️ Dernière activité : <i>{html.escape(date_act)}</i>\n",
             "━━━━━━━━━━━━━━━━━━━━━━",
             "📋 <b>HISTORIQUE DES DEMANDES</b>\n",
-            f"🗳️ <b>Total demandes soumises :</b> <code>{stats['total_demandes']}</code>",
-            f"⏳ En cours de traitement : <b>{stats['en_cours']}</b>",
-            f"📨 En attente de prise en charge : <b>{stats['en_attente']}</b>",
-            f"✅ Terminées avec succès : <b>{stats['reussies']}</b>",
-            f"❌ Demandes échouées / refusées : <b>{stats['abandonnees']}</b>\n",
-            f"💎 <b>Demandes payantes :</b> {stats['total_prio']} (Total investi : <b>{stats['montant_total_investi']:.2f}€</b>)"
+            f"🗳️ <b>Total demandes soumises :</b> <code>{stats.get('total_demandes', 0)}</code>",
+            f"⏳ En cours de traitement : <b>{stats.get('en_cours', 0)}</b>",
+            f"📨 En attente de prise en charge : <b>{stats.get('en_attente', 0)}</b>",
+            f"✅ Terminées avec succès : <b>{stats.get('reussies', 0)}</b>",
+            f"❌ Demandes échouées / refusées : <b>{stats.get('abandonnees', 0)}</b>\n",
+            f"💎 <b>Demandes payantes :</b> {stats.get('total_prio', 0)} (Total investi : <b>{stats.get('montant_total_investi', 0.0):.2f}€</b>)"
         ]
 
         text = "\n".join(lines)

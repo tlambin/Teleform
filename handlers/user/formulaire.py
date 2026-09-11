@@ -1,5 +1,6 @@
 """Formulaire de création de demandes avec vérification des quotas, choix du référent VIP et validation des réseaux sociaux."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -285,7 +286,7 @@ class FormulaireManager:
             context.user_data.setdefault("demande", {})["prenom"] = val
 
             await update.message.reply_text(
-                f"✅ Prénom enregistré : <b>{val}</b>\n\n"
+                f"✅ Prénom enregistré : <b>{html.escape(val)}</b>\n\n"
                 "Indiquez maintenant son nom de famille (ou cliquez sur Passer) :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.NOM, include_skip=True),
@@ -293,7 +294,7 @@ class FormulaireManager:
             return self.NOM
         except ValidationError as err:
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir le prénom :",
+                f"❌ {html.escape(str(err))}\n\nVeuillez ressaisir le prénom :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.PRENOM),
             )
@@ -309,7 +310,7 @@ class FormulaireManager:
             context.user_data.setdefault("demande", {})["nom"] = val
 
             await update.message.reply_text(
-                f"✅ Nom enregistré : <b>{val}</b>\n\n"
+                f"✅ Nom enregistré : <b>{html.escape(val)}</b>\n\n"
                 "Indiquez maintenant son âge (entre 18 et 40 ans) :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.AGE),
@@ -317,7 +318,7 @@ class FormulaireManager:
             return self.AGE
         except ValidationError as err:
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir le nom ou passer cette étape :",
+                f"❌ {html.escape(str(err))}\n\nVeuillez ressaisir le nom ou passer cette étape :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.NOM, include_skip=True),
             )
@@ -352,7 +353,7 @@ class FormulaireManager:
             return self.LOCALISATION
         except ValidationError as err:
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir un âge valide :",
+                f"❌ {html.escape(str(err))}\n\nVeuillez ressaisir un âge valide :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.AGE),
             )
@@ -368,7 +369,7 @@ class FormulaireManager:
             context.user_data.setdefault("demande", {})["localisation"] = val
 
             await update.message.reply_text(
-                f"✅ Localisation enregistrée : <b>{val}</b>\n\n"
+                f"✅ Localisation enregistrée : <b>{html.escape(val)}</b>\n\n"
                 "📸 Envoyez une photo pour accompagner la demande :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.PHOTO),
@@ -376,7 +377,7 @@ class FormulaireManager:
             return self.PHOTO
         except ValidationError as err:
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir la localisation :",
+                f"❌ {html.escape(str(err))}\n\nVeuillez ressaisir la localisation :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.LOCALISATION),
             )
@@ -427,9 +428,8 @@ class FormulaireManager:
                 return await self.skip_instagram(update, context)
 
             context.user_data.setdefault("demande", {})["instagram"] = val
-            # Comme Instagram est renseigné, Snapchat est facultatif
             await update.message.reply_text(
-                f"✅ Instagram enregistré : <b>@{val}</b>\n\n"
+                f"✅ Instagram enregistré : <b>@{html.escape(val)}</b>\n\n"
                 "Indiquez son nom d'utilisateur <b>Snapchat</b> (ou passez) :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=True),
@@ -437,7 +437,7 @@ class FormulaireManager:
             return self.SNAPCHAT
         except ValidationError as err:
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir son compte Instagram ou passer :",
+                f"❌ {html.escape(str(err))}\n\nVeuillez ressaisir son compte Instagram ou passer :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.INSTAGRAM, include_skip=True),
             )
@@ -450,7 +450,6 @@ class FormulaireManager:
             "⚠️ <b>Au moins un réseau social est obligatoire.</b>\n"
             "Veuillez indiquer son compte <b>Snapchat</b> :"
         )
-        # include_skip=False car Instagram a été ignoré : Snapchat devient obligatoire
         kb = self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=False)
 
         if update.callback_query:
@@ -471,7 +470,7 @@ class FormulaireManager:
 
             context.user_data.setdefault("demande", {})["snapchat"] = val
             await update.message.reply_text(
-                f"✅ Snapchat enregistré : <b>{val}</b>\n\n"
+                f"✅ Snapchat enregistré : <b>{html.escape(val)}</b>\n\n"
                 "Avez-vous des détails ou remarques supplémentaires à ajouter ?",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.DETAILS, include_skip=True),
@@ -481,7 +480,7 @@ class FormulaireManager:
             demande = context.user_data.get("demande", {})
             has_insta = bool(demande.get("instagram"))
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir son compte Snapchat" + (" ou passer :" if has_insta else " :"),
+                f"❌ {html.escape(str(err))}\n\nVeuillez ressaisir son compte Snapchat" + (" ou passer :" if has_insta else " :"),
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=has_insta),
             )
@@ -490,7 +489,6 @@ class FormulaireManager:
     async def skip_snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         demande = context.user_data.setdefault("demande", {})
 
-        # Blocage strict si Instagram n'a pas été renseigné
         if not demande.get("instagram"):
             msg = (
                 "🚫 <b>Réseau social obligatoire</b>\n\n"
@@ -527,7 +525,7 @@ class FormulaireManager:
             if user_input and not Validators.is_skip_command(user_input):
                 val = Validators.validate_details(user_input)
                 context.user_data.setdefault("demande", {})["details"] = val
-                confirm_txt = f"✅ Détails notés : <i>{val}</i>\n\n"
+                confirm_txt = f"✅ Détails notés : <i>{html.escape(val)}</i>\n\n"
             else:
                 context.user_data.setdefault("demande", {})["details"] = None
                 confirm_txt = "⏭️ Aucun détail supplémentaire noté.\n\n"
@@ -548,7 +546,7 @@ class FormulaireManager:
             return self.PRIORITAIRE
         except ValidationError as err:
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir les détails ou passer :",
+                f"❌ {html.escape(str(err))}\n\nVeuillez ressaisir les détails ou passer :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.DETAILS, include_skip=True),
             )
@@ -592,7 +590,6 @@ class FormulaireManager:
         demande["prioritaire"] = False
         demande["montant"] = 0
 
-        # Vérification si l'utilisateur est VIP pour proposer le choix du référent
         return await self.prompt_admin_selection_or_save(update, context)
 
     async def montant(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -609,7 +606,7 @@ class FormulaireManager:
             return await self.prompt_admin_selection_or_save(update, context)
         except ValidationError as err:
             await update.message.reply_text(
-                f"❌ {err}\n\nVeuillez ressaisir un montant valide :",
+                f"❌ {html.escape(str(err))}\n\nVeuillez ressaisir un montant valide :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.MONTANT),
             )
@@ -743,13 +740,18 @@ class FormulaireManager:
             referent_txt = ""
             if target_admin_id:
                 alias = self.db_manager.get_admin_alias(target_admin_id)
-                referent_txt = f"\n👨‍💼 <b>Référent assigné :</b> {alias}"
+                referent_txt = f"\n👨‍💼 <b>Référent assigné :</b> {html.escape(alias)}"
+
+            prenom_esc = html.escape(demande.get("prenom") or "")
+            nom_esc = html.escape(demande.get("nom") or "")
+            nom_complet_esc = f"{prenom_esc} {nom_esc}".strip()
+            loc_esc = html.escape(str(demande.get("localisation") or ""))
 
             recap = (
                 f"✅ <b>Demande n°{next_num} enregistrée avec succès !</b>\n\n"
-                f"👤 <b>Identité :</b> {nom_complet}\n"
+                f"👤 <b>Identité :</b> {nom_complet_esc}\n"
                 f"🎂 <b>Âge :</b> {demande.get('age')} ans\n"
-                f"📍 <b>Localisation :</b> {demande.get('localisation')}\n"
+                f"📍 <b>Localisation :</b> {loc_esc}\n"
                 f"🎯 <b>Type :</b> {type_txt}{montant_txt}{referent_txt}\n\n"
                 "Tapez /demandes pour suivre son avancement."
             )
@@ -761,9 +763,9 @@ class FormulaireManager:
 
             # Notification ciblée ou diffusion générale
             if target_admin_id:
-                await self._send_targeted_admin_alert(context, target_admin_id, demande_id, next_num, nom_complet, demande)
+                await self._send_targeted_admin_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
             else:
-                await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet, demande)
+                await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet_esc, demande)
 
         except Exception as exc:
             logger.error("Erreur lors de la sauvegarde de la demande : %s", exc, exc_info=True)
@@ -780,12 +782,13 @@ class FormulaireManager:
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
+        loc_esc = html.escape(str(demande.get("localisation") or ""))
 
         alert_text = (
             f"👑 <b>NOUVELLE DEMANDE VIP ASSIGNÉE (#{req_num})</b>\n\n"
             f"Un client VIP vous a sélectionné comme référent pour traiter sa demande :\n\n"
             f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
-            f"📍 <b>Localisation :</b> {demande.get('localisation')}\n"
+            f"📍 <b>Localisation :</b> {loc_esc}\n"
             f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}\n\n"
             "<i>La demande a été ajoutée directement à vos suivis.</i>"
         )
@@ -821,11 +824,12 @@ class FormulaireManager:
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
+        loc_esc = html.escape(str(demande.get("localisation") or ""))
 
         alert_text = (
             f"🔔 <b>Nouvelle demande disponible #{req_num}</b>\n\n"
             f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
-            f"📍 <b>Localisation :</b> {demande.get('localisation')}\n"
+            f"📍 <b>Localisation :</b> {loc_esc}\n"
             f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}"
         )
         alert_kb = InlineKeyboardMarkup([
@@ -837,7 +841,6 @@ class FormulaireManager:
             try:
                 aid = int(admin_id)
 
-                # 🛑 Ne pas notifier un administrateur en mode pause
                 if self.db_manager.is_admin_paused(aid):
                     continue
 

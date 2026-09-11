@@ -1,5 +1,6 @@
 """Système de gestion des pseudonymes administrateurs et des notifications."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import Forbidden, TelegramError
@@ -146,6 +147,7 @@ class AliasManager:
                 return ConversationHandler.END
 
         target_alias = self.get_admin_alias(target_id)
+        target_alias_esc = html.escape(target_alias)
 
         if not is_owner and target_id == user_id:
             avertissement = (
@@ -165,7 +167,7 @@ class AliasManager:
 
         text = (
             f"✏️ <b>Configuration de l'alias</b>\n\n"
-            f"Alias actuel : <code>{target_alias}</code>\n\n"
+            f"Alias actuel : <code>{target_alias_esc}</code>\n\n"
             f"{avertissement}"
             "Envoyez le nouveau pseudonyme en réponse à ce message :\n"
             "• 2 à 30 caractères\n"
@@ -223,6 +225,8 @@ class AliasManager:
                 self.db_manager.lock_admin_alias(user_id)
                 verrou_txt = "\n\n🔒 <i>Votre alias est désormais verrouillé et ne peut plus être modifié.</i>"
 
+            new_alias_esc = html.escape(new_alias)
+
             if is_owner and target_id != user_id:
                 retour_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🛡️ Retour aux droits de l'admin", callback_data=f"perm_admin_{target_id}")],
@@ -230,13 +234,13 @@ class AliasManager:
                 ])
                 succes_msg = (
                     f"✅ <b>Alias mis à jour avec succès !</b>\n\n"
-                    f"👤 <b>Admin (ID {target_id}) :</b> <code>{new_alias}</code>"
+                    f"👤 <b>Admin (ID {target_id}) :</b> <code>{new_alias_esc}</code>"
                 )
             else:
                 retour_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔙 Menu Paramètres", callback_data="parametres")
                 ]])
-                succes_msg = f"✅ <b>Alias mis à jour :</b> <code>{new_alias}</code>{verrou_txt}"
+                succes_msg = f"✅ <b>Alias mis à jour :</b> <code>{new_alias_esc}</code>{verrou_txt}"
 
             await update.message.reply_text(
                 succes_msg,
@@ -285,14 +289,19 @@ class AliasManager:
         new_status: str,
         admin_alias: str,
     ):
-        """Envoie la notification de changement de statut au demandeur."""
+        """Envoie la notification de changement de statut au demandeur avec protection HTML."""
         try:
+            prenom_esc = html.escape(str(prenom or ""))
+            old_esc = html.escape(str(old_status or ""))
+            new_esc = html.escape(str(new_status or ""))
+            alias_esc = html.escape(str(admin_alias or ""))
+
             text = (
                 f"📢 <b>Notification de suivi</b>\n\n"
-                f"Bonjour <b>{prenom}</b>, le statut de votre demande <b>#{request_number}</b> a évolué :\n\n"
-                f"Ancien statut : <s>{old_status}</s>\n"
-                f"Nouveau statut : <b>{new_status}</b>\n\n"
-                f"👨‍💼 <b>Référent en charge :</b> {admin_alias}\n\n"
+                f"Bonjour <b>{prenom_esc}</b>, le statut de votre demande <b>#{request_number}</b> a évolué :\n\n"
+                f"Ancien statut : <s>{old_esc}</s>\n"
+                f"Nouveau statut : <b>{new_esc}</b>\n\n"
+                f"👨‍💼 <b>Référent en charge :</b> {alias_esc}\n\n"
                 "Tapez /demandes pour afficher l'ensemble de vos demandes."
             )
 

@@ -1,5 +1,6 @@
 """Module de gestion et de mise à jour des statuts des demandes par les administrateurs."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -41,7 +42,11 @@ class StatutsManager:
             if not demande:
                 return
 
-            nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+            prenom_esc = html.escape(str(demande.get("prenom") or ""))
+            nom_esc = html.escape(str(demande.get("nom") or ""))
+            nom_complet = f"{prenom_esc} {nom_esc}".strip()
+            statut_esc = html.escape(str(demande.get("statut") or ""))
+            req_num = html.escape(str(demande.get("request_number", demande_id)))
             is_photo_message = bool(query.message and query.message.photo)
 
             keyboard = []
@@ -58,8 +63,8 @@ class StatutsManager:
 
             text = (
                 f"📊 <b>Changer le Statut</b>\n\n"
-                f"📝 <b>Demande #{demande.get('request_number', demande_id)}</b> - {nom_complet}\n"
-                f"Statut actuel : <code>{demande['statut']}</code>\n\n"
+                f"📝 <b>Demande #{req_num}</b> - {nom_complet}\n"
+                f"Statut actuel : <code>{statut_esc}</code>\n\n"
                 "Sélectionnez le nouveau statut ci-dessous :"
             )
 
@@ -121,7 +126,7 @@ class StatutsManager:
                     "demande_id": demande_id,
                     "status_index": status_index,
                 }
-                req_num = demande.get("request_number", demande_id)
+                req_num = html.escape(str(demande.get("request_number", demande_id)))
                 prompt_text = (
                     f"⚠️ <b>Abandon de la demande #{req_num}</b>\n\n"
                     "Veuillez taper au clavier la <b>raison de l'abandon</b>.\n\n"
@@ -205,6 +210,8 @@ class StatutsManager:
         raison = update.message.text.strip()
         admin_id = update.effective_user.id
         admin_alias = self.db_manager.get_admin_alias(admin_id)
+        admin_alias_esc = html.escape(str(admin_alias))
+        raison_esc = html.escape(raison)
 
         try:
             with self.db_manager.transaction() as cursor:
@@ -226,10 +233,10 @@ class StatutsManager:
 
                 if prev_alias and prev_raison:
                     nouvel_alias_str = f"{prev_alias}, {admin_alias}"
-                    nouvelle_raison_str = f"{prev_raison}\n• <b>{admin_alias} :</b> « <i>{raison}</i> »"
+                    nouvelle_raison_str = f"{prev_raison}\n• <b>{admin_alias_esc} :</b> « <i>{raison_esc}</i> »"
                 else:
                     nouvel_alias_str = admin_alias
-                    nouvelle_raison_str = f"• <b>{admin_alias} :</b> « <i>{raison}</i> »"
+                    nouvelle_raison_str = f"• <b>{admin_alias_esc} :</b> « <i>{raison_esc}</i> »"
 
                 cursor.execute(
                     """
@@ -246,7 +253,7 @@ class StatutsManager:
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
 
             user_id_demande = demande["user_id"]
-            req_num = demande.get("request_number", demande_id)
+            req_num = html.escape(str(demande.get("request_number", demande_id)))
 
             abandon_keyboard = InlineKeyboardMarkup([
                 [
@@ -259,9 +266,9 @@ class StatutsManager:
 
             msg_demandeur = (
                 f"⚠️ <b>Information sur votre demande #{req_num}</b>\n\n"
-                f"L'administrateur <b>{admin_alias}</b> n'est plus en mesure de traiter votre demande.\n\n"
+                f"L'administrateur <b>{admin_alias_esc}</b> n'est plus en mesure de traiter votre demande.\n\n"
                 f"📝 <b>Motif communiqué :</b>\n"
-                f"« <i>{raison}</i> »\n\n"
+                f"« <i>{raison_esc}</i> »\n\n"
                 "Que souhaitez-vous faire ?\n"
                 "• <b>Remettre en disponible :</b> un autre administrateur pourra la reprendre dans les demandes disponibles (votre demande reste active).\n"
                 "• <b>Laisser tomber :</b> la demande sera archivée et votre quota sera libéré immédiatement."
@@ -296,16 +303,29 @@ class StatutsManager:
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
-        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
-        user_display = f"@{demande['username']}" if demande.get("username") else (demande.get("user_first_name") or f"User {demande['user_id']}")
+
+        prenom_esc = html.escape(str(demande.get("prenom") or ""))
+        nom_esc = html.escape(str(demande.get("nom") or ""))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip()
+        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        statut_esc = html.escape(str(nouveau_statut))
+        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+
+        if demande.get("username"):
+            user_display = f"@{html.escape(demande['username'])}"
+        elif demande.get("user_first_name"):
+            user_display = html.escape(demande["user_first_name"])
+        else:
+            user_display = f"User {demande['user_id']}"
+
         date_str = str(demande.get("date_creation", ""))[:16]
 
         lines = [
-            f"💌 <b>Demande #{demande.get('request_number', demande['id'])}</b>\n",
+            f"💌 <b>Demande #{req_num}</b>\n",
             f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
-            f"📍 <b>Localisation :</b> {demande['localisation']}",
+            f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-            f"📊 <b>Statut :</b> <code>{nouveau_statut}</code>",
+            f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
             f"🙋 <b>Demandeur :</b> {user_display}",
         ]
 
@@ -317,16 +337,18 @@ class StatutsManager:
 
         reseaux = []
         if demande.get("instagram"):
-            reseaux.append(f"📷 <a href='https://instagram.com/{demande['instagram']}'>@{demande['instagram']}</a>")
+            ig = html.escape(str(demande["instagram"]))
+            reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
         if demande.get("snapchat"):
-            reseaux.append(f"👻 <a href='https://snapchat.com/add/{demande['snapchat']}'>{demande['snapchat']}</a>")
+            snap = html.escape(str(demande["snapchat"]))
+            reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
         if reseaux:
             lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
 
         if demande.get("details"):
-            det = demande["details"]
+            det = str(demande["details"])
             det_court = (det[:150] + "...") if len(det) > 150 else det
-            lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
+            lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
 
         lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
 
@@ -355,13 +377,19 @@ class StatutsManager:
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
-        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+
+        prenom_esc = html.escape(str(demande.get("prenom") or ""))
+        nom_esc = html.escape(str(demande.get("nom") or ""))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip()
+        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        statut_esc = html.escape(str(nouveau_statut))
+        req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
         caption_lines = [
-            f"📷 <b>Photo de la demande #{demande.get('request_number', demande['id'])}</b>\n",
-            f"👤 {nom_complet} ({demande['age']} ans) | {demande['localisation']}",
+            f"📷 <b>Photo de la demande #{req_num}</b>\n",
+            f"👤 {nom_complet} ({demande['age']} ans) | {loc_esc}",
             f"🎯 {priorite_icon} {type_str}{montant_str}",
-            f"📊 Statut : <code>{nouveau_statut}</code>"
+            f"📊 Statut : <code>{statut_esc}</code>"
         ]
 
         if demande.get("raison_abandon"):

@@ -27,6 +27,8 @@ class BotManager:
         if not query or not user or not self.config.is_owner(user.id):
             return
 
+        await query.answer()
+
         try:
             self.config.enable_demandes()
             self.db_manager.set_config_value("maintenance_mode", "false")
@@ -61,6 +63,8 @@ class BotManager:
         if not query or not user or not self.config.is_owner(user.id):
             return
 
+        await query.answer()
+
         try:
             self.config.disable_demandes()
             logger.info("Demandes suspendues par le propriétaire %s", user.id)
@@ -93,6 +97,8 @@ class BotManager:
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
             return
+
+        await query.answer()
 
         try:
             self.db_manager.set_config_value("maintenance_mode", "true")
@@ -156,6 +162,7 @@ class BotManager:
             ])
 
             if update.callback_query:
+                await update.callback_query.answer()
                 await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
             elif update.message:
                 await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)

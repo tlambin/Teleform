@@ -1,5 +1,6 @@
 """Module de gestion des préférences de notifications et rappels des administrateurs."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -26,6 +27,9 @@ class NotifsManager:
                 await query.answer("❌ Accès non autorisé.", show_alert=True)
             return
 
+        if query:
+            await query.answer()
+
         prefs = self.db_manager.get_admin_preferences(user.id)
         text, keyboard = self._build_menu_content(user.id, prefs)
 
@@ -39,12 +43,17 @@ class NotifsManager:
                     reply_markup=keyboard,
                 )
             else:
-                await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+                try:
+                    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+                except Exception as exc:
+                    if "Message is not modified" not in str(exc):
+                        logger.warning("Erreur affichage show_notifs_menu : %s", exc)
         elif update.message:
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
     def _build_menu_content(self, user_id: int, prefs: dict):
-        alias = self.db_manager.get_admin_alias(user_id)
+        raw_alias = self.db_manager.get_admin_alias(user_id) or f"Admin_{user_id}"
+        alias_esc = html.escape(str(raw_alias))
 
         # 1. Alertes nouvelles demandes
         mode_new = prefs.get("notif_new_mode", "sound")
@@ -60,9 +69,9 @@ class NotifsManager:
 
         # 3. Fréquence et timing
         freq = prefs.get("rappel_freq", "daily")
-        heure = prefs.get("rappel_heure", 18)
-        jour_sem = prefs.get("rappel_jour_semaine", 6)
-        jour_mois = prefs.get("rappel_jour_mois", 1)
+        heure = int(prefs.get("rappel_heure", 18))
+        jour_sem = int(prefs.get("rappel_jour_semaine", 6))
+        jour_mois = int(prefs.get("rappel_jour_mois", 1))
 
         btn_freq_daily = "✅ Chaque jour" if freq == "daily" else "Chaque jour"
         btn_freq_weekly = "✅ 1x / sem" if freq == "weekly" else "1x / sem"
@@ -94,7 +103,7 @@ class NotifsManager:
             timing_row = [
                 InlineKeyboardButton(f"⏰ {heure:02d}h00", callback_data="pref_pick_hour")
             ]
-            if freq == "weekly":
+            if freq == "weekly" and 0 <= jour_sem < len(JOURS_SEMAINE):
                 timing_row.append(InlineKeyboardButton(f"📅 {JOURS_SEMAINE[jour_sem]}", callback_data="pref_pick_weekday"))
             elif freq == "monthly":
                 timing_row.append(InlineKeyboardButton(f"📅 Le {jour_mois} du mois", callback_data="pref_pick_monthday"))
@@ -103,21 +112,21 @@ class NotifsManager:
 
         keyboard.append([InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")])
 
-        mode_new_str = {"sound": "🔊 Sonore", "silent": "🔇 Silencieuse", "off": "🔕 Désactivée"}.get(mode_new)
-        mode_rap_str = {"sound": "🔊 Sonore", "silent": "🔇 Silencieux", "off": "❌ Désactivé"}.get(mode_rappel)
+        mode_new_str = {"sound": "🔊 Sonore", "silent": "🔇 Silencieuse", "off": "🔕 Désactivée"}.get(mode_new, "🔊 Sonore")
+        mode_rap_str = {"sound": "🔊 Sonore", "silent": "🔇 Silencieux", "off": "❌ Désactivé"}.get(mode_rappel, "🔊 Sonore")
 
         timing_desc = ""
         if mode_rappel != "off":
             if freq == "daily":
                 timing_desc = f"• <b>Fréquence :</b> Tous les jours à <b>{heure:02d}h00</b>\n"
-            elif freq == "weekly":
+            elif freq == "weekly" and 0 <= jour_sem < len(JOURS_SEMAINE):
                 timing_desc = f"• <b>Fréquence :</b> Chaque <b>{JOURS_SEMAINE[jour_sem]}</b> à <b>{heure:02d}h00</b>\n"
             elif freq == "monthly":
                 timing_desc = f"• <b>Fréquence :</b> Le <b>{jour_mois}</b> du mois à <b>{heure:02d}h00</b>\n"
 
         text = (
             f"🔔 <b>Notifications & Rappels</b>\n"
-            f"👤 Profil : <b>{alias}</b>\n\n"
+            f"👤 Profil : <b>{alias_esc}</b>\n\n"
             f"📩 <b>Nouvelles demandes :</b> {mode_new_str}\n"
             f"⏰ <b>Rappels des suivis :</b> {mode_rap_str}\n"
             f"{timing_desc}\n"
@@ -126,11 +135,12 @@ class NotifsManager:
         return text, InlineKeyboardMarkup(keyboard)
 
     async def handle_callback_routing(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        """Aiguillage des clics sur les préférences."""
+        """Aiguillage des clics sur les préférences avec persistance et protection anti-400."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
+        await query.answer()
         user_id = int(update.effective_user.id)
 
         if data == "pref_new_sound":
@@ -158,26 +168,39 @@ class NotifsManager:
             await self._show_hour_picker(query, user_id)
             return
         elif data.startswith("pref_set_hour_"):
-            hour = int(data.replace("pref_set_hour_", ""))
-            self.db_manager.update_admin_preference(user_id, "rappel_heure", hour)
+            try:
+                hour = int(data.replace("pref_set_hour_", ""))
+                self.db_manager.update_admin_preference(user_id, "rappel_heure", hour)
+            except (ValueError, TypeError):
+                pass
 
         elif data == "pref_pick_weekday":
             await self._show_weekday_picker(query, user_id)
             return
         elif data.startswith("pref_set_weekday_"):
-            day_idx = int(data.replace("pref_set_weekday_", ""))
-            self.db_manager.update_admin_preference(user_id, "rappel_jour_semaine", day_idx)
+            try:
+                day_idx = int(data.replace("pref_set_weekday_", ""))
+                self.db_manager.update_admin_preference(user_id, "rappel_jour_semaine", day_idx)
+            except (ValueError, TypeError):
+                pass
 
         elif data == "pref_pick_monthday":
             await self._show_monthday_picker(query, user_id)
             return
         elif data.startswith("pref_set_monthday_"):
-            mday = int(data.replace("pref_set_monthday_", ""))
-            self.db_manager.update_admin_preference(user_id, "rappel_jour_mois", mday)
+            try:
+                mday = int(data.replace("pref_set_monthday_", ""))
+                self.db_manager.update_admin_preference(user_id, "rappel_jour_mois", mday)
+            except (ValueError, TypeError):
+                pass
 
         prefs = self.db_manager.get_admin_preferences(user_id)
         text, keyboard = self._build_menu_content(user_id, prefs)
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        try:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        except Exception as exc:
+            if "Message is not modified" not in str(exc):
+                logger.warning("Erreur rafraîchissement préférences notifs : %s", exc)
 
     async def _show_hour_picker(self, query, user_id: int):
         prefs = self.db_manager.get_admin_preferences(user_id)
@@ -192,11 +215,15 @@ class NotifsManager:
             grid.append(row)
 
         grid.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
-        await query.edit_message_text(
-            "⏰ <b>Sélectionnez l'heure du rappel :</b>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(grid),
-        )
+        try:
+            await query.edit_message_text(
+                "⏰ <b>Sélectionnez l'heure du rappel :</b>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(grid),
+            )
+        except Exception as exc:
+            if "Message is not modified" not in str(exc):
+                logger.warning("Erreur affichage sélecteur heure : %s", exc)
 
     async def _show_weekday_picker(self, query, user_id: int):
         prefs = self.db_manager.get_admin_preferences(user_id)
@@ -208,11 +235,15 @@ class NotifsManager:
             rows.append([InlineKeyboardButton(label, callback_data=f"pref_set_weekday_{idx}")])
 
         rows.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
-        await query.edit_message_text(
-            "📅 <b>Sélectionnez le jour de la semaine :</b>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(rows),
-        )
+        try:
+            await query.edit_message_text(
+                "📅 <b>Sélectionnez le jour de la semaine :</b>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+        except Exception as exc:
+            if "Message is not modified" not in str(exc):
+                logger.warning("Erreur affichage sélecteur jour : %s", exc)
 
     async def _show_monthday_picker(self, query, user_id: int):
         prefs = self.db_manager.get_admin_preferences(user_id)
@@ -231,8 +262,12 @@ class NotifsManager:
             grid.append(row)
 
         grid.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
-        await query.edit_message_text(
-            "📅 <b>Sélectionnez le jour du mois :</b>\n<i>(Limité au 28 pour s'adapter à tous les mois)</i>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(grid),
-        )
+        try:
+            await query.edit_message_text(
+                "📅 <b>Sélectionnez le jour du mois :</b>\n<i>(Limité au 28 pour s'adapter à tous les mois)</i>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(grid),
+            )
+        except Exception as exc:
+            if "Message is not modified" not in str(exc):
+                logger.warning("Erreur affichage sélecteur jour du mois : %s", exc)

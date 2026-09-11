@@ -1,5 +1,6 @@
 """Module d'analyse et d'affichage des statistiques d'utilisation du bot."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -26,6 +27,9 @@ class StatsManager:
                 await update.message.reply_text("❌ Action réservée au propriétaire.")
             return
 
+        if update.callback_query:
+            await update.callback_query.answer()
+
         try:
             stats = self._get_full_statistics()
             message = self._format_stats_message(stats)
@@ -38,7 +42,10 @@ class StatsManager:
                 query = update.callback_query
                 if query.message and query.message.photo:
                     chat_id = query.message.chat_id
-                    await query.message.delete()
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
                     await context.bot.send_message(
                         chat_id=chat_id,
                         text=message,
@@ -153,7 +160,7 @@ class StatsManager:
 
     def _format_stats_message(self, stats: dict) -> str:
         """Met en forme l'affichage des métriques."""
-        storage = stats.get("storage_usage", 0.0)
+        storage = float(stats.get("storage_usage", 0.0))
         db_size = stats.get("db_stats", {}).get("total_size_mb", 0.0)
 
         lines = [
@@ -172,10 +179,12 @@ class StatsManager:
         ]
 
         for s in stats.get("statuts", []):
-            lines.append(f"• {s['statut']} : {s['count']}")
+            statut_nom = html.escape(str(s.get("statut") or "Inconnu"))
+            lines.append(f"• {statut_nom} : {s.get('count', 0)}")
 
+        storage_pct = (storage / 512.0) * 100.0 if storage else 0.0
         lines.append("\n💾 <b>Ressources Système :</b>")
-        lines.append(f"• Stockage local : <b>{storage:.1f} Mo / 512 Mo</b> ({(storage / 512) * 100:.1f} %)")
+        lines.append(f"• Stockage local : <b>{storage:.1f} Mo / 512 Mo</b> ({storage_pct:.1f} %)")
         lines.append(f"• Base de données : <b>{db_size} Mo</b>")
 
         return "\n".join(lines)

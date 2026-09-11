@@ -1,5 +1,6 @@
 """Gestion de l'édition et de la suppression des demandes par les utilisateurs."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -166,7 +167,7 @@ class EditionManager:
                 context.user_data.pop("editing", None)
                 field_label = self.ALLOWED_FIELDS.get(field_name, field_name)
                 await update.message.reply_text(
-                    f"✅ <b>{field_label}</b> mis à jour avec succès !",
+                    f"✅ <b>{html.escape(field_label)}</b> mis à jour avec succès !",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("↩️ Retour à la demande", callback_data=f"modify_{demande_id}")
@@ -178,7 +179,7 @@ class EditionManager:
         except ValidationError as err:
             help_text = Validators.get_validation_help(field_name)
             await update.message.reply_text(
-                f"❌ <b>Saisie invalide :</b> {err}\n\n{help_text}\n\n"
+                f"❌ <b>Saisie invalide :</b> {html.escape(str(err))}\n\n{help_text}\n\n"
                 "Ressaisissez la valeur ou cliquez sur Annuler :",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
@@ -214,8 +215,9 @@ class EditionManager:
                 cursor.execute("DELETE FROM demandes WHERE id = %s", (demande_id,))
 
             logger.info("Demande #%s et ses liaisons supprimées par l'utilisateur %s", demande_id, update.effective_user.id)
+            num_demande = demande.get("request_number", demande_id)
             await query.edit_message_text(
-                f"✅ <b>Demande n°{demande.get('request_number', demande_id)} supprimée avec succès.</b>",
+                f"✅ <b>Demande n°{html.escape(str(num_demande))} supprimée avec succès.</b>",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes"),
@@ -252,7 +254,8 @@ class EditionManager:
         if field_name not in self.ALLOWED_FIELDS:
             return False
 
-        query = f"UPDATE demandes SET {field_name} = %s, date_modification = NOW() WHERE id = %s"
+        # Sécurisation du nom de colonne par liste blanche stricte
+        query = f"UPDATE demandes SET `{field_name}` = %s, date_modification = NOW() WHERE id = %s"
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(query, (value, int(demande_id)))
@@ -281,11 +284,16 @@ class EditionManager:
 
     async def _show_modify_menu(self, query, demande: dict):
         """Génère l'interface des champs modifiables."""
-        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+        prenom_esc = html.escape(demande.get("prenom") or "")
+        nom_esc = html.escape(demande.get("nom") or "")
+        nom_complet = f"{prenom_esc} {nom_esc}".strip()
+        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+
         text = (
-            f"✏️ <b>Modifier la demande n°{demande.get('request_number', demande['id'])}</b>\n\n"
+            f"✏️ <b>Modifier la demande n°{req_num}</b>\n\n"
             f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)\n"
-            f"📍 <b>Localisation :</b> {demande['localisation']}\n\n"
+            f"📍 <b>Localisation :</b> {loc_esc}\n\n"
             "Sélectionnez la donnée à modifier :"
         )
 
@@ -316,7 +324,7 @@ class EditionManager:
         help_text = Validators.get_validation_help(field_name)
 
         text = (
-            f"✏️ <b>Modification : {field_label}</b>\n\n"
+            f"✏️ <b>Modification : {html.escape(field_label)}</b>\n\n"
             f"{help_text}\n\n"
             "Envoyez votre nouveau texte ci-dessous :"
         )
@@ -327,10 +335,14 @@ class EditionManager:
 
     async def _show_delete_confirmation(self, query, demande: dict):
         """Affiche l'écran d'avertissement avant suppression."""
-        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+        prenom_esc = html.escape(demande.get("prenom") or "")
+        nom_esc = html.escape(demande.get("nom") or "")
+        nom_complet = f"{prenom_esc} {nom_esc}".strip()
+        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+
         text = (
             f"⚠️ <b>Confirmation de suppression</b>\n\n"
-            f"Demande n°<b>{demande.get('request_number', demande['id'])}</b> ({nom_complet})\n\n"
+            f"Demande n°<b>{req_num}</b> ({nom_complet})\n\n"
             "Cette action est irréversible. Confirmez-vous la suppression ?"
         )
         keyboard = InlineKeyboardMarkup([

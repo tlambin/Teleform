@@ -1,5 +1,6 @@
 """Module de gestion, filtrage dynamique et recherche des demandes disponibles."""
 
+import html
 import logging
 import random
 from telegram import (
@@ -128,7 +129,7 @@ class DispoManager:
         filters["search"] = search_str
 
         await update.message.reply_text(
-            f"🔎 Filtre de recherche appliqué : « <b>{search_str}</b> »",
+            f"🔎 Filtre de recherche appliqué : « <b>{html.escape(search_str)}</b> »",
             parse_mode="HTML"
         )
         await self._render_first_page_from_message(update, context)
@@ -222,12 +223,12 @@ class DispoManager:
             ]
         ]
 
-        search_info = f"« {filters['search']} »" if filters["search"] else "<i>Aucun</i>"
+        search_info = f"« {html.escape(filters['search'])} »" if filters["search"] else "<i>Aucun</i>"
         text = (
             "⚙️ <b>Filtres des demandes disponibles</b>\n\n"
-            f"• <b>Réseaux :</b> {net.upper()}\n"
-            f"• <b>Âge :</b> {age}\n"
-            f"• <b>Type :</b> {typ}\n"
+            f"• <b>Réseaux :</b> {html.escape(net.upper())}\n"
+            f"• <b>Âge :</b> {html.escape(age)}\n"
+            f"• <b>Type :</b> {html.escape(typ)}\n"
             f"• <b>Mot-clé :</b> {search_info}\n\n"
             "<i>Cliquez sur un bouton pour modifier le filtre, puis appliquez :</i>"
         )
@@ -402,51 +403,65 @@ class DispoManager:
             )
 
     def _format_demande_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche avec avertissement si relancée après abandon."""
+        """Formate la fiche avec échappement HTML strict."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
-        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
 
-        demandeur = f"@{demande['username']}" if demande.get("username") else (demande.get("user_first_name") or f"User {demande['user_id']}")
+        prenom_esc = html.escape(str(demande.get("prenom") or ""))
+        nom_esc = html.escape(str(demande.get("nom") or ""))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip()
+        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        statut_esc = html.escape(str(demande.get("statut") or ""))
+        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+
+        if demande.get("username"):
+            demandeur = f"@{html.escape(demande['username'])}"
+        elif demande.get("user_first_name"):
+            demandeur = html.escape(demande["user_first_name"])
+        else:
+            demandeur = f"User {demande['user_id']}"
+
         date_str = str(demande.get("date_creation", ""))[:16]
 
         lines = [
-            f"📮 <b>Demande disponible #{demande.get('request_number', demande['id'])}</b> ({page + 1}/{total})\n",
+            f"📮 <b>Demande disponible #{req_num}</b> ({page + 1}/{total})\n",
             f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
-            f"📍 <b>Localisation :</b> {demande['localisation']}",
+            f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-            f"📊 <b>Statut :</b> <code>{demande.get('statut')}</code>",
+            f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
             f"🙋 <b>Demandeur :</b> {demandeur}"
         ]
 
         if demande.get("raison_abandon"):
             lines.append(
                 f"\n⚠️ <b>HISTORIQUE - TENTATIVE(S) PRÉCÉDENTE(S) :</b>\n"
-                f"{demande['raison_abandon']}"
+                f"{html.escape(str(demande['raison_abandon']))}"
             )
 
         reseaux = []
         if demande.get("instagram"):
-            reseaux.append(f"📷 <a href='https://instagram.com/{demande['instagram']}'>@{demande['instagram']}</a>")
+            ig = html.escape(str(demande["instagram"]))
+            reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
         if demande.get("snapchat"):
-            reseaux.append(f"👻 <a href='https://snapchat.com/add/{demande['snapchat']}'>{demande['snapchat']}</a>")
+            snap = html.escape(str(demande["snapchat"]))
+            reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
         if reseaux:
             lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
 
         if demande.get("details"):
-            det = demande["details"]
+            det = str(demande["details"])
             det_court = (det[:140] + "...") if len(det) > 140 else det
-            lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
+            lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
 
         f = self._get_active_filters(context)
         active_tags = []
         if f["reseau"] != "all":
-            active_tags.append(f"🌐 {f['reseau']}")
+            active_tags.append(f"🌐 {html.escape(f['reseau'])}")
         if f["age_range"] != "all":
-            active_tags.append(f"🎂 {f['age_range']}")
+            active_tags.append(f"🎂 {html.escape(f['age_range'])}")
         if f["search"]:
-            active_tags.append(f"🔎 «{f['search']}»")
+            active_tags.append(f"🔎 «{html.escape(f['search'])}»")
 
         if active_tags:
             lines.append(f"\n🏷️ <i>Filtres : {' | '.join(active_tags)}</i>")

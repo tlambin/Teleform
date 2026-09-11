@@ -1,5 +1,6 @@
 """Gestionnaire de navigation pour le formulaire de demande."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ConversationHandler
@@ -81,10 +82,10 @@ class NavigationManager:
 
         for member in equipe:
             role_icon = "👑" if member.get("role") == "Owner" else "🦈"
-            alias = member.get("alias", f"Admin_{member['user_id']}")
+            raw_alias = member.get("alias") or f"Admin_{member['user_id']}"
             kb_rows.append([
                 InlineKeyboardButton(
-                    f"{role_icon} {alias}",
+                    f"{role_icon} {raw_alias}",
                     callback_data=f"vip_assign_admin_{member['user_id']}"
                 )
             ])
@@ -265,7 +266,6 @@ class NavigationManager:
             "⚠️ <b>Au moins un réseau social est obligatoire.</b>\n"
             "Indiquez son compte <b>Snapchat</b> :"
         )
-        # Snapchat devient obligatoire car Instagram est vide
         await query.edit_message_text(
             text,
             parse_mode="HTML",
@@ -276,7 +276,6 @@ class NavigationManager:
     async def _skip_snapchat(self, query, context):
         demande = context.user_data.setdefault("demande", {})
 
-        # Blocage si Instagram n'a pas été renseigné
         if not demande.get("instagram"):
             msg = (
                 "🚫 <b>Réseau social obligatoire</b>\n\n"

@@ -1,5 +1,6 @@
 """Module de gestion des administrateurs par le propriétaire (Owner)."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
@@ -59,17 +60,21 @@ class AdminManager:
 
             lines = [f"👥 <b>Équipe d'administration</b> ({len(admins)})\n"]
             for adm in admins:
-                pseudo = f"@{adm['username']}" if adm.get("username") else (adm.get("first_name") or "")
+                raw_pseudo = f"@{adm['username']}" if adm.get("username") else (adm.get("first_name") or "")
+                pseudo_esc = html.escape(str(raw_pseudo))
+                alias_esc = html.escape(str(adm.get("alias") or f"Admin_{adm['user_id']}"))
+
                 dt_added = adm.get("date_added")
                 if dt_added:
                     date_paris = convert_utc_to_paris(dt_added)
                     date_str = date_paris.strftime("%d/%m/%Y à %H:%M")
                 else:
                     date_str = "Inconnue"
-                par_qui = adm.get("nom_ajouteur") or "Propriétaire"
+
+                par_qui = html.escape(str(adm.get("nom_ajouteur") or "Propriétaire"))
 
                 lines.append(
-                    f"• <b>{adm['alias']}</b> ({pseudo})\n"
+                    f"• <b>{alias_esc}</b> ({pseudo_esc})\n"
                     f"  ID : <code>{adm['user_id']}</code> | Ajouté le {date_str} par {par_qui}\n"
                 )
 
@@ -132,8 +137,9 @@ class AdminManager:
                 user_data = cursor.fetchone()
 
             if not user_data:
+                saisie_esc = html.escape(saisie)
                 await update.message.reply_text(
-                    f"❌ L'utilisateur <code>{saisie}</code> est introuvable dans la base.\n"
+                    f"❌ L'utilisateur <code>{saisie_esc}</code> est introuvable dans la base.\n"
                     "Il doit obligatoirement envoyer /start au bot avant de pouvoir être nommé administrateur.",
                     parse_mode="HTML"
                 )
@@ -148,7 +154,7 @@ class AdminManager:
                     return self.WAITING_ADMIN_ID
 
                 base_alias = user_data.get("first_name") or user_data.get("username") or f"Admin{target_id}"
-                alias = base_alias[:20]
+                alias = str(base_alias)[:20]
 
                 cursor.execute(
                     """
@@ -161,12 +167,15 @@ class AdminManager:
             self.config.add_admin(target_id)
             logger.info("Admin promu: %s (%s) par le propriétaire", target_id, alias)
 
+            alias_esc = html.escape(alias)
+            nom_user_esc = html.escape(str(user_data.get("first_name") or ""))
+
             # Notification à l'administrateur promu
             try:
                 welcome_msg = (
                     "🎉 <b>Bienvenue dans l'équipe d'administration !</b>\n\n"
                     "Le propriétaire vous a accordé les droits d'accès pour traiter et suivre les demandes.\n\n"
-                    f"🏷️ <b>Votre alias provisoire :</b> <code>{alias}</code>\n\n"
+                    f"🏷️ <b>Votre alias provisoire :</b> <code>{alias_esc}</code>\n\n"
                     "⚠️ <b>Important :</b> Vous avez la possibilité de choisir votre propre pseudonyme officiel.\n"
                     "<i>Attention : vous ne disposez que d'<b>une seule modification</b>. Une fois validé, il sera verrouillé.</i>\n\n"
                     "Cliquez ci-dessous pour le définir dès maintenant :"
@@ -192,9 +201,9 @@ class AdminManager:
 
             await update.message.reply_text(
                 f"✅ <b>Administrateur ajouté avec succès !</b>\n\n"
-                f"👤 <b>Nom :</b> {user_data.get('first_name', '')}\n"
+                f"👤 <b>Nom :</b> {nom_user_esc}\n"
                 f"🆔 <b>ID :</b> <code>{target_id}</code>\n"
-                f"🏷️ <b>Alias initial :</b> <code>{alias}</code>",
+                f"🏷️ <b>Alias initial :</b> <code>{alias_esc}</code>",
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
@@ -250,9 +259,11 @@ class AdminManager:
                 f"Administrateurs en service : <b>{len(admins)}</b>\n"
             ]
             for idx, adm in enumerate(admins, 1):
-                pseudo = f"@{adm['username']}" if adm.get("username") else (adm.get("first_name") or "")
+                raw_pseudo = f"@{adm['username']}" if adm.get("username") else (adm.get("first_name") or "")
+                pseudo_esc = html.escape(str(raw_pseudo))
+                alias_esc = html.escape(str(adm.get("alias") or f"Admin_{adm['user_id']}"))
                 date_str = str(adm.get("date_added", ""))[:10]
-                lines.append(f"{idx}. <b>{adm['alias']}</b> ({pseudo}) — ID: <code>{adm['user_id']}</code> [{date_str}]")
+                lines.append(f"{idx}. <b>{alias_esc}</b> ({pseudo_esc}) — ID: <code>{adm['user_id']}</code> [{date_str}]")
 
             lines.append("\nEnvoyez le <b>numéro</b> de l'administrateur à révoquer :")
 
@@ -299,12 +310,15 @@ class AdminManager:
             ]
         ])
 
-        pseudo = f"@{selected['username']}" if selected.get("username") else (selected.get("first_name") or "")
+        raw_pseudo = f"@{selected['username']}" if selected.get("username") else (selected.get("first_name") or "")
+        pseudo_esc = html.escape(str(raw_pseudo))
+        alias_esc = html.escape(str(selected.get("alias") or f"Admin_{selected['user_id']}"))
+
         await update.message.reply_text(
             f"⚠️ <b>Confirmation de révocation</b>\n\n"
             f"Êtes-vous certain de vouloir retirer les accès administrateur à :\n"
-            f"• <b>Alias :</b> {selected['alias']}\n"
-            f"• <b>Profil :</b> {pseudo}\n"
+            f"• <b>Alias :</b> {alias_esc}\n"
+            f"• <b>Profil :</b> {pseudo_esc}\n"
             f"• <b>ID :</b> <code>{selected['user_id']}</code> ?",
             parse_mode="HTML",
             reply_markup=keyboard
@@ -338,8 +352,9 @@ class AdminManager:
                 [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ])
 
+            alias_esc = html.escape(str(selected.get("alias") or f"Admin_{target_id}"))
             await query.edit_message_text(
-                f"✅ <b>Droits administrateur retirés avec succès pour {selected['alias']}.</b>",
+                f"✅ <b>Droits administrateur retirés avec succès pour {alias_esc}.</b>",
                 parse_mode="HTML",
                 reply_markup=keyboard
             )

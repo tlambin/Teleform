@@ -1,5 +1,6 @@
 """Routeur principal des actions et callbacks d'administration avec relais groupé."""
 
+import html
 import logging
 from telegram import (
     InlineKeyboardButton,
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class AdminHandlers:
-    """Gestionnaire central des fonctionnalités administrateur."""
+    """Gestionnaire central des fonctionnalités administrateur et propriétaire."""
 
     def __init__(self, config, db_manager):
         self.config = config
@@ -51,7 +52,7 @@ class AdminHandlers:
         self.profils = ProfilsManager(db_manager, config)
 
     async def handle_admin_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Aiguillage sécurisé des callbacks administrateurs."""
+        """Aiguillage sécurisé des callbacks administrateurs et propriétaire."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -59,12 +60,11 @@ class AdminHandlers:
         user_id = update.effective_user.id
         data = query.data or ""
 
-        if not self.config.is_admin(user_id, secure_mode=True):
+        # Contrôle des droits : accès autorisé si propriétaire OU administrateur enregistré
+        if not (self.config.is_owner(user_id) or self.config.is_admin(user_id)):
             logger.warning("Tentative d'accès administrateur refusée pour l'utilisateur %s", user_id)
             await query.answer("❌ Accès non autorisé.", show_alert=True)
             return
-
-        await query.answer()
 
         try:
             if data == "demandes_disponibles":
@@ -79,6 +79,7 @@ class AdminHandlers:
             elif data.startswith("suivi_"):
                 await self.suivi.handle_callback_routing(update, context, data)
 
+            # Notifications & Rappels
             elif data == "menu_notifs":
                 await self.notifs.show_notifs_menu(update, context)
 
@@ -203,14 +204,15 @@ class AdminHandlers:
             abandoned = self.db_manager.abandon_admin_demandes_for_pause(admin_id)
             self.db_manager.set_admin_pause_status(admin_id, paused=True)
             alias = self.db_manager.get_admin_alias(admin_id)
+            alias_esc = html.escape(str(alias or f"Admin_{admin_id}"))
 
             for dem in abandoned:
                 try:
                     c_id = dem["user_id"]
-                    req_num = dem.get("request_number") or dem["id"]
+                    req_num = html.escape(str(dem.get("request_number") or dem["id"]))
                     msg_client = (
                         f"⚠️ <b>Demande #{req_num} — Piégeur indisponible</b>\n\n"
-                        f"Votre piégeur référent (<b>{alias}</b>) est actuellement à l'arrêt / en pause.\n"
+                        f"Votre piégeur référent (<b>{alias_esc}</b>) est actuellement à l'arrêt / en pause.\n"
                         "Sa prise en charge sur votre dossier a donc été interrompue.\n\n"
                         "Vous pouvez au choix remettre votre demande dans la file d'attente pour qu'un autre membre prenne le relais, ou la classer sans suite :"
                     )
@@ -264,10 +266,11 @@ class AdminHandlers:
                 await query.answer("❌ Demande introuvable.", show_alert=True)
                 return
 
-            req_num = row.get("request_number", row["id"])
+            req_num = html.escape(str(row.get("request_number", row["id"])))
+            prenom_esc = html.escape(str(row.get("prenom") or ""))
 
             text = (
-                f"💬 <b>Contacter {row['prenom']}</b> (Demande #{req_num})\n\n"
+                f"💬 <b>Contacter {prenom_esc}</b> (Demande #{req_num})\n\n"
                 "Souhaitez-vous autoriser le demandeur à répondre à cet envoi ?"
             )
             keyboard = InlineKeyboardMarkup([
@@ -284,7 +287,7 @@ class AdminHandlers:
                 await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
         except Exception as exc:
-            logger.error("Erreur prompt contact utilisateur: %s", exc)
+            logger.error("Erreur prompt contact utilisateur : %s", exc)
             await query.answer("❌ Erreur technique.", show_alert=True)
 
     async def _start_contact_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int, allow_reply: bool):
@@ -301,13 +304,14 @@ class AdminHandlers:
             await query.answer("❌ Demande introuvable.")
             return
 
-        req_num = row.get("request_number", row["id"])
+        req_num = html.escape(str(row.get("request_number", row["id"])))
+        prenom_esc = html.escape(str(row.get("prenom") or ""))
 
         context.user_data["contact_session"] = {
             "demande_id": demande_id,
             "target_user_id": row["user_id"],
             "prenom": row["prenom"],
-            "req_num": req_num,
+            "req_num": row.get("request_number", row["id"]),
             "allow_reply": allow_reply,
             "visual_media": [],
             "doc_media": [],
@@ -316,7 +320,7 @@ class AdminHandlers:
 
         mode_str = "💬 Réponse autorisée (1 fois)" if allow_reply else "🔒 Message informatif (réponse bloquée)"
         text = (
-            f"📦 <b>Session d'envoi vers {row['prenom']} (Demande #{req_num})</b>\n"
+            f"📦 <b>Session d'envoi vers {prenom_esc} (Demande #{req_num})</b>\n"
             f"Mode : <b>{mode_str}</b>\n\n"
             "Envoyez vos photos, vidéos, documents ou messages texte (en un seul envoi ou plusieurs).\n\n"
             "<i>Tous vos éléments seront conservés et transmis en groupe quand vous validerez.</i>"
@@ -399,9 +403,10 @@ class AdminHandlers:
 
         admin_id = update.effective_user.id
         target_user_id = session["target_user_id"]
-        req_num = session["req_num"]
+        req_num = html.escape(str(session["req_num"]))
         allow_reply = session["allow_reply"]
-        alias = self.db_manager.get_admin_alias(admin_id)
+        raw_alias = self.db_manager.get_admin_alias(admin_id) or f"Admin_{admin_id}"
+        alias_esc = html.escape(str(raw_alias))
 
         visuals = session["visual_media"]
         docs = session["doc_media"]
@@ -416,13 +421,13 @@ class AdminHandlers:
         if query:
             await query.edit_message_text("⏳ Transmission du lot en cours...")
 
-        combined_text = "\n".join(texts)
+        combined_text = "\n".join([html.escape(t) for t in texts])
         corps = f"\n\n« {combined_text} »" if combined_text else ""
         footer = "\n\n<i>Vous pouvez répondre une seule fois ci-dessous.</i>" if allow_reply else ""
 
         header_text = (
             f"💬 <b>Message de l'équipe (Demande #{req_num})</b>\n"
-            f"De : <b>{alias}</b>"
+            f"De : <b>{alias_esc}</b>"
             f"{corps}"
             f"{footer}"
         )
@@ -439,7 +444,7 @@ class AdminHandlers:
                     batch = visuals[i:i + 10]
                     media_group = []
                     for idx, item in enumerate(batch):
-                        item_caption = header_text if (i == 0 and idx == 0) else item["caption"]
+                        item_caption = header_text if (i == 0 and idx == 0) else (html.escape(item["caption"]) if item.get("caption") else None)
                         if item["type"] == "photo":
                             media_group.append(InputMediaPhoto(media=item["file_id"], caption=item_caption, parse_mode="HTML" if item_caption else None))
                         elif item["type"] == "video":
@@ -459,7 +464,7 @@ class AdminHandlers:
                     batch = docs[i:i + 10]
                     doc_group = []
                     for idx, item in enumerate(batch):
-                        item_caption = header_text if (not visuals and i == 0 and idx == 0) else item["caption"]
+                        item_caption = header_text if (not visuals and i == 0 and idx == 0) else (html.escape(item["caption"]) if item.get("caption") else None)
                         doc_group.append(InputMediaDocument(media=item["file_id"], caption=item_caption, parse_mode="HTML" if item_caption else None))
 
                     if len(doc_group) == 1:
@@ -486,7 +491,7 @@ class AdminHandlers:
             total_items = len(visuals) + len(docs) + len(texts)
             done_text = (
                 f"✅ <b>Lot de {total_items} élément{'s' if total_items > 1 else ''} envoyé avec succès !</b>\n"
-                f"Les fichiers ont été regroupés sous votre alias officiel : <code>{alias}</code>"
+                f"Les fichiers ont été regroupés sous votre alias officiel : <code>{alias_esc}</code>"
             )
             back_keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton("↩️ Retour à la demande", callback_data=f"retour_texte_{demande_id}")

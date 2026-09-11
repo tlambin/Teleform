@@ -1,5 +1,6 @@
 """Module de gestion des paramètres de configuration dynamique du bot."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -35,6 +36,9 @@ class ConfigManager:
                 await update.message.reply_text("❌ Accès non autorisé.")
             return
 
+        if update.callback_query:
+            await update.callback_query.answer()
+
         try:
             current_config = self._get_current_config()
             message = self._format_config_message(current_config)
@@ -44,7 +48,10 @@ class ConfigManager:
                 query = update.callback_query
                 if query.message and query.message.photo:
                     chat_id = query.message.chat_id
-                    await query.message.delete()
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
                     await context.bot.send_message(
                         chat_id=chat_id,
                         text=message,
@@ -61,7 +68,7 @@ class ConfigManager:
                 )
 
         except Exception as exc:
-            logger.error("Erreur affichage menu configuration: %s", exc, exc_info=True)
+            logger.error("Erreur affichage menu configuration : %s", exc, exc_info=True)
             await self._send_error_message(update, "❌ Erreur lors de la récupération de la configuration.")
 
     async def toggle_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -70,6 +77,8 @@ class ConfigManager:
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
             return
+
+        await query.answer()
 
         try:
             current = self.is_maintenance_mode()
@@ -94,7 +103,7 @@ class ConfigManager:
             )
 
         except Exception as exc:
-            logger.error("Erreur bascule mode maintenance: %s", exc)
+            logger.error("Erreur bascule mode maintenance : %s", exc)
             await self._send_error_message(update, "❌ Erreur lors de la mise à jour de la maintenance.")
 
     async def toggle_priority_requests(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,6 +112,8 @@ class ConfigManager:
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
             return
+
+        await query.answer()
 
         try:
             current = self.is_priority_allowed()
@@ -120,7 +131,7 @@ class ConfigManager:
             )
 
         except Exception as exc:
-            logger.error("Erreur bascule demandes prioritaires: %s", exc)
+            logger.error("Erreur bascule demandes prioritaires : %s", exc)
             await self._send_error_message(update, "❌ Erreur lors du réglage des demandes prioritaires.")
 
     def get_setting(self, key: str, default=None):
@@ -137,11 +148,11 @@ class ConfigManager:
 
     def is_maintenance_mode(self) -> bool:
         """Indique si la maintenance technique est active."""
-        return self.get_setting("maintenance_mode", "false").lower() == "true"
+        return str(self.get_setting("maintenance_mode", "false")).lower() == "true"
 
     def is_priority_allowed(self) -> bool:
         """Indique si les demandes prioritaires sont activées."""
-        return self.get_setting("allow_priority_requests", "true").lower() == "true"
+        return str(self.get_setting("allow_priority_requests", "true")).lower() == "true"
 
     def get_max_requests_per_user(self) -> int:
         """Retourne le quota maximal de demandes actives autorisé par utilisateur."""
@@ -158,17 +169,18 @@ class ConfigManager:
 
     def _format_config_message(self, cfg: dict) -> str:
         """Formate le récapitulatif des réglages pour l'Owner."""
-        is_maint = cfg.get("maintenance_mode", "false").lower() == "true"
-        is_prio = cfg.get("allow_priority_requests", "true").lower() == "true"
+        is_maint = str(cfg.get("maintenance_mode", "false")).lower() == "true"
+        is_prio = str(cfg.get("allow_priority_requests", "true")).lower() == "true"
         is_active = self.config.are_demandes_enabled()
 
         maint_badge = "🔴 Activé" if is_maint else "🟢 Désactivé"
         prio_badge = "✅ Autorisées" if is_prio else "❌ Désactivées"
         active_badge = "🟢 Ouvert" if is_active else "🔴 Suspendu"
 
-        max_user = cfg.get("max_demandes_per_user", "3")
-        max_tot = cfg.get("max_total_demandes", "0")
-        tot_str = "Illimité" if max_tot == "0" else max_tot
+        max_user = html.escape(str(cfg.get("max_demandes_per_user", "3")))
+        max_tot = str(cfg.get("max_total_demandes", "0"))
+        tot_str = "Illimité" if max_tot == "0" else html.escape(max_tot)
+        retention = html.escape(str(cfg.get("max_request_age_days", "30")))
 
         return (
             "⚙️ <b>Paramètres Généraux du Système</b>\n\n"
@@ -177,7 +189,7 @@ class ConfigManager:
             f"• <b>Demandes prioritaires :</b> {prio_badge}\n"
             f"• <b>Plafond global :</b> <code>{tot_str}</code>\n"
             f"• <b>Plafond par utilisateur :</b> <code>{max_user}</code>\n"
-            f"• <b>Rétention archives :</b> {cfg.get('max_request_age_days', '30')} jours\n\n"
+            f"• <b>Rétention archives :</b> {retention} jours\n\n"
             "Sélectionnez un paramètre pour modifier son état :"
         )
 

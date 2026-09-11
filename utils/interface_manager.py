@@ -1,5 +1,6 @@
 """Interface Manager - Gestionnaire centralisé des claviers et menus du bot."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -20,21 +21,23 @@ class InterfaceManager:
         user_role = self._get_user_role(user_id)
         is_vip = self.db_manager.is_user_vip(user_id)
         badge_vip = " ⭐ <b>[MEMBRE VIP]</b>" if is_vip else ""
+        first_name_esc = html.escape(str(first_name or "Utilisateur"))
 
         if user_role == "owner":
             welcome_msg = (
-                f"👑 <b>Bienvenue {first_name}, Propriétaire !</b>{badge_vip}\n\n"
+                f"👑 <b>Bienvenue {first_name_esc}, Propriétaire !</b>{badge_vip}\n\n"
                 "Sélectionnez une action ci-dessous :"
             )
         elif user_role == "admin":
-            alias = self.db_manager.get_admin_alias(user_id)
+            raw_alias = self.db_manager.get_admin_alias(user_id) or f"Admin_{user_id}"
+            alias_esc = html.escape(str(raw_alias))
             welcome_msg = (
-                f"🦈 <b>Bienvenue {alias} !</b>{badge_vip}\n\n"
+                f"🦈 <b>Bienvenue {alias_esc} !</b>{badge_vip}\n\n"
                 "Sélectionnez une action ci-dessous :"
             )
         else:
             welcome_msg = (
-                f"👋 <b>Bonjour {first_name} !</b>{badge_vip}\n\n"
+                f"👋 <b>Bonjour {first_name_esc} !</b>{badge_vip}\n\n"
                 "Sélectionnez une option pour continuer :"
             )
 
@@ -136,21 +139,23 @@ class InterfaceManager:
             else:
                 message = f"👥 <b>Gestion des Administrateurs</b> ({len(admins)})\n\n"
                 for admin in admins:
-                    pseudo = f"@{admin['username']}" if admin.get("username") else "Sans username"
+                    raw_pseudo = f"@{admin['username']}" if admin.get("username") else "Sans username"
+                    pseudo = html.escape(str(raw_pseudo))
                     date_str = admin["date_added"].strftime("%d/%m/%Y") if admin.get("date_added") else "Inconnue"
-                    par_qui = admin.get("nom_ajouteur") or "Propriétaire"
+                    par_qui = html.escape(str(admin.get("nom_ajouteur") or "Propriétaire"))
+                    alias_esc = html.escape(str(admin.get("alias") or f"Admin_{admin['user_id']}"))
 
                     res_tag = admin.get("perm_reseaux") or "all"
                     type_tag = admin.get("perm_type") or "all"
 
-                    res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(res_tag, res_tag)
-                    type_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(type_tag, type_tag)
+                    res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(res_tag, str(res_tag))
+                    type_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(type_tag, str(type_tag))
                     statut_dispo = "⏸️ <i>(En pause)</i>" if admin.get("is_paused") else "🟢 <i>(En service)</i>"
 
                     message += (
-                        f"• <b>{admin['alias']}</b> {statut_dispo} ({pseudo})\n"
+                        f"• <b>{alias_esc}</b> {statut_dispo} ({pseudo})\n"
                         f"  ID : <code>{admin['user_id']}</code> | Ajouté le {date_str} par {par_qui}\n"
-                        f"  🛡️ <i>Accès : {res_label} | {type_label}</i>\n\n"
+                        f"  🛡️ <i>Accès : {html.escape(res_label)} | {html.escape(type_label)}</i>\n\n"
                     )
 
                     keyboard.append([
@@ -165,7 +170,7 @@ class InterfaceManager:
             keyboard.append([InlineKeyboardButton("🔙 Retour", callback_data="parametres")])
 
         except Exception as exc:
-            logger.error("Erreur génération menu gestion admins: %s", exc, exc_info=True)
+            logger.error("Erreur génération menu gestion admins : %s", exc, exc_info=True)
             message = "👥 <b>Gestion des Administrateurs</b>\n\n❌ Erreur de lecture des données."
             keyboard = [[InlineKeyboardButton("🔙 Retour", callback_data="parametres")]]
 
@@ -184,8 +189,8 @@ class InterfaceManager:
             else:
                 message = f"⭐ <b>Gestion des Membres VIP</b> ({len(vips)})\n\n"
                 for v in vips:
-                    nom = v.get("first_name") or "Utilisateur"
-                    pseudo = f"(@{v['username']})" if v.get("username") else ""
+                    nom = html.escape(str(v.get("first_name") or "Utilisateur"))
+                    pseudo = f"(@{html.escape(str(v['username']))})" if v.get("username") else ""
                     until = v.get("vip_until")
                     if until:
                         exp_str = until.strftime("%d/%m/%Y")
@@ -233,9 +238,9 @@ class InterfaceManager:
     # ========== SOUS-MENU GÉRER LE BOT (Owner) ==========
 
     def get_gerer_bot_menu(self):
-        """Menu de contrôle du bot avec état dynamique et réglage des quotas."""
+        """Menu de contrôle du bot avec synchronisation directe sur l'état des demandes."""
         try:
-            bot_active = self.db_manager.is_bot_active()
+            bot_active = self.config.are_demandes_enabled()
         except Exception:
             bot_active = True
 
@@ -259,8 +264,8 @@ class InterfaceManager:
         message = (
             "🤖 <b>Contrôle du Bot</b>\n\n"
             f"• <b>Statut des demandes :</b> {status_badge}\n"
-            f"• <b>Plafond global :</b> <code>{tot_str}</code>\n"
-            f"• <b>Plafond par personne :</b> <code>{usr_str}</code>\n\n"
+            f"• <b>Plafond global :</b> <code>{html.escape(tot_str)}</code>\n"
+            f"• <b>Plafond par personne :</b> <code>{html.escape(usr_str)}</code>\n\n"
             "Options opérationnelles :"
         )
 
@@ -276,7 +281,7 @@ class InterfaceManager:
     # ========== SOUS-MENU QUOTAS & LIMITES (Owner Only) ==========
 
     def get_limits_menu(self):
-        """Génère l'affichage et le clavier de réglage des quotas."""
+        """Génère l'affichage et le clavier de réglage des quotas en direct depuis la configuration."""
         max_total = self.config.get_max_total_demandes()
         max_user = self.config.get_max_demandes_per_user()
 

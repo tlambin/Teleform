@@ -1,5 +1,6 @@
 """Module de gestion, filtrage et tri dynamique des demandes suivies par les administrateurs."""
 
+import html
 import logging
 from telegram import (
     InlineKeyboardButton,
@@ -109,7 +110,7 @@ class SuiviManager:
         settings["search"] = query_text
 
         await update.message.reply_text(
-            f"🔎 Recherche appliquée sur les suivis : « <b>{query_text}</b> »",
+            f"🔎 Recherche appliquée sur les suivis : « <b>{html.escape(query_text)}</b> »",
             parse_mode="HTML"
         )
         await self._render_first_page_from_message(update, context)
@@ -193,11 +194,11 @@ class SuiviManager:
         }.get(sb, sb)
 
         sens_str = "Croissant" if settings["order"] == "ASC" else "Décroissant"
-        search_str = f"« {settings['search']} »" if settings["search"] else "<i>Aucun</i>"
+        search_str = f"« {html.escape(settings['search'])} »" if settings["search"] else "<i>Aucun</i>"
 
         text = (
             "⚙️ <b>Options de tri & recherche (Demandes Suivies)</b>\n\n"
-            f"• <b>Tri actuel :</b> {nom_critere} ({sens_str} {order_arrow})\n"
+            f"• <b>Tri actuel :</b> {html.escape(nom_critere)} ({sens_str} {order_arrow})\n"
             f"• <b>Recherche :</b> {search_str}\n\n"
             "<i>Cliquez sur un critère pour l'activer ou inverser son ordre :</i>"
         )
@@ -258,7 +259,7 @@ class SuiviManager:
             if settings["search"]:
                 msg = (
                     "💌 <b>Mes Demandes Suivies</b>\n\n"
-                    f"🔍 Aucun suivi ne correspond au filtre « {settings['search']} »."
+                    f"🔍 Aucun suivi ne correspond au filtre « {html.escape(settings['search'])} »."
                 )
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🧹 Effacer la recherche", callback_data="suivi_clear_search")],
@@ -301,7 +302,11 @@ class SuiviManager:
         if not self.config.is_admin(admin_id):
             return
 
-        demande_id = int(query.data.replace("suivre_demande_", ""))
+        try:
+            demande_id = int(query.data.replace("suivre_demande_", ""))
+        except (ValueError, TypeError):
+            await query.answer("❌ ID de demande invalide.", show_alert=True)
+            return
 
         try:
             with self.db_manager.transaction() as cursor:
@@ -383,43 +388,59 @@ class SuiviManager:
             )
 
     def _format_suivi_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche avec avertissement d'échec précédent si la demande a été relancée."""
+        """Formate la fiche avec échappement HTML strict."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
-        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
 
-        demandeur = f"@{demande['username']}" if demande.get("username") else (demande.get("user_first_name") or f"User {demande['user_id']}")
+        prenom_esc = html.escape(str(demande.get("prenom") or ""))
+        nom_esc = html.escape(str(demande.get("nom") or ""))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip()
+        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        statut_esc = html.escape(str(demande.get("statut") or ""))
+        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+
+        if demande.get("username"):
+            demandeur = f"@{html.escape(demande['username'])}"
+        elif demande.get("user_first_name"):
+            demandeur = html.escape(demande["user_first_name"])
+        else:
+            demandeur = f"User {demande['user_id']}"
+
         date_suivi_str = str(demande.get("date_suivi", ""))[:16]
 
         lines = [
-            f"💌 <b>Demande suivie #{demande.get('request_number', demande['id'])}</b> ({page + 1}/{total})\n",
+            f"💌 <b>Demande suivie #{req_num}</b> ({page + 1}/{total})\n",
             f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
-            f"📍 <b>Localisation :</b> {demande['localisation']}",
+            f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-            f"📊 <b>Statut :</b> <code>{demande.get('statut')}</code>",
+            f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
             f"🙋 <b>Demandeur :</b> {demandeur}"
         ]
 
         if demande.get("ancien_admin_alias") and demande.get("raison_abandon"):
+            anc_alias = html.escape(str(demande["ancien_admin_alias"]))
+            motif = html.escape(str(demande["raison_abandon"]))
             lines.append(
                 f"\n⚠️ <b>HISTORIQUE - TENTATIVE PRÉCÉDENTE :</b>\n"
-                f"• Ancien admin : <b>{demande['ancien_admin_alias']}</b>\n"
-                f"• Motif d'abandon : <i>« {demande['raison_abandon']} »</i>"
+                f"• Ancien admin : <b>{anc_alias}</b>\n"
+                f"• Motif d'abandon : <i>« {motif} »</i>"
             )
 
         reseaux = []
         if demande.get("instagram"):
-            reseaux.append(f"📷 <a href='https://instagram.com/{demande['instagram']}'>@{demande['instagram']}</a>")
+            ig = html.escape(str(demande["instagram"]))
+            reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
         if demande.get("snapchat"):
-            reseaux.append(f"👻 <a href='https://snapchat.com/add/{demande['snapchat']}'>{demande['snapchat']}</a>")
+            snap = html.escape(str(demande["snapchat"]))
+            reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
         if reseaux:
             lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
 
         if demande.get("details"):
-            det = demande["details"]
+            det = str(demande["details"])
             det_court = (det[:140] + "...") if len(det) > 140 else det
-            lines.append(f"💬 <b>Détails :</b> <i>{det_court}</i>")
+            lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
 
         s = self._get_sort_settings(context)
         label_sort = {
@@ -432,9 +453,9 @@ class SuiviManager:
         }.get(s["sort_by"], s["sort_by"])
         arrow = "⬆️" if s["order"] == "ASC" else "⬇️"
 
-        tags = [f"{label_sort} {arrow}"]
+        tags = [f"{html.escape(label_sort)} {arrow}"]
         if s["search"]:
-            tags.append(f"«{s['search']}»")
+            tags.append(f"«{html.escape(s['search'])}»")
 
         lines.append(f"\n🏷️ <i>Tri : {' | '.join(tags)} | Suivie le {date_suivi_str}</i>")
         return "\n".join(lines)

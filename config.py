@@ -21,7 +21,7 @@ class Config:
 
     def _validate_required_env_vars(self):
         """Valide la présence des variables d'environnement critiques."""
-        required_vars = ['BOT_TOKEN', 'OWNER_ID', 'DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME']
+        required_vars = ["BOT_TOKEN", "OWNER_ID", "DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME"]
         missing_vars = [var for var in required_vars if not os.getenv(var)]
 
         if missing_vars:
@@ -31,13 +31,13 @@ class Config:
 
     def _setup_basic_config(self):
         """Configuration des identifiants principaux."""
-        self.BOT_TOKEN = os.getenv('BOT_TOKEN')
+        self.BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-        owner_id_str = os.getenv('OWNER_ID', '0')
+        owner_id_str = os.getenv("OWNER_ID", "0")
         if not owner_id_str.isdigit():
             raise ValueError("OWNER_ID doit être un entier valide")
         self.OWNER_ID = int(owner_id_str)
-        self.OWNER_ALIAS = os.getenv('OWNER_ALIAS', 'Propriétaire')
+        self.OWNER_ALIAS = os.getenv("OWNER_ALIAS", "Propriétaire")
 
     def _setup_cache_system(self):
         """Initialise les structures de cache en mémoire."""
@@ -48,17 +48,17 @@ class Config:
 
     def _setup_database_config(self):
         """Configuration de connexion pour DatabaseManager."""
-        port_str = os.getenv('DB_PORT', '3306')
+        port_str = os.getenv("DB_PORT", "3306")
         port = int(port_str) if port_str.isdigit() else 3306
 
         self.DB_CONFIG = {
-            'host': os.getenv('DB_HOST', 'localhost'),
-            'port': port,
-            'user': os.getenv('DB_USER'),
-            'password': os.getenv('DB_PASSWORD'),
-            'database': os.getenv('DB_NAME'),
-            'connect_timeout': 10,
-            'charset': 'utf8mb4'
+            "host": os.getenv("DB_HOST", "localhost"),
+            "port": port,
+            "user": os.getenv("DB_USER"),
+            "password": os.getenv("DB_PASSWORD"),
+            "database": os.getenv("DB_NAME"),
+            "connect_timeout": 10,
+            "charset": "utf8mb4",
         }
 
     def _setup_paths(self):
@@ -84,7 +84,7 @@ class Config:
             else:
                 self._db_manager.set_owner_alias(self.OWNER_ALIAS)
         except Exception as e:
-            logger.error("Erreur chargement owner alias: %s", e)
+            logger.error("Erreur chargement owner alias : %s", e)
 
     def load_admins(self, db_manager=None):
         """Charge la liste des administrateurs depuis MySQL."""
@@ -101,7 +101,7 @@ class Config:
                     new_admins = set()
                     for row in rows:
                         try:
-                            new_admins.add(int(row['user_id']))
+                            new_admins.add(int(row["user_id"]))
                         except (ValueError, TypeError):
                             continue
 
@@ -182,44 +182,67 @@ class Config:
             except (ValueError, TypeError):
                 pass
 
+    # ========== CONTRÔLE DES DEMANDES (Clé unique "bot_active") ==========
+
     def enable_demandes(self):
-        """Active l'acceptation des demandes (synchronisé en base)."""
+        """Active l'acceptation des demandes en base."""
         if self._db_manager:
-            self._db_manager.set_bot_active(True)
-        logger.info("Demandes activées")
+            self._db_manager.set_config_value("bot_active", "true")
+            self._db_manager.set_config_value("demandes_enabled", "true")
+            self._db_manager.set_config_value("maintenance_mode", "false")
+        logger.info("Service demandes activé")
 
     def disable_demandes(self):
-        """Désactive l'acceptation des demandes (synchronisé en base)."""
+        """Désactive l'acceptation des demandes en base."""
         if self._db_manager:
-            self._db_manager.set_bot_active(False)
-        logger.info("Demandes désactivées")
+            self._db_manager.set_config_value("bot_active", "false")
+            self._db_manager.set_config_value("demandes_enabled", "false")
+        logger.info("Service demandes désactivé")
 
-    def are_demandes_enabled(self):
-        """Vérifie si le bot accepte les demandes (lecture base avec cache)."""
+    def are_demandes_enabled(self) -> bool:
+        """Vérifie si les demandes sont acceptées (lecture directe avec fallback)."""
         if self._db_manager:
-            return self._db_manager.is_bot_active()
+            # Vérification du mode maintenance d'abord
+            maint = str(self._db_manager.get_config_value("maintenance_mode", "false")).lower()
+            if maint in ("true", "1", "yes"):
+                return False
+
+            val = str(self._db_manager.get_config_value("bot_active", "true")).lower()
+            return val in ("true", "1", "yes")
         return True
 
+    # ========== GESTION DES LIMITES & QUOTAS ==========
+
     def get_max_total_demandes(self) -> int:
-        """Retourne le quota global via DatabaseManager (fallback 0)."""
+        """Retourne le plafond global (0 = illimité)."""
         if self._db_manager:
-            return self._db_manager.get_max_total_demandes()
+            val = self._db_manager.get_config_value("max_total_demandes", "0")
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return 0
         return 0
 
     def set_max_total_demandes(self, limit: int) -> bool:
-        """Modifie le quota global via DatabaseManager."""
+        """Fixe le plafond global en base."""
         if self._db_manager:
-            return self._db_manager.set_max_total_demandes(limit)
+            val = max(0, int(limit))
+            return self._db_manager.set_config_value("max_total_demandes", str(val))
         return False
 
     def get_max_demandes_per_user(self) -> int:
-        """Retourne le quota individuel via DatabaseManager (fallback 3)."""
+        """Retourne le quota par utilisateur (0 = illimité, défaut 3)."""
         if self._db_manager:
-            return self._db_manager.get_max_demandes_per_user()
+            val = self._db_manager.get_config_value("max_demandes_per_user", "3")
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return 3
         return 3
 
     def set_max_demandes_per_user(self, limit: int) -> bool:
-        """Modifie le quota individuel via DatabaseManager."""
+        """Fixe le quota individuel en base."""
         if self._db_manager:
-            return self._db_manager.set_max_demandes_per_user(limit)
+            val = max(0, int(limit))
+            return self._db_manager.set_config_value("max_demandes_per_user", str(val))
         return False

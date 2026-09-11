@@ -1,5 +1,6 @@
 """Gestion de la consultation et du cycle de vie des demandes utilisateur."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -32,7 +33,7 @@ class DemandeManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     f"SELECT COUNT(*) AS total FROM demandes WHERE {status_filter}",
-                    self.ACTIVE_STATUSES
+                    self.ACTIVE_STATUSES,
                 )
                 row = cursor.fetchone()
                 total_actif = row["total"] if row else 0
@@ -50,7 +51,7 @@ class DemandeManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     f"SELECT COUNT(*) AS count_user FROM demandes WHERE user_id = %s AND {status_filter}",
-                    (int(user_id), *self.ACTIVE_STATUSES)
+                    (int(user_id), *self.ACTIVE_STATUSES),
                 )
                 row = cursor.fetchone()
                 user_actif = row["count_user"] if row else 0
@@ -166,36 +167,43 @@ class DemandeManager:
             await self._send_error_message(update, edit_message)
 
     def _format_demande_card(self, demande: dict, current_page: int, total_pages: int) -> str:
-        """Met en forme la fiche d'une demande."""
+        """Met en forme la fiche d'une demande avec échappement HTML sécurisé."""
         type_badge = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
         montant_str = f" - <b>{float(demande['montant']):.2f} €</b>" if demande.get("prioritaire") else ""
-        nom_complet = f"{demande['prenom']} {demande.get('nom') or ''}".strip()
+
+        prenom_esc = html.escape(demande.get("prenom") or "")
+        nom_esc = html.escape(demande.get("nom") or "")
+        nom_complet = f"{prenom_esc} {nom_esc}".strip()
+        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        statut_esc = html.escape(str(demande.get("statut", "En cours")))
 
         lignes = [
             f"📋 <b>Demande #{demande.get('request_number', demande['id'])}</b> ({current_page + 1}/{total_pages})\n",
             f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
-            f"📍 <b>Localisation :</b> {demande['localisation']}",
+            f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {type_badge}{montant_str}",
-            f"📊 <b>Statut :</b> <code>{demande.get('statut', 'En cours')}</code>"
+            f"📊 <b>Statut :</b> <code>{statut_esc}</code>"
         ]
 
         admin_id = demande.get("admin_en_charge")
         if admin_id:
             alias = self.db_manager.get_admin_alias(admin_id)
-            lignes.append(f"👨‍💼 <b>Référent :</b> {alias}")
+            lignes.append(f"👨‍💼 <b>Référent :</b> {html.escape(alias)}")
 
         reseaux = []
         if demande.get("instagram"):
-            reseaux.append(f"📷 <a href='https://instagram.com/{demande['instagram']}'>@{demande['instagram']}</a>")
+            ig = html.escape(str(demande["instagram"]))
+            reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
         if demande.get("snapchat"):
-            reseaux.append(f"👻 <a href='https://snapchat.com/add/{demande['snapchat']}'>{demande['snapchat']}</a>")
+            snap = html.escape(str(demande["snapchat"]))
+            reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
         if reseaux:
             lignes.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
 
         if demande.get("details"):
-            det = demande["details"]
+            det = str(demande["details"])
             det_short = (det[:150] + "...") if len(det) > 150 else det
-            lignes.append(f"💬 <b>Remarque :</b> <i>{det_short}</i>")
+            lignes.append(f"💬 <b>Remarque :</b> <i>{html.escape(det_short)}</i>")
 
         date_str = str(demande.get("date_creation", ""))[:16]
         lignes.append(f"\n📅 <i>Créée le {date_str}</i>")
@@ -211,24 +219,20 @@ class DemandeManager:
         is_prio = bool(demande.get("prioritaire"))
         is_vip = self.db_manager.is_user_vip(user_id)
 
-        # Actions d'édition si non traitée
         if statut in ["📨 Reçue", "⏳ En attente"]:
             buttons.append([
                 InlineKeyboardButton("✏️ Modifier", callback_data=f"modify_{demande_id}"),
                 InlineKeyboardButton("🗑️ Supprimer", callback_data=f"delete_{demande_id}")
             ])
 
-        # Actions interactives avec l'administrateur assigné
         if admin_en_charge:
             actions_row = []
 
-            # Ligne directe réservée aux VIP
             if is_vip:
                 actions_row.append(
                     InlineKeyboardButton("💬 Contacter mon référent", callback_data=f"vip_contact_admin_{demande_id}")
                 )
 
-            # Relance hebdomadaire (Gratuite pour VIP & Demande prioritaire, 1 € pour Standard)
             if is_vip or is_prio:
                 actions_row.append(
                     InlineKeyboardButton("🔔 Relancer (Gratuit)", callback_data=f"remind_admin_free_{demande_id}")
@@ -240,7 +244,6 @@ class DemandeManager:
 
             buttons.append(actions_row)
 
-        # Barre de pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"nav_page_{page - 1}"))
@@ -250,7 +253,6 @@ class DemandeManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # Contrôle dynamique du bouton de création
         can_create, _ = self.check_creation_quota(user_id)
         btn_creation = (
             InlineKeyboardButton("➕ Nouvelle demande", callback_data="new_demande")

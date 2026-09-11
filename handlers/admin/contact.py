@@ -1,5 +1,6 @@
 """Module de messagerie interne permettant aux administrateurs de contacter le propriétaire."""
 
+import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
@@ -33,8 +34,8 @@ class ContactManager:
 
         await query.answer()
 
-        owner_alias = self.db_manager.get_owner_alias()
-        admin_alias = self.db_manager.get_admin_alias(user_id)
+        owner_alias = html.escape(str(self.db_manager.get_owner_alias() or "Propriétaire"))
+        admin_alias = html.escape(str(self.db_manager.get_admin_alias(user_id) or f"Admin_{user_id}"))
 
         text = (
             f"👑 <b>Contacter le Propriétaire ({owner_alias})</b>\n\n"
@@ -65,7 +66,8 @@ class ContactManager:
             return self.WAITING_ADMIN_MSG
 
         admin_id = update.effective_user.id
-        admin_alias = self.db_manager.get_admin_alias(admin_id)
+        raw_admin_alias = self.db_manager.get_admin_alias(admin_id) or f"Admin_{admin_id}"
+        admin_alias_esc = html.escape(str(raw_admin_alias))
 
         try:
             owner_id = int(self.config.OWNER_ID or self.db_manager.get_owner_id())
@@ -77,18 +79,18 @@ class ContactManager:
             return ConversationHandler.END
 
         header = (
-            f"📨 <b>Message interne de l'administrateur : {admin_alias}</b>\n"
+            f"📨 <b>Message interne de l'administrateur : {admin_alias_esc}</b>\n"
             f"🆔 ID : <code>{admin_id}</code>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
         )
 
         owner_keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"💬 Répondre à {admin_alias}", callback_data=f"owner_reply_to_{admin_id}")
+            InlineKeyboardButton(f"💬 Répondre à {raw_admin_alias}", callback_data=f"owner_reply_to_{admin_id}")
         ]])
 
         try:
             if msg.text:
-                full_text = f"{header}\n{msg.text}"
+                full_text = f"{header}\n{html.escape(msg.text)}"
                 await context.bot.send_message(
                     chat_id=owner_id,
                     text=full_text,
@@ -96,7 +98,8 @@ class ContactManager:
                     reply_markup=owner_keyboard
                 )
             elif msg.photo:
-                caption = f"{header}\n{msg.caption or ''}".strip()
+                caption_content = html.escape(msg.caption) if msg.caption else ""
+                caption = f"{header}\n{caption_content}".strip()
                 await context.bot.send_photo(
                     chat_id=owner_id,
                     photo=msg.photo[-1].file_id,
@@ -105,7 +108,8 @@ class ContactManager:
                     reply_markup=owner_keyboard
                 )
             elif msg.document:
-                caption = f"{header}\n{msg.caption or ''}".strip()
+                caption_content = html.escape(msg.caption) if msg.caption else ""
+                caption = f"{header}\n{caption_content}".strip()
                 await context.bot.send_document(
                     chat_id=owner_id,
                     document=msg.document.file_id,
@@ -157,10 +161,10 @@ class ContactManager:
             return ConversationHandler.END
 
         context.user_data["target_admin_reply_id"] = target_admin_id
-        admin_alias = self.db_manager.get_admin_alias(target_admin_id)
+        admin_alias_esc = html.escape(str(self.db_manager.get_admin_alias(target_admin_id) or f"Admin_{target_admin_id}"))
 
         text = (
-            f"💬 <b>Répondre à l'administrateur {admin_alias}</b> (ID : <code>{target_admin_id}</code>)\n\n"
+            f"💬 <b>Répondre à l'administrateur {admin_alias_esc}</b> (ID : <code>{target_admin_id}</code>)\n\n"
             "Tapez votre réponse au clavier (votre alias officiel de propriétaire sera utilisé) :"
         )
         keyboard = InlineKeyboardMarkup([[
@@ -185,11 +189,11 @@ class ContactManager:
             await msg.reply_text("❌ Erreur : destinataire introuvable.")
             return ConversationHandler.END
 
-        owner_alias = self.db_manager.get_owner_alias()
-        texte_reponse = msg.text.strip()
+        owner_alias_esc = html.escape(str(self.db_manager.get_owner_alias() or "Propriétaire"))
+        texte_reponse = html.escape(msg.text.strip())
 
         notification_text = (
-            f"👑 <b>Réponse du Propriétaire ({owner_alias})</b>\n"
+            f"👑 <b>Réponse du Propriétaire ({owner_alias_esc})</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"« {texte_reponse} »"
         )
@@ -205,9 +209,9 @@ class ContactManager:
                 reply_markup=admin_kb
             )
 
-            admin_alias = self.db_manager.get_admin_alias(target_admin_id)
+            raw_admin_alias = self.db_manager.get_admin_alias(target_admin_id) or f"Admin_{target_admin_id}"
             await msg.reply_text(
-                f"✅ <b>Réponse envoyée à {admin_alias} avec succès !</b>",
+                f"✅ <b>Réponse envoyée à {html.escape(str(raw_admin_alias))} avec succès !</b>",
                 parse_mode="HTML"
             )
             return ConversationHandler.END

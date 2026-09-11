@@ -1,5 +1,6 @@
 """Gestion du compte utilisateur et persistance de l'activité."""
 
+import html
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -80,9 +81,9 @@ class CompteManager:
 
                 if row:
                     if row.get("first_name"):
-                        return row["first_name"]
+                        return html.escape(row["first_name"])
                     if row.get("username"):
-                        return f"@{row['username']}"
+                        return f"@{html.escape(row['username'])}"
 
             return f"User {user_id}"
 

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """Gestionnaire de persistance MySQL avec pool de connexions réutilisables et cache applicatif."""
 
-    def __init__(self, config, pool_size: int = 5):
+    def __init__(self, config, pool_size: int = 2):
         self.config = config
         self.pool_size = pool_size
         self._pool: Optional[pooling.MySQLConnectionPool] = None
@@ -252,6 +252,24 @@ class DatabaseManager:
                 for query in tables:
                     cursor.execute(query)
 
+                # Migration automatique de la table config si colonnes non alignées
+                try:
+                    cursor.execute("DESCRIBE config")
+                    cols = [r["Field"].lower() for r in cursor.fetchall()]
+
+                    if "config_key" in cols and "key_name" not in cols:
+                        cursor.execute("ALTER TABLE config CHANGE config_key key_name VARCHAR(64) NOT NULL")
+                        logger.info("Table config : colonne 'config_key' renommée en 'key_name'.")
+
+                    if "config_value" in cols and "value" not in cols:
+                        cursor.execute("ALTER TABLE config CHANGE config_value value TEXT NOT NULL")
+                        logger.info("Table config : colonne 'config_value' renommée en 'value'.")
+                    elif "value" not in cols:
+                        cursor.execute("ALTER TABLE config ADD COLUMN value TEXT NOT NULL")
+                        logger.info("Table config : colonne 'value' ajoutée.")
+                except Exception as cfg_err:
+                    logger.warning("Vérification schéma config : %s", cfg_err)
+
                 columns_to_add = [
                     ("admins", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
                     ("admins", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
@@ -281,6 +299,28 @@ class DatabaseManager:
                         if getattr(e, "errno", None) != 1060:
                             logger.debug("Info colonne %s.%s : %s", table, col, e)
 
+                # Initialisation des clés système par défaut si absentes
+                try:
+                    k_col, v_col = self._get_config_columns()
+                    default_configs = [
+                        ('bot_active', 'true'),
+                        ('maintenance_mode', 'false'),
+                        ('demandes_enabled', 'true'),
+                        ('max_total_demandes', '0'),
+                        ('max_demandes_per_user', '3'),
+                    ]
+                    for k, v in default_configs:
+                        cursor.execute(
+                            f"""
+                            INSERT INTO config ({k_col}, {v_col})
+                            VALUES (%s, %s)
+                            ON DUPLICATE KEY UPDATE {k_col} = {k_col}
+                            """,
+                            (k, v)
+                        )
+                except Exception as seed_err:
+                    logger.warning("Initialisation clés de config par défaut : %s", seed_err)
+
             logger.info("Vérification et création des tables terminées avec succès.")
         except Exception as exc:
             logger.error("Erreur lors de la création des tables : %s", exc)
@@ -289,19 +329,16 @@ class DatabaseManager:
     # ==================== GESTION DU CACHE EN MÉMOIRE ====================
 
     def _get_cached_value(self, key: str) -> Optional[Any]:
-        """Retourne la valeur en cache si elle n'a pas expiré."""
         now = time.time()
         if key in self._cache and (now - self._cache_timestamp.get(key, 0)) < self._cache_ttl:
             return self._cache[key]
         return None
 
     def _set_cached_value(self, key: str, value: Any):
-        """Met en cache une valeur avec horodatage."""
         self._cache[key] = value
         self._cache_timestamp[key] = time.time()
 
     def clear_cache(self, key: Optional[str] = None):
-        """Purge une clé spécifique ou l'intégralité du cache."""
         if key:
             self._cache.pop(key, None)
             self._cache_timestamp.pop(key, None)
@@ -309,7 +346,39 @@ class DatabaseManager:
             self._cache.clear()
             self._cache_timestamp.clear()
 
-    # ==================== TABLE CONFIG ====================
+    # ==================== TABLE CONFIG DYNAMIQUE ====================
+
+    def _get_config_columns(self) -> Tuple[str, str]:
+        """Détecte les vrais noms de colonnes de la table config (clé, valeur)."""
+        cached = self._get_cached_value("cfg_col_names")
+        if cached:
+            return cached
+
+        key_col, val_col = "key_name", "`value`"
+        try:
+            with self.get_cursor(dictionary=True) as cursor:
+                cursor.execute("SHOW COLUMNS FROM config")
+                cols = [c["Field"].lower() for c in cursor.fetchall()]
+
+                # Détection de la colonne clé
+                if "config_key" in cols:
+                    key_col = "config_key"
+                elif "key_name" in cols:
+                    key_col = "key_name"
+                elif "key" in cols:
+                    key_col = "`key`"
+
+                # Détection de la colonne valeur
+                if "config_value" in cols:
+                    val_col = "config_value"
+                elif "value" in cols:
+                    val_col = "`value`"
+
+            self._set_cached_value("cfg_col_names", (key_col, val_col))
+            return key_col, val_col
+        except Exception as exc:
+            logger.error("Impossible de détecter les colonnes de config : %s", exc)
+            return "key_name", "`value`"
 
     def get_config_value(self, key_name: str, default: Optional[str] = None) -> Optional[str]:
         """Récupère une valeur de configuration depuis la table config."""
@@ -318,14 +387,15 @@ class DatabaseManager:
         if cached is not None:
             return cached
 
+        k_col, v_col = self._get_config_columns()
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
-                    "SELECT value FROM config WHERE key_name = %s",
+                    f"SELECT {v_col} AS val FROM config WHERE {k_col} = %s",
                     (key_name,),
                 )
                 row = cursor.fetchone()
-                val = row["value"] if row else default
+                val = str(row["val"]) if row and row.get("val") is not None else default
                 self._set_cached_value(cache_key, val)
                 return val
         except Exception as exc:
@@ -333,14 +403,15 @@ class DatabaseManager:
             return default
 
     def set_config_value(self, key_name: str, value: str) -> bool:
-        """Met à jour ou insère un paramètre dans la table config avec invalidation du cache."""
+        """Met à jour ou insère un paramètre dans la table config avec invalidation immédiate."""
+        k_col, v_col = self._get_config_columns()
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
-                    """
-                    INSERT INTO config (key_name, value, updated_at)
+                    f"""
+                    INSERT INTO config ({k_col}, {v_col}, updated_at)
                     VALUES (%s, %s, NOW())
-                    ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()
+                    ON DUPLICATE KEY UPDATE {v_col} = VALUES({v_col}), updated_at = NOW()
                     """,
                     (key_name, str(value)),
                 )
@@ -357,11 +428,12 @@ class DatabaseManager:
         if cached is not None:
             return cached
 
+        k_col, v_col = self._get_config_columns()
         try:
             with self.get_cursor() as cursor:
-                cursor.execute("SELECT key_name, value FROM config")
+                cursor.execute(f"SELECT {k_col} AS k, {v_col} AS v FROM config")
                 rows = cursor.fetchall()
-                result = {r["key_name"]: r["value"] for r in rows}
+                result = {r["k"]: str(r["v"]) for r in rows}
                 self._set_cached_value("cfg_all", result)
                 return result
         except Exception as exc:
@@ -369,13 +441,20 @@ class DatabaseManager:
             return {}
 
     def is_bot_active(self) -> bool:
-        """Indique si la création de demandes est activée."""
-        val = self.get_config_value("bot_active", "true")
-        return str(val).lower() == "true"
+        """Indique si la création de demandes est activée (vérifie bot_active et maintenance)."""
+        maint = str(self.get_config_value("maintenance_mode", "false")).lower()
+        if maint in ("true", "1", "yes"):
+            return False
+
+        val = str(self.get_config_value("bot_active", "true")).lower()
+        return val in ("true", "1", "yes")
 
     def set_bot_active(self, active: bool) -> bool:
-        """Bascule l'acceptation globale des demandes."""
-        return self.set_config_value("bot_active", "true" if active else "false")
+        """Bascule l'acceptation globale des demandes et synchronise les clés associées."""
+        val_str = "true" if active else "false"
+        ok1 = self.set_config_value("bot_active", val_str)
+        ok2 = self.set_config_value("demandes_enabled", val_str)
+        return ok1 and ok2
 
     def get_max_total_demandes(self) -> int:
         """Retourne la limite globale de demandes (0 = illimité)."""
@@ -387,7 +466,8 @@ class DatabaseManager:
 
     def set_max_total_demandes(self, limit: int) -> bool:
         """Met à jour le plafond global de demandes."""
-        return self.set_config_value("max_total_demandes", str(max(0, limit)))
+        val = max(0, int(limit))
+        return self.set_config_value("max_total_demandes", str(val))
 
     def get_max_demandes_per_user(self) -> int:
         """Retourne la limite par utilisateur (3 par défaut, 0 = illimité)."""
@@ -399,25 +479,22 @@ class DatabaseManager:
 
     def set_max_demandes_per_user(self, limit: int) -> bool:
         """Met à jour le plafond par utilisateur."""
-        return self.set_config_value("max_demandes_per_user", str(max(0, limit)))
+        val = max(0, int(limit))
+        return self.set_config_value("max_demandes_per_user", str(val))
 
     def get_owner_id(self) -> int:
-        """Retourne l'identifiant du compte propriétaire configuré."""
         val = self.get_config_value("owner_id", str(getattr(self.config, "OWNER_ID", 0)))
         return int(val) if str(val).isdigit() else 0
 
     def get_owner_alias(self) -> str:
-        """Retourne l'alias configuré du propriétaire."""
         return self.get_config_value("owner_alias", "Propriétaire")
 
     def set_owner_alias(self, alias: str) -> bool:
-        """Définit l'alias du propriétaire."""
         return self.set_config_value("owner_alias", alias)
 
     # ==================== TABLE ADMINS ====================
 
     def get_admin_alias(self, user_id: int) -> str:
-        """Retourne le pseudonyme officiel de l'administrateur ou du propriétaire."""
         cache_key = f"alias_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached:
@@ -443,7 +520,6 @@ class DatabaseManager:
             return "Admin"
 
     def set_admin_alias(self, user_id: int, new_alias: str) -> bool:
-        """Met à jour le pseudonyme d'un administrateur ou du propriétaire."""
         clean_alias = new_alias.strip()
 
         if self.config.is_owner(user_id):
@@ -465,7 +541,6 @@ class DatabaseManager:
             return False
 
     def can_admin_edit_alias(self, user_id: int) -> bool:
-        """Indique si l'admin peut encore définir son alias (l'owner peut toujours)."""
         if self.config.is_owner(user_id):
             return True
         try:
@@ -478,7 +553,6 @@ class DatabaseManager:
             return False
 
     def lock_admin_alias(self, user_id: int):
-        """Verrouille définitivement l'alias pour un administrateur."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("UPDATE admins SET alias_locked = TRUE WHERE user_id = %s", (user_id,))
@@ -489,7 +563,6 @@ class DatabaseManager:
     # ==================== MODE PAUSE ADMINISTRATEUR ====================
 
     def is_admin_paused(self, user_id: int) -> bool:
-        """Indique si un administrateur est actuellement en mode pause."""
         cache_key = f"admin_paused_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
@@ -507,7 +580,6 @@ class DatabaseManager:
             return False
 
     def set_admin_pause_status(self, user_id: int, paused: bool) -> bool:
-        """Active ou désactive le mode pause d'un administrateur."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -521,7 +593,6 @@ class DatabaseManager:
             return False
 
     def get_admin_active_demandes(self, admin_id: int) -> List[Dict[str, Any]]:
-        """Récupère les demandes en cours prises en charge par un administrateur."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -539,7 +610,6 @@ class DatabaseManager:
             return []
 
     def abandon_admin_demandes_for_pause(self, admin_id: int) -> List[Dict[str, Any]]:
-        """Passe toutes les demandes actives d'un admin en statut abandonné pour cause d'arrêt."""
         alias = self.get_admin_alias(admin_id)
         reason = f"Piégeur ({alias}) actuellement à l'arrêt / en pause."
 
@@ -582,7 +652,6 @@ class DatabaseManager:
     # ==================== GESTION DES PERMISSIONS ADMIN ====================
 
     def get_admin_permissions(self, user_id: int) -> Dict[str, str]:
-        """Retourne les permissions de traitement d'un admin (l'owner a toujours accès total)."""
         if self.config.is_owner(user_id):
             return {"perm_reseaux": "all", "perm_type": "all"}
 
@@ -609,7 +678,6 @@ class DatabaseManager:
             return default_perms
 
     def update_admin_permission(self, user_id: int, perm_key: str, perm_value: str) -> bool:
-        """Met à jour une permission spécifique d'un admin."""
         if perm_key not in ("perm_reseaux", "perm_type"):
             return False
         try:
@@ -627,7 +695,6 @@ class DatabaseManager:
     # ==================== PRÉFÉRENCES NOTIFICATIONS & RAPPELS ====================
 
     def get_admin_preferences(self, user_id: int) -> Dict[str, Any]:
-        """Retourne les réglages de notifications d'un administrateur avec valeurs par défaut."""
         default_prefs = {
             "user_id": user_id,
             "notif_new_mode": "sound",
@@ -667,7 +734,6 @@ class DatabaseManager:
             return default_prefs
 
     def update_admin_preference(self, user_id: int, key: str, value: Any) -> bool:
-        """Met à jour un paramètre des préférences d'un administrateur avec invalidation du cache."""
         allowed_keys = {
             "notif_new_mode", "rappel_mode", "rappel_freq", "rappel_heure",
             "rappel_jour_semaine", "rappel_jour_mois", "last_rappel_date"
@@ -693,13 +759,12 @@ class DatabaseManager:
             return False
 
     def mark_admin_reminder_sent(self, user_id: int):
-        """Met à jour la date du dernier rappel envoyé à la date du jour."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    UPDATE admin_preferences 
-                    SET last_rappel_date = CURRENT_DATE() 
+                    UPDATE admin_preferences
+                    SET last_rappel_date = CURRENT_DATE()
                     WHERE user_id = %s
                     """,
                     (user_id,)
@@ -709,7 +774,6 @@ class DatabaseManager:
             logger.error("Erreur mise à jour last_rappel_date pour %s: %s", user_id, exc)
 
     def get_all_admin_preferences(self) -> List[Dict[str, Any]]:
-        """Récupère l'ensemble des préférences des administrateurs dont les rappels sont actifs."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("SELECT * FROM admin_preferences WHERE rappel_mode != 'off'")
@@ -721,7 +785,6 @@ class DatabaseManager:
     # ==================== GESTION CLIENTS VIP & STARS ====================
 
     def is_user_vip(self, user_id: int) -> bool:
-        """Vérifie si un utilisateur dispose du statut VIP actif (permanent ou non expiré)."""
         cache_key = f"vip_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
@@ -752,16 +815,15 @@ class DatabaseManager:
             return False
 
     def set_user_vip(self, user_id: int, is_vip: bool, duration_days: Optional[int] = None) -> bool:
-        """Active ou désactive le statut VIP pour un utilisateur."""
         try:
             with self.get_cursor() as cursor:
                 if is_vip:
                     if duration_days and duration_days > 0:
                         cursor.execute(
                             """
-                            UPDATE users 
-                            SET is_vip = TRUE, 
-                                vip_until = DATE_ADD(NOW(), INTERVAL %s DAY) 
+                            UPDATE users
+                            SET is_vip = TRUE,
+                                vip_until = DATE_ADD(NOW(), INTERVAL %s DAY)
                             WHERE user_id = %s
                             """,
                             (duration_days, int(user_id))
@@ -784,7 +846,6 @@ class DatabaseManager:
             return False
 
     def get_vip_users_list(self) -> List[Dict[str, Any]]:
-        """Retourne la liste des membres VIP actifs."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -801,7 +862,6 @@ class DatabaseManager:
             return []
 
     def get_available_admins_for_selection(self) -> List[Dict[str, Any]]:
-        """Retourne la liste des membres disponibles (non en pause) pour le choix VIP."""
         equipe = []
         try:
             owner_id = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
@@ -814,7 +874,7 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT user_id, alias FROM admins 
+                    SELECT user_id, alias FROM admins
                     WHERE (is_paused IS FALSE OR is_paused IS NULL)
                     ORDER BY alias ASC
                     """
@@ -827,10 +887,9 @@ class DatabaseManager:
             logger.error("Erreur extraction équipe VIP : %s", exc)
             return equipe
 
-    # ==================== RAPPELS DEMANDES (VIP, PAYANTES & STANDARDS) ====================
+    # ==================== RAPPELS DEMANDES ====================
 
     def can_send_demande_reminder(self, demande_id: int) -> Tuple[bool, Optional[str]]:
-        """Vérifie si le rappel hebdomadaire peut être envoyé (limité à 1 fois par semaine)."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -859,7 +918,6 @@ class DatabaseManager:
             return False, "Erreur technique."
 
     def record_demande_reminder_sent(self, demande_id: int):
-        """Enregistre l'horodatage du rappel envoyé pour la demande."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -872,14 +930,12 @@ class DatabaseManager:
     # ==================== STATISTIQUES & PROFILS ====================
 
     def get_admin_stats(self, admin_id: int) -> Dict[str, Any]:
-        """Calcule l'ensemble des métriques de performance et de charge d'un administrateur ou du propriétaire."""
         try:
             admin_id = int(admin_id)
         except (ValueError, TypeError):
             pass
 
         is_owner = self.config.is_owner(admin_id)
-
         stats = {
             "user_id": admin_id,
             "alias": self.get_admin_alias(admin_id),
@@ -927,7 +983,7 @@ class DatabaseManager:
 
                 cursor.execute(
                     """
-                    SELECT 
+                    SELECT
                         SUM(CASE WHEN d.statut = '✅ Réussie' THEN 1 ELSE 0 END) AS reussies,
                         SUM(CASE WHEN d.statut = '❌ Abandonnée' THEN 1 ELSE 0 END) AS abandonnees,
                         SUM(CASE WHEN d.prioritaire = 1 THEN 1 ELSE 0 END) AS nb_prio,
@@ -956,7 +1012,6 @@ class DatabaseManager:
             return stats
 
     def get_user_stats(self, user_id: int, demande_id: Optional[int] = None) -> Dict[str, Any]:
-        """Calcule le profil statistique complet d'un demandeur avec statut VIP."""
         try:
             user_id = int(user_id)
         except (ValueError, TypeError):
@@ -1004,7 +1059,7 @@ class DatabaseManager:
 
                 cursor.execute(
                     """
-                    SELECT 
+                    SELECT
                         COUNT(*) AS total,
                         SUM(CASE WHEN statut IN ('🔄 En cours', '⚠️ Difficile') THEN 1 ELSE 0 END) AS en_cours,
                         SUM(CASE WHEN statut IN ('📨 Reçue', '⏳ En attente') THEN 1 ELSE 0 END) AS en_attente,
@@ -1021,7 +1076,7 @@ class DatabaseManager:
 
                 cursor.execute(
                     """
-                    SELECT 
+                    SELECT
                         COUNT(*) AS total_archives,
                         SUM(CASE WHEN statut = '✅ Réussie' THEN 1 ELSE 0 END) AS reussies_arch,
                         SUM(CASE WHEN statut = '❌ Abandonnée' THEN 1 ELSE 0 END) AS abandonnees_arch,
@@ -1064,7 +1119,6 @@ class DatabaseManager:
     # ==================== UTILITAIRE / MÉTRIQUES ====================
 
     def get_database_size(self) -> Dict[str, Any]:
-        """Calcule le volume occupé par la base de données et le détail des tables en Mo."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -1077,7 +1131,7 @@ class DatabaseManager:
                     WHERE table_schema = %s
                     ORDER BY (data_length + index_length) DESC
                     """,
-                    (self.config.DB_NAME,),
+                    (self.config.DB_CONFIG["database"],),
                 )
                 tables = cursor.fetchall()
                 total_size = sum(float(t.get("size_mb", 0) or 0) for t in tables)
@@ -1093,8 +1147,8 @@ class DatabaseManager:
 
 _global_db_manager = None
 
+
 def get_db_manager(config=None):
-    """Fournit une instance singleton de DatabaseManager."""
     global _global_db_manager
     if _global_db_manager is None:
         if config is None:

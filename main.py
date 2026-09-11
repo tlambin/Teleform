@@ -451,31 +451,31 @@ class TelegramBot:
         app.add_handler(CommandHandler("toggle_demandes", self.owner_handlers.toggle_demandes))
         app.add_handler(CommandHandler("maintenance", self.owner_handlers.run_maintenance))
 
-        # Callbacks propriétaire (permissions admin, contrôle bot, stats, VIP)
+        # 1. Callbacks propriétaire (permissions admin, contrôle bot, stats, VIP)
         app.add_handler(CallbackQueryHandler(
             self.owner_handlers.handle_owner_callbacks,
             pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips)$",
         ))
 
-        # Callbacks d'interface générale
-        app.add_handler(CallbackQueryHandler(
-            self.user_handlers.handle_interface_callbacks,
-            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_bot|menu_limits|limit_.*|bot_.*)$",
-        ))
-
-        # Callbacks admin (profils statistiques, notifications, filtres, préférences et mode pause)
+        # 2. Callbacks admin (prioritaires sur l'interface générale pour éviter d'intercepter menu_notifs, pref_ et admin_)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(admin_|demandes_disponibles|dispo_|demandes_suivies|suivi_|mark_treated_menu|change_status_|set_status_|voir_photo_|retour_texte_|suivre_demande_|contacter_|contact_mode_|cancel_contact_|send_batch_|menu_notifs|pref_|profil_|admin_pause_.*|admin_resume)$",
+            pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
         ))
 
-        # Callbacks utilisateur (formulaires, options VIP, boutique Stars et relances)
+        # 3. Callbacks d'interface générale (menus de base, quotas et navigation)
+        app.add_handler(CallbackQueryHandler(
+            self.user_handlers.handle_interface_callbacks,
+            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_bot|menu_limits|limit_.*)$",
+        ))
+
+        # 4. Callbacks utilisateur (formulaires, options VIP, boutique Stars et relances)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
-            pattern=r"^(nav_|modify_|edit_|delete_|confirm_delete_|cancel_demande_|form_|cancel_edit|reply_to_admin_|cancel_user_reply|quota_reached_info|reprendre_demande_|archiver_demande_|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*)$",
+            pattern=r"^(nav_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*)$",
         ))
 
-        # Messages (texte, photos, vidéos, documents) hors commandes
+        # Messages hors commandes
         app.add_handler(MessageHandler(
             (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & ~filters.COMMAND,
             self.user_handlers.handle_text_messages,
@@ -526,5 +526,5 @@ if __name__ == "__main__":
         bot.run()
 
     except Exception as e:
-        logger.critical("Erreur critique au démarrage: %s", e, exc_info=True)
+        logger.critical("Erreur critique au démarrage : %s", e, exc_info=True)
         sys.exit(1)
