@@ -3,6 +3,7 @@
 import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from utils.validators import convert_utc_to_paris
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,14 @@ class InterfaceManager:
                 for admin in admins:
                     raw_pseudo = f"@{admin['username']}" if admin.get("username") else "Sans username"
                     pseudo = html.escape(str(raw_pseudo))
-                    date_str = admin["date_added"].strftime("%d/%m/%Y") if admin.get("date_added") else "Inconnue"
+
+                    dt_added = admin.get("date_added")
+                    if dt_added:
+                        date_paris = convert_utc_to_paris(dt_added)
+                        date_str = date_paris.strftime("%d/%m/%Y")
+                    else:
+                        date_str = "Inconnue"
+
                     par_qui = html.escape(str(admin.get("nom_ajouteur") or "Propriétaire"))
                     alias_esc = html.escape(str(admin.get("alias") or f"Admin_{admin['user_id']}"))
 
@@ -159,7 +167,7 @@ class InterfaceManager:
                     )
 
                     keyboard.append([
-                        InlineKeyboardButton(f"🛡️ Droits : {admin['alias']}", callback_data=f"perm_admin_{admin['user_id']}"),
+                        InlineKeyboardButton(f"🛡️ Droits : {admin.get('alias', admin['user_id'])}", callback_data=f"perm_admin_{admin['user_id']}"),
                         InlineKeyboardButton("📊 Stats", callback_data=f"profil_admin_{admin['user_id']}")
                     ])
 
@@ -193,7 +201,8 @@ class InterfaceManager:
                     pseudo = f"(@{html.escape(str(v['username']))})" if v.get("username") else ""
                     until = v.get("vip_until")
                     if until:
-                        exp_str = until.strftime("%d/%m/%Y")
+                        until_paris = convert_utc_to_paris(until)
+                        exp_str = until_paris.strftime("%d/%m/%Y")
                         status_str = f"Expire le {exp_str}"
                     else:
                         status_str = "👑 À vie"

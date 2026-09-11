@@ -1,8 +1,8 @@
 # Webhook WSGI (PythonAnywhere)
 Flask>=3.1.0
 
-# Framework Telegram
-python-telegram-bot>=22.8
+# Framework Telegram (avec support JobQueue pour tests locaux / main.py)
+python-telegram-bot[job-queue]>=22.8
 
 # Variables d'environnement & Timezone
 python-dotenv>=1.0.1
@@ -12,8 +12,8 @@ pytz>=2025.1
 mysql-connector-python>=9.0.0
 aiosqlite>=0.21.0
 
-# Réseau & Requêtes asynchrones/synchrones
-httpx>=0.28.0
+# Réseau & Requêtes asynchrones/synchrones (avec support proxy étendu)
+httpx[socks]>=0.28.0
 requests>=2.32.0
 aiofiles>=24.1.0
 

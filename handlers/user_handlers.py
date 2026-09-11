@@ -29,7 +29,7 @@ class UserHandlers:
 
     @property
     def admin_handlers(self):
-        """Lazy-loading du gestionnaire admin pour éviter les instanciations circulaires et répétitives."""
+        """Lazy-loading du gestionnaire admin pour éviter les instanciations circulaires."""
         if self._admin_handlers is None:
             from handlers.admin_handlers import AdminHandlers
             self._admin_handlers = AdminHandlers(self.config, self.db_manager)
@@ -40,18 +40,31 @@ class UserHandlers:
         if not update.effective_user or not update.message:
             return
 
-        await self.compte.ensure_user_registered(update)
         user_id = update.effective_user.id
+        first_name = update.effective_user.first_name
+        logger.info("🚀 Exécution de /start pour user_id=%s (%s)", user_id, first_name)
 
-        welcome_msg, reply_markup = self.interface.get_start_interface(
-            user_id, update.effective_user.first_name
-        )
+        try:
+            await self.compte.ensure_user_registered(update)
+            logger.info("👤 Utilisateur %s vérifié/enregistré en base", user_id)
 
-        await update.message.reply_text(
-            welcome_msg,
-            parse_mode="HTML",
-            reply_markup=reply_markup,
-        )
+            welcome_msg, reply_markup = self.interface.get_start_interface(user_id, first_name)
+
+            await update.message.reply_text(
+                welcome_msg,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+            logger.info("✅ Message de bienvenue envoyé avec succès à %s", user_id)
+
+        except Exception as exc:
+            logger.error("💥 Erreur lors de l'exécution de /start pour %s : %s", user_id, exc, exc_info=True)
+            try:
+                await update.message.reply_text(
+                    "❌ Une erreur interne est survenue lors du chargement du menu. Réessayez dans quelques instants."
+                )
+            except Exception:
+                pass
 
     async def handle_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Aiguillage des callbacks d'actions utilisateur."""
@@ -109,7 +122,6 @@ class UserHandlers:
                 title = "Abonnement VIP 30 Jours"
                 desc = "Accès VIP pendant 30 jours : demandes illimitées, choix du référent et contact direct."
                 payload = f"vip_sub_{user_id}_30d"
-
                 prices = [LabeledPrice(label=title, amount=stars_price)]
 
                 await context.bot.send_invoice(
@@ -123,7 +135,7 @@ class UserHandlers:
                 )
                 return
 
-            # 5. Relance hebdomadaire gratuite (VIP ou demande prioritaire)
+            # 5. Relance hebdomadaire gratuite
             elif data.startswith("remind_admin_free_"):
                 demande_id = int(data.replace("remind_admin_free_", ""))
                 can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
@@ -147,7 +159,7 @@ class UserHandlers:
                 await self._dispatch_admin_reminder(update, context, demande_id, is_paid_boost=False)
                 return
 
-            # 6. Relance hebdomadaire payante (Demande standard : 1 € = 50 Stars)
+            # 6. Relance payante
             elif data.startswith("remind_admin_pay_"):
                 demande_id = int(data.replace("remind_admin_pay_", ""))
                 can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
@@ -183,7 +195,7 @@ class UserHandlers:
                 )
                 return
 
-            # 7. Ligne directe VIP avec l'admin en charge
+            # 7. Ligne directe VIP
             elif data.startswith("vip_contact_admin_"):
                 demande_id = int(data.replace("vip_contact_admin_", ""))
                 with self.db_manager.get_cursor() as cursor:
@@ -222,10 +234,9 @@ class UserHandlers:
                 await self.formulaire.handle_vip_admin_choice(update, context)
                 return
 
-            # 8. Reprise suite à un abandon admin
+            # 8. Reprise suite à un abandon
             elif data.startswith("reprendre_demande_"):
                 demande_id = int(data.replace("reprendre_demande_", ""))
-
                 try:
                     with self.db_manager.transaction() as cursor:
                         cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
@@ -251,10 +262,9 @@ class UserHandlers:
                     await query.answer("❌ Erreur technique lors de la remise en file d'attente.", show_alert=True)
                 return
 
-            # 9. Archivage définitif par le demandeur
+            # 9. Archivage
             elif data.startswith("archiver_demande_"):
                 demande_id = int(data.replace("archiver_demande_", ""))
-
                 try:
                     with self.db_manager.transaction() as cursor:
                         cursor.execute("SELECT * FROM demandes WHERE id = %s AND user_id = %s", (demande_id, user_id))
@@ -520,7 +530,7 @@ class UserHandlers:
         if not update.message:
             return
 
-        # Saisie d'un quota par le propriétaire (persistance immédiate en base)
+        # Saisie d'un quota par le propriétaire
         if update.message.text and context.user_data and context.user_data.get("waiting_limit_input"):
             if self.config.is_owner(update.effective_user.id):
                 raw = update.message.text.strip()

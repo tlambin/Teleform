@@ -25,7 +25,7 @@ class NavigationManager:
         keyboard = []
         action_row = []
 
-        # Bouton Retour (si l'état a un précédent)
+        # Bouton Retour
         if current_state in self.form.state_history:
             action_row.append(
                 InlineKeyboardButton(
@@ -34,7 +34,7 @@ class NavigationManager:
                 )
             )
 
-        # Bouton Passer (si le champ est optionnel)
+        # Bouton Passer
         if include_skip and current_state in self.form.skippable_fields:
             action_row.append(
                 InlineKeyboardButton(
@@ -97,6 +97,35 @@ class NavigationManager:
         ])
         return InlineKeyboardMarkup(kb_rows)
 
+    async def _safe_edit_or_send(self, query, context, text: str, reply_markup=None):
+        """Édite le message ou supprime la photo existante pour réémettre du texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup
+                    )
+
     async def handle_form_navigation(self, update, context):
         """Point d'entrée du routage navigationnel."""
         query = update.callback_query
@@ -108,7 +137,7 @@ class NavigationManager:
         if len(parts) < 2:
             return None
 
-        action = parts[1]  # back, skip, cancel
+        action = parts[1]
 
         if action == "cancel":
             return await self.handle_cancel(query, context)
@@ -205,34 +234,12 @@ class NavigationManager:
 
         screen = back_screens.get(previous_state)
         if screen:
-            is_current_photo = bool(query.message and query.message.photo)
-            chat_id = query.message.chat_id if query.message else None
-
-            if is_current_photo and chat_id:
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=screen["text"],
-                    parse_mode="HTML",
-                    reply_markup=screen["keyboard"],
-                )
-            else:
-                try:
-                    await query.edit_message_text(
-                        screen["text"],
-                        parse_mode="HTML",
-                        reply_markup=screen["keyboard"],
-                    )
-                except Exception:
-                    if query.message:
-                        await query.message.reply_text(
-                            screen["text"],
-                            parse_mode="HTML",
-                            reply_markup=screen["keyboard"],
-                        )
+            await self._safe_edit_or_send(
+                query,
+                context,
+                screen["text"],
+                reply_markup=screen["keyboard"]
+            )
             return previous_state
 
         return current_state
@@ -252,10 +259,11 @@ class NavigationManager:
 
     async def _skip_nom(self, query, context):
         context.user_data.setdefault("demande", {})["nom"] = None
-        await query.edit_message_text(
+        await self._safe_edit_or_send(
+            query,
+            context,
             "⏭️ <b>Nom ignoré</b>\n\nIndiquez son âge (entre 18 et 40 ans) :",
-            parse_mode="HTML",
-            reply_markup=self.create_navigation_keyboard(self.form.AGE),
+            reply_markup=self.create_navigation_keyboard(self.form.AGE)
         )
         return self.form.AGE
 
@@ -266,10 +274,11 @@ class NavigationManager:
             "⚠️ <b>Au moins un réseau social est obligatoire.</b>\n"
             "Indiquez son compte <b>Snapchat</b> :"
         )
-        await query.edit_message_text(
+        await self._safe_edit_or_send(
+            query,
+            context,
             text,
-            parse_mode="HTML",
-            reply_markup=self.create_navigation_keyboard(self.form.SNAPCHAT, include_skip=False),
+            reply_markup=self.create_navigation_keyboard(self.form.SNAPCHAT, include_skip=False)
         )
         return self.form.SNAPCHAT
 
@@ -286,25 +295,27 @@ class NavigationManager:
                 [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.form.SNAPCHAT}")],
                 [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
             ])
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
             return self.form.SNAPCHAT
 
         demande["snapchat"] = None
-        await query.edit_message_text(
+        await self._safe_edit_or_send(
+            query,
+            context,
             "⏭️ <b>Snapchat ignoré</b>\n\nAvez-vous des détails ou remarques supplémentaires à ajouter ?",
-            parse_mode="HTML",
-            reply_markup=self.create_navigation_keyboard(self.form.DETAILS, include_skip=True),
+            reply_markup=self.create_navigation_keyboard(self.form.DETAILS, include_skip=True)
         )
         return self.form.DETAILS
 
     async def _skip_details(self, query, context):
         context.user_data.setdefault("demande", {})["details"] = None
-        await query.edit_message_text(
+        await self._safe_edit_or_send(
+            query,
+            context,
             "⏭️ <b>Détails ignorés</b>\n\n"
             "💎 <b>Souhaitez-vous une demande prioritaire ?</b>\n\n"
             "Les demandes prioritaires nécessitent un montant et sont examinées en premier.",
-            parse_mode="HTML",
-            reply_markup=self.create_priority_keyboard(),
+            reply_markup=self.create_priority_keyboard()
         )
         return self.form.PRIORITAIRE
 
@@ -312,9 +323,9 @@ class NavigationManager:
         """Nettoie le contexte et clôt le ConversationHandler."""
         context.user_data.pop("demande", None)
         context.user_data.pop("user_id", None)
-        await query.edit_message_text(
-            "❌ <b>Création de demande annulée</b>\n\n"
-            "Tapez /start pour revenir au menu principal.",
-            parse_mode="HTML",
+        await self._safe_edit_or_send(
+            query,
+            context,
+            "❌ <b>Création de demande annulée</b>\n\nTapez /start pour revenir au menu principal."
         )
         return ConversationHandler.END

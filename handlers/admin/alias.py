@@ -21,6 +21,38 @@ class AliasManager:
         self.config = config
         logger.info("AliasManager initialisé")
 
+    async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
+        """Met à jour le message ou supprime la photo existante pour envoyer le texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+
     def get_admin_alias(self, admin_user_id: int) -> str:
         """Récupère l'alias de l'administrateur avec génération automatique en fallback."""
         try:
@@ -40,7 +72,7 @@ class AliasManager:
                 return alias_auto
 
         except Exception as exc:
-            logger.error("Erreur récupération alias admin %s: %s", admin_user_id, exc)
+            logger.error("Erreur récupération alias admin %s : %s", admin_user_id, exc)
             return f"Admin_{admin_user_id}"
 
     def _generate_default_admin_alias(self, admin_user_id: int) -> str:
@@ -66,16 +98,16 @@ class AliasManager:
                 return f"{self.DEFAULT_ADMIN_PREFIX} {total}"
 
         except Exception as exc:
-            logger.error("Erreur génération alias par défaut: %s", exc)
+            logger.error("Erreur génération alias par défaut : %s", exc)
             return f"{self.DEFAULT_ADMIN_PREFIX} 1"
 
     def _save_admin_alias(self, admin_user_id: int, alias: str):
-        """Sauvegarde l'alias en base de données."""
+        """Sauvegarde l'alias en base de données avec commit explicite."""
         clean_alias = alias.strip()
         if self.config.is_owner(admin_user_id):
             self.db_manager.set_config_value("owner_alias", clean_alias)
         else:
-            with self.db_manager.get_cursor() as cursor:
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     "UPDATE admins SET alias = %s WHERE user_id = %s",
                     (clean_alias, admin_user_id),
@@ -86,7 +118,7 @@ class AliasManager:
         """Contrôle la disponibilité d'un pseudonyme."""
         try:
             current_user_id = int(current_user_id)
-            owner_alias = self.db_manager.get_config_value("owner_alias", self.DEFAULT_OWNER_ALIAS)
+            owner_alias = self.db_manager.get_config_value("owner_alias", self.DEFAULT_OWNER_ALIAS) or self.DEFAULT_OWNER_ALIAS
             if owner_alias.lower() == new_alias.lower() and not self.config.is_owner(current_user_id):
                 return False
 
@@ -101,7 +133,7 @@ class AliasManager:
                 return cursor.fetchone() is None
 
         except Exception as exc:
-            logger.error("Erreur contrôle unicité alias: %s", exc)
+            logger.error("Erreur contrôle unicité alias : %s", exc)
             return False
 
     async def modifier_alias(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -141,7 +173,7 @@ class AliasManager:
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")]])
                 if query:
                     await query.answer("🔒 Alias déjà configuré.", show_alert=True)
-                    await query.edit_message_text(alert_msg, parse_mode="HTML", reply_markup=kb)
+                    await self._safe_edit_or_send(query, context, alert_msg, reply_markup=kb)
                 elif update.message:
                     await update.message.reply_text(alert_msg, parse_mode="HTML", reply_markup=kb)
                 return ConversationHandler.END
@@ -178,7 +210,7 @@ class AliasManager:
 
         if query:
             await query.answer()
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
         elif update.message:
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -251,7 +283,7 @@ class AliasManager:
             return ConversationHandler.END
 
         except Exception as exc:
-            logger.error("Erreur enregistrement alias %s: %s", target_id, exc)
+            logger.error("Erreur enregistrement alias %s : %s", target_id, exc)
             await update.message.reply_text("❌ Une erreur est survenue lors de l'enregistrement.")
             return ConversationHandler.END
 
@@ -273,7 +305,7 @@ class AliasManager:
 
         if update.callback_query:
             await update.callback_query.answer()
-            await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            await self._safe_edit_or_send(update.callback_query, context, msg, reply_markup=kb)
         elif update.message:
             await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
 
@@ -316,6 +348,6 @@ class AliasManager:
         except Forbidden:
             logger.warning("Notification non délivrée : le bot a été bloqué par l'utilisateur %s", user_id)
         except TelegramError as exc:
-            logger.warning("Erreur Telegram lors de l'envoi de la notification à %s: %s", user_id, exc)
+            logger.warning("Erreur Telegram lors de l'envoi de la notification à %s : %s", user_id, exc)
         except Exception as exc:
-            logger.error("Erreur inattendue envoi notification: %s", exc, exc_info=True)
+            logger.error("Erreur inattendue envoi notification : %s", exc, exc_info=True)

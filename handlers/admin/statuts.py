@@ -82,7 +82,7 @@ class StatutsManager:
                 )
 
         except Exception as exc:
-            logger.error("Erreur affichage menu changement statut: %s", exc, exc_info=True)
+            logger.error("Erreur affichage menu changement statut : %s", exc, exc_info=True)
 
     async def set_status_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Applique le nouveau statut ou intercepte l'abandon pour demander un motif."""
@@ -144,7 +144,7 @@ class StatutsManager:
                     await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
                 return
 
-            # TOUS LES AUTRES STATUTS : application directe
+            # AUTRES STATUTS : application directe
             admin_alias = self.db_manager.get_admin_alias(admin_id)
             old_status = demande["statut"]
             user_id_demande = demande["user_id"]
@@ -186,7 +186,7 @@ class StatutsManager:
                         admin_alias,
                     )
                 except Exception as notif_err:
-                    logger.warning("Échec notification demandeur: %s", notif_err)
+                    logger.warning("Échec notification demandeur : %s", notif_err)
 
             demande["statut"] = nouveau_statut
             if query.message and query.message.photo:
@@ -195,7 +195,7 @@ class StatutsManager:
                 await self._update_existing_text_message(query, demande, nouveau_statut)
 
         except Exception as exc:
-            logger.error("Erreur mise à jour statut demande: %s", exc, exc_info=True)
+            logger.error("Erreur mise à jour statut demande : %s", exc, exc_info=True)
 
     async def process_abandon_reason(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Enregistre le motif d'abandon fourni au clavier, cumule l'historique et notifie le demandeur."""
@@ -282,7 +282,7 @@ class StatutsManager:
                     reply_markup=abandon_keyboard,
                 )
             except Exception as notif_exc:
-                logger.warning("Échec envoi motif abandon à %s: %s", user_id_demande, notif_exc)
+                logger.warning("Échec envoi motif abandon à %s : %s", user_id_demande, notif_exc)
 
             back_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("📋 Retour aux demandes suivies", callback_data="demandes_suivies")
@@ -295,19 +295,20 @@ class StatutsManager:
             )
 
         except Exception as exc:
-            logger.error("Erreur traitement motif abandon demande %s: %s", demande_id, exc, exc_info=True)
+            logger.error("Erreur traitement motif abandon demande %s : %s", demande_id, exc, exc_info=True)
             await update.message.reply_text("❌ Une erreur est survenue lors de l'enregistrement de l'abandon.")
 
     async def _update_existing_text_message(self, query, demande: dict, nouveau_statut: str):
         """Actualise le corps du message texte après transition d'état avec historique cumulé."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
+        montant_val = float(demande.get("montant") or 0.0)
+        montant_str = f" ({montant_val:.2f}€)" if demande.get("prioritaire") else ""
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
         statut_esc = html.escape(str(nouveau_statut))
         req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
@@ -322,7 +323,7 @@ class StatutsManager:
 
         lines = [
             f"💌 <b>Demande #{req_num}</b>\n",
-            f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
+            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
             f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
             f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
@@ -376,18 +377,19 @@ class StatutsManager:
         """Actualise la légende de l'image après transition d'état."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
+        montant_val = float(demande.get("montant") or 0.0)
+        montant_str = f" ({montant_val:.2f}€)" if demande.get("prioritaire") else ""
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
         statut_esc = html.escape(str(nouveau_statut))
         req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
         caption_lines = [
             f"📷 <b>Photo de la demande #{req_num}</b>\n",
-            f"👤 {nom_complet} ({demande['age']} ans) | {loc_esc}",
+            f"👤 {nom_complet} ({demande.get('age', '?')} ans) | {loc_esc}",
             f"🎯 {priorite_icon} {type_str}{montant_str}",
             f"📊 Statut : <code>{statut_esc}</code>"
         ]

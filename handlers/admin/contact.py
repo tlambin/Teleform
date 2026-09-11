@@ -19,6 +19,38 @@ class ContactManager:
         self.config = config
         logger.info("ContactManager initialisé")
 
+    async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
+        """Met à jour le message ou supprime la photo existante pour envoyer le texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+
     # ========== ADMIN -> PROPRIÉTAIRE ==========
 
     async def start_contact_owner(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -46,17 +78,7 @@ class ContactManager:
             InlineKeyboardButton("❌ Annuler", callback_data="cancel_contact_owner")
         ]])
 
-        if query.message and query.message.photo:
-            await query.message.delete()
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=text,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-        else:
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
-
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
         return self.WAITING_ADMIN_MSG
 
     async def send_to_owner(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,8 +91,9 @@ class ContactManager:
         raw_admin_alias = self.db_manager.get_admin_alias(admin_id) or f"Admin_{admin_id}"
         admin_alias_esc = html.escape(str(raw_admin_alias))
 
+        raw_owner_id = getattr(self.config, "OWNER_ID", None) or self.db_manager.get_owner_id()
         try:
-            owner_id = int(self.config.OWNER_ID or self.db_manager.get_owner_id())
+            owner_id = int(raw_owner_id) if raw_owner_id else 0
         except (ValueError, TypeError):
             owner_id = 0
 
@@ -129,7 +152,7 @@ class ContactManager:
             return ConversationHandler.END
 
         except Exception as exc:
-            logger.error("Erreur envoi message admin vers propriétaire: %s", exc)
+            logger.error("Erreur envoi message admin vers propriétaire : %s", exc)
             await msg.reply_text("❌ Erreur technique lors de la transmission au propriétaire.")
             return ConversationHandler.END
 
@@ -138,10 +161,8 @@ class ContactManager:
         query = update.callback_query
         if query:
             await query.answer()
-            await query.edit_message_text(
-                "❌ Envoi annulé.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")]])
-            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")]])
+            await self._safe_edit_or_send(query, context, "❌ Envoi annulé.", reply_markup=kb)
         return ConversationHandler.END
 
     # ========== PROPRIÉTAIRE -> ADMIN ==========
@@ -171,11 +192,7 @@ class ContactManager:
             InlineKeyboardButton("❌ Annuler", callback_data="cancel_owner_reply")
         ]])
 
-        if query.message and query.message.photo:
-            await query.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-        else:
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
-
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
         return self.WAITING_OWNER_REPLY
 
     async def send_owner_reply(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -227,5 +244,5 @@ class ContactManager:
         query = update.callback_query
         if query:
             await query.answer()
-            await query.edit_message_text("❌ Réponse annulée.")
+            await self._safe_edit_or_send(query, context, "❌ Réponse annulée.")
         return ConversationHandler.END

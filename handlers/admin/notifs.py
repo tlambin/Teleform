@@ -18,6 +18,39 @@ class NotifsManager:
         self.config = config
         logger.info("NotifsManager initialisé")
 
+    async def _render_clean_menu(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
+        """Met à jour le message ou supprime la photo existante pour envoyer le menu texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True
+                )
+            except Exception as exc:
+                if "Message is not modified" not in str(exc):
+                    if query.message:
+                        await query.message.reply_text(
+                            text=text,
+                            parse_mode="HTML",
+                            reply_markup=keyboard,
+                            disable_web_page_preview=True
+                        )
+
     async def show_notifs_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche le panneau principal de réglage des notifications."""
         query = update.callback_query
@@ -34,20 +67,7 @@ class NotifsManager:
         text, keyboard = self._build_menu_content(user.id, prefs)
 
         if query:
-            if query.message and query.message.photo:
-                await query.message.delete()
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=text,
-                    parse_mode="HTML",
-                    reply_markup=keyboard,
-                )
-            else:
-                try:
-                    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
-                except Exception as exc:
-                    if "Message is not modified" not in str(exc):
-                        logger.warning("Erreur affichage show_notifs_menu : %s", exc)
+            await self._render_clean_menu(query, context, text, keyboard)
         elif update.message:
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -92,7 +112,7 @@ class NotifsManager:
             ],
         ]
 
-        # Options détaillées si les rappels ne sont pas désactivés
+        # Options détaillées si les rappels sont activés
         if mode_rappel != "off":
             keyboard.append([
                 InlineKeyboardButton(btn_freq_daily, callback_data="pref_freq_daily"),
@@ -165,44 +185,43 @@ class NotifsManager:
             self.db_manager.update_admin_preference(user_id, "rappel_freq", "monthly")
 
         elif data == "pref_pick_hour":
-            await self._show_hour_picker(query, user_id)
+            await self._show_hour_picker(query, context, user_id)
             return
         elif data.startswith("pref_set_hour_"):
             try:
                 hour = int(data.replace("pref_set_hour_", ""))
-                self.db_manager.update_admin_preference(user_id, "rappel_heure", hour)
+                if 0 <= hour <= 23:
+                    self.db_manager.update_admin_preference(user_id, "rappel_heure", hour)
             except (ValueError, TypeError):
                 pass
 
         elif data == "pref_pick_weekday":
-            await self._show_weekday_picker(query, user_id)
+            await self._show_weekday_picker(query, context, user_id)
             return
         elif data.startswith("pref_set_weekday_"):
             try:
                 day_idx = int(data.replace("pref_set_weekday_", ""))
-                self.db_manager.update_admin_preference(user_id, "rappel_jour_semaine", day_idx)
+                if 0 <= day_idx < len(JOURS_SEMAINE):
+                    self.db_manager.update_admin_preference(user_id, "rappel_jour_semaine", day_idx)
             except (ValueError, TypeError):
                 pass
 
         elif data == "pref_pick_monthday":
-            await self._show_monthday_picker(query, user_id)
+            await self._show_monthday_picker(query, context, user_id)
             return
         elif data.startswith("pref_set_monthday_"):
             try:
                 mday = int(data.replace("pref_set_monthday_", ""))
-                self.db_manager.update_admin_preference(user_id, "rappel_jour_mois", mday)
+                if 1 <= mday <= 28:
+                    self.db_manager.update_admin_preference(user_id, "rappel_jour_mois", mday)
             except (ValueError, TypeError):
                 pass
 
         prefs = self.db_manager.get_admin_preferences(user_id)
         text, keyboard = self._build_menu_content(user_id, prefs)
-        try:
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
-        except Exception as exc:
-            if "Message is not modified" not in str(exc):
-                logger.warning("Erreur rafraîchissement préférences notifs : %s", exc)
+        await self._render_clean_menu(query, context, text, keyboard)
 
-    async def _show_hour_picker(self, query, user_id: int):
+    async def _show_hour_picker(self, query, context: ContextTypes.DEFAULT_TYPE, user_id: int):
         prefs = self.db_manager.get_admin_preferences(user_id)
         current_h = prefs.get("rappel_heure", 18)
 
@@ -215,17 +234,10 @@ class NotifsManager:
             grid.append(row)
 
         grid.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
-        try:
-            await query.edit_message_text(
-                "⏰ <b>Sélectionnez l'heure du rappel :</b>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(grid),
-            )
-        except Exception as exc:
-            if "Message is not modified" not in str(exc):
-                logger.warning("Erreur affichage sélecteur heure : %s", exc)
+        text = "⏰ <b>Sélectionnez l'heure du rappel :</b>"
+        await self._render_clean_menu(query, context, text, InlineKeyboardMarkup(grid))
 
-    async def _show_weekday_picker(self, query, user_id: int):
+    async def _show_weekday_picker(self, query, context: ContextTypes.DEFAULT_TYPE, user_id: int):
         prefs = self.db_manager.get_admin_preferences(user_id)
         current_d = prefs.get("rappel_jour_semaine", 6)
 
@@ -235,17 +247,10 @@ class NotifsManager:
             rows.append([InlineKeyboardButton(label, callback_data=f"pref_set_weekday_{idx}")])
 
         rows.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
-        try:
-            await query.edit_message_text(
-                "📅 <b>Sélectionnez le jour de la semaine :</b>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(rows),
-            )
-        except Exception as exc:
-            if "Message is not modified" not in str(exc):
-                logger.warning("Erreur affichage sélecteur jour : %s", exc)
+        text = "📅 <b>Sélectionnez le jour de la semaine :</b>"
+        await self._render_clean_menu(query, context, text, InlineKeyboardMarkup(rows))
 
-    async def _show_monthday_picker(self, query, user_id: int):
+    async def _show_monthday_picker(self, query, context: ContextTypes.DEFAULT_TYPE, user_id: int):
         prefs = self.db_manager.get_admin_preferences(user_id)
         current_md = prefs.get("rappel_jour_mois", 1)
 
@@ -262,12 +267,8 @@ class NotifsManager:
             grid.append(row)
 
         grid.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
-        try:
-            await query.edit_message_text(
-                "📅 <b>Sélectionnez le jour du mois :</b>\n<i>(Limité au 28 pour s'adapter à tous les mois)</i>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(grid),
-            )
-        except Exception as exc:
-            if "Message is not modified" not in str(exc):
-                logger.warning("Erreur affichage sélecteur jour du mois : %s", exc)
+        text = (
+            "📅 <b>Sélectionnez le jour du mois :</b>\n"
+            "<i>(Limité au 28 pour s'adapter à tous les mois)</i>"
+        )
+        await self._render_clean_menu(query, context, text, InlineKeyboardMarkup(grid))

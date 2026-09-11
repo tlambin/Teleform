@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Script d'administration et de supervision du bot en mode Webhook / uWSGI."""
 
+import datetime
 import json
 import os
 import subprocess
@@ -14,13 +15,27 @@ ERROR_LOG = "/var/log/paraworld.eu.pythonanywhere.com.error.log"
 SERVER_LOG = "/var/log/paraworld.eu.pythonanywhere.com.server.log"
 
 
+def get_configured_opener():
+    """Crée un opener urllib configuré avec le proxy de PythonAnywhere si nécessaire."""
+    proxy_url = os.getenv("HTTP_PROXY") or os.getenv("http_proxy")
+    if not proxy_url and "pythonanywhere" in os.getenv("PYTHONANYWHERE_SITE", ""):
+        proxy_url = "http://proxy.server:3128"
+
+    if proxy_url:
+        proxy_handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        return urllib.request.build_opener(proxy_handler)
+    return urllib.request.build_opener()
+
+
 def check_webhook_status():
     """Interroge l'API Telegram pour connaître la santé du Webhook."""
     try:
         config = Config()
         url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/getWebhookInfo"
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=10) as response:
+        opener = get_configured_opener()
+        req = urllib.request.Request(url, headers={"User-Agent": "TeleformBotAdmin/1.0"})
+
+        with opener.open(req, timeout=10) as response:
             data = json.loads(response.read().decode("utf-8"))
 
         if not data.get("ok"):
@@ -35,7 +50,6 @@ def check_webhook_status():
 
         last_err_date = res.get("last_error_date")
         if last_err_date:
-            import datetime
             dt = datetime.datetime.fromtimestamp(last_err_date)
             print(f"⚠️ Dernière erreur ({dt}) : {res.get('last_error_message')}")
         else:
@@ -49,13 +63,12 @@ def reload_app():
     """Déclenche le redémarrage à chaud de l'application uWSGI."""
     if os.path.exists(WSGI_FILE):
         try:
-            # Toucher le fichier WSGI force uWSGI à recharger le code
             os.utime(WSGI_FILE, None)
             print("🔄 Application Web rechargée avec succès (signal WSGI envoyé).")
         except Exception as exc:
             print(f"❌ Erreur lors du rechargement WSGI : {exc}")
     else:
-        print("⚠️ Fichier WSGI introuvable. Utilisez le bouton 'Reload' sur PythonAnywhere.")
+        print("⚠️ Fichier WSGI introuvable. Utilisez le bouton 'Reload' sur l'interface PythonAnywhere.")
 
 
 def view_logs(log_type: str = "error", lines: int = 30):

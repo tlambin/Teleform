@@ -1,10 +1,17 @@
 """Module centralisé de validation des entrées et de gestion des formats temporels."""
 
+from datetime import date, datetime, timezone
+import html
 import logging
-from datetime import datetime
 import re
 from typing import Optional, Tuple
-import pytz
+
+try:
+    from zoneinfo import ZoneInfo
+    PARIS_TZ = ZoneInfo("Europe/Paris")
+except ImportError:
+    import pytz
+    PARIS_TZ = pytz.timezone("Europe/Paris")
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +23,8 @@ class ValidationError(Exception):
 
 def convert_utc_to_paris(utc_datetime) -> datetime:
     """Convertit un datetime (ou chaîne ISO/SQL) UTC vers le fuseau horaire Europe/Paris."""
-    paris_tz = pytz.timezone("Europe/Paris")
     if utc_datetime is None:
-        return datetime.now(paris_tz)
+        return datetime.now(PARIS_TZ)
 
     if isinstance(utc_datetime, str):
         cleaned = utc_datetime.replace("T", " ").replace("Z", "")
@@ -28,12 +34,15 @@ def convert_utc_to_paris(utc_datetime) -> datetime:
             try:
                 utc_datetime = datetime.strptime(cleaned[:19], "%Y-%m-%d %H:%M:%S")
             except Exception:
-                return datetime.now(paris_tz)
+                return datetime.now(PARIS_TZ)
+
+    elif isinstance(utc_datetime, date) and not isinstance(utc_datetime, datetime):
+        utc_datetime = datetime.combine(utc_datetime, datetime.min.time())
 
     if utc_datetime.tzinfo is None:
-        utc_datetime = pytz.utc.localize(utc_datetime)
+        utc_datetime = utc_datetime.replace(tzinfo=timezone.utc)
 
-    return utc_datetime.astimezone(paris_tz)
+    return utc_datetime.astimezone(PARIS_TZ)
 
 
 class Validators:
@@ -43,7 +52,7 @@ class Validators:
     def validate_age(age_str: str) -> int:
         """Valide l'âge (doit être un entier entre 18 et 40 ans inclus)."""
         try:
-            age = int(age_str.strip())
+            age = int(str(age_str).strip())
             if not (18 <= age <= 40):
                 raise ValidationError("L'âge doit être compris entre 18 et 40 ans.")
             return age
@@ -54,7 +63,7 @@ class Validators:
     def validate_amount(amount_str: str) -> float:
         """Valide le montant des demandes prioritaires (entre 5 € et 10 000 €)."""
         try:
-            amount_clean = amount_str.replace(",", ".").strip()
+            amount_clean = str(amount_str).replace(",", ".").strip()
             amount = float(amount_clean)
 
             if amount < 5.0:
@@ -72,7 +81,7 @@ class Validators:
         if Validators.is_skip_command(username):
             return None
 
-        clean_user = username.strip()
+        clean_user = str(username).strip()
         if "instagram.com/" in clean_user:
             clean_user = clean_user.split("instagram.com/")[-1].split("/")[0].split("?")[0]
 
@@ -98,7 +107,7 @@ class Validators:
         if Validators.is_skip_command(username):
             return None
 
-        clean_user = username.strip().lower()
+        clean_user = str(username).strip().lower()
         if clean_user.startswith("@"):
             clean_user = clean_user[1:]
 
@@ -113,16 +122,16 @@ class Validators:
     @staticmethod
     def validate_prenom(prenom: str) -> str:
         """Valide le prénom obligatoire."""
-        if not prenom or not prenom.strip():
+        if not prenom or not str(prenom).strip():
             raise ValidationError("Le prénom est obligatoire.")
 
-        p = prenom.strip()
+        p = str(prenom).strip()
         if len(p) < 2:
             raise ValidationError("Le prénom doit contenir au moins 2 caractères.")
         if len(p) > 50:
             raise ValidationError("Le prénom ne peut pas excéder 50 caractères.")
 
-        if not re.match(r"^[a-zA-ZÀ-ÿ\s'\-]+$", p):
+        if not re.match(r"^[a-zA-Z\u00C0-\u017F\s'\-]+$", p):
             raise ValidationError("Le prénom ne peut contenir que des lettres, tirets ou apostrophes.")
 
         return p
@@ -130,14 +139,14 @@ class Validators:
     @staticmethod
     def validate_nom(nom: str) -> Optional[str]:
         """Valide le nom de famille facultatif."""
-        if not nom or not nom.strip():
+        if not nom or not str(nom).strip() or Validators.is_skip_command(nom):
             return None
 
-        n = nom.strip()
+        n = str(nom).strip()
         if len(n) > 50:
             raise ValidationError("Le nom ne peut pas dépasser 50 caractères.")
 
-        if not re.match(r"^[a-zA-ZÀ-ÿ\s'\-]+$", n):
+        if not re.match(r"^[a-zA-Z\u00C0-\u017F\s'\-]+$", n):
             raise ValidationError("Le nom ne peut contenir que des lettres, tirets ou apostrophes.")
 
         return n
@@ -145,16 +154,16 @@ class Validators:
     @staticmethod
     def validate_localisation(localisation: str) -> str:
         """Valide la ville ou région."""
-        if not localisation or not localisation.strip():
+        if not localisation or not str(localisation).strip():
             raise ValidationError("La localisation est obligatoire.")
 
-        loc = localisation.strip()
+        loc = str(localisation).strip()
         if len(loc) < 2:
             raise ValidationError("La localisation doit contenir au moins 2 caractères.")
         if len(loc) > 100:
             raise ValidationError("La localisation ne peut pas dépasser 100 caractères.")
 
-        if not re.match(r"^[a-zA-ZÀ-ÿ0-9\s'\-.,()]+$", loc):
+        if not re.match(r"^[a-zA-Z\u00C0-\u017F0-9\s'\-.,()]+$", loc):
             raise ValidationError("Caractères spéciaux non autorisés dans la localisation.")
 
         return loc
@@ -162,12 +171,12 @@ class Validators:
     @staticmethod
     def validate_details(details: str) -> Optional[str]:
         """Valide les détails ou remarques complémentaires."""
-        if not details or not details.strip() or Validators.is_skip_command(details):
+        if not details or not str(details).strip() or Validators.is_skip_command(details):
             return None
 
-        d = details.strip()
+        d = str(details).strip()
         if len(d) > 1000:
-            raise ValidationError("Le texte de remarques ne peut pas dépasser 1000 caractères.")
+            raise ValidationError("Le texte de remarques ne peut pas dépasser 1 000 caractères.")
 
         if not any(c.isalnum() for c in d):
             raise ValidationError("Les remarques doivent comporter au moins un mot compréhensible.")
@@ -177,10 +186,10 @@ class Validators:
     @staticmethod
     def validate_alias(alias: str) -> Tuple[bool, str]:
         """Valide la structure syntaxique d'un pseudonyme admin."""
-        if not alias or not alias.strip():
+        if not alias or not str(alias).strip():
             return False, "L'alias ne peut pas être vide."
 
-        a = alias.strip()
+        a = str(alias).strip()
         if len(a) < 2:
             return False, "L'alias doit comporter au moins 2 caractères."
         if len(a) > 30:
@@ -196,10 +205,11 @@ class Validators:
     def validate_alias_uniqueness(db_manager, alias: str, exclude_user_id: int = None) -> Tuple[bool, str]:
         """Contrôle l'unicité de l'alias contre la table admins et la table config (owner)."""
         try:
-            clean_alias = alias.strip()
-            owner_alias = db_manager.get_config_value("owner_alias", "Propriétaire")
-            if owner_alias and owner_alias.lower() == clean_alias.lower():
-                owner_id = int(db_manager.get_owner_id())
+            clean_alias = str(alias).strip()
+            owner_alias = db_manager.get_config_value("owner_alias", "Propriétaire") or "Propriétaire"
+            if owner_alias.lower() == clean_alias.lower():
+                raw_owner_id = db_manager.get_owner_id()
+                owner_id = int(raw_owner_id) if raw_owner_id else 0
                 if not (exclude_user_id and int(exclude_user_id) == owner_id):
                     return False, "Cet alias est réservé au compte propriétaire."
 
@@ -228,14 +238,16 @@ class Validators:
         """Détecte si la saisie correspond à une intention de passer l'étape."""
         if not text:
             return False
-        return text.lower().strip() in ["/skip", "/", "skip", "passer", "next"]
+        cleaned = str(text).lower().strip()
+        return cleaned in ["/skip", "/", "skip", "passer", "next", "-"]
 
     @staticmethod
     def clean_input(text: str) -> str:
-        """Supprime les espaces superflus et les caractères de contrôle invisibles."""
+        """Supprime les espaces superflus, les espaces insécables et les caractères de contrôle."""
         if not text:
             return ""
-        t = text.strip()
+        # Remplacement des espaces insécables et assimilés
+        t = str(text).replace("\xa0", " ").replace("\u202f", " ").replace("\u200b", "").strip()
         return "".join(c for c in t if ord(c) >= 32 or c in "\n\t")
 
     @staticmethod
@@ -275,7 +287,7 @@ class Validators:
             ),
             "details": (
                 "<b>Règles pour les remarques :</b>\n"
-                "• Maximum 1000 caractères"
+                "• Maximum 1 000 caractères"
             ),
             "alias": (
                 "<b>Règles d'alias :</b>\n"

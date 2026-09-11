@@ -28,7 +28,7 @@ class CompteManager:
             full_first_name = f"{full_first_name} {user.last_name}".strip()
 
         try:
-            with self.db_manager.get_cursor() as cursor:
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO users (user_id, username, first_name, date_inscription, derniere_activite)
@@ -59,7 +59,7 @@ class CompteManager:
     async def update_user_activity(self, user_id: int) -> bool:
         """Met à jour le timestamp de dernière activité."""
         try:
-            with self.db_manager.get_cursor() as cursor:
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     "UPDATE users SET derniere_activite = NOW() WHERE user_id = %s",
                     (int(user_id),),

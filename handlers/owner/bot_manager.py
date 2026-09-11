@@ -20,6 +20,38 @@ class BotManager:
         """Injecte l'InterfaceManager si nécessaire."""
         self.interface = interface_manager
 
+    async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
+        """Met à jour le message ou supprime la photo existante pour émettre du texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+
     async def bot_on(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Active l'acceptation globale des demandes et coupe le mode maintenance."""
         query = update.callback_query
@@ -31,6 +63,8 @@ class BotManager:
 
         try:
             self.config.enable_demandes()
+            self.db_manager.set_config_value("bot_active", "true")
+            self.db_manager.set_config_value("demandes_enabled", "true")
             self.db_manager.set_config_value("maintenance_mode", "false")
             logger.info("Bot activé par le propriétaire %s", user.id)
 
@@ -45,16 +79,12 @@ class BotManager:
                 [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
             ])
 
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
 
         except Exception as exc:
-            logger.error("Erreur activation bot: %s", exc, exc_info=True)
-            await query.edit_message_text(
-                "❌ Erreur technique lors de l'activation.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
-                ]])
-            )
+            logger.error("Erreur activation bot : %s", exc, exc_info=True)
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")]])
+            await self._safe_edit_or_send(query, context, "❌ Erreur technique lors de l'activation.", reply_markup=kb)
 
     async def bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Désactive la prise de demandes avec message d'information."""
@@ -67,6 +97,8 @@ class BotManager:
 
         try:
             self.config.disable_demandes()
+            self.db_manager.set_config_value("bot_active", "false")
+            self.db_manager.set_config_value("demandes_enabled", "false")
             logger.info("Demandes suspendues par le propriétaire %s", user.id)
 
             msg = (
@@ -80,16 +112,12 @@ class BotManager:
                 [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
             ])
 
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
 
         except Exception as exc:
-            logger.error("Erreur désactivation bot: %s", exc, exc_info=True)
-            await query.edit_message_text(
-                "❌ Erreur technique lors de la désactivation.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
-                ]])
-            )
+            logger.error("Erreur désactivation bot : %s", exc, exc_info=True)
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")]])
+            await self._safe_edit_or_send(query, context, "❌ Erreur technique lors de la désactivation.", reply_markup=kb)
 
     async def bot_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Active l'état de maintenance restreint."""
@@ -101,8 +129,10 @@ class BotManager:
         await query.answer()
 
         try:
-            self.db_manager.set_config_value("maintenance_mode", "true")
             self.config.disable_demandes()
+            self.db_manager.set_config_value("bot_active", "false")
+            self.db_manager.set_config_value("demandes_enabled", "false")
+            self.db_manager.set_config_value("maintenance_mode", "true")
             logger.info("Mode maintenance enclenché par %s", user.id)
 
             msg = (
@@ -115,16 +145,12 @@ class BotManager:
                 [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
             ])
 
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
 
         except Exception as exc:
-            logger.error("Erreur passage en mode maintenance: %s", exc, exc_info=True)
-            await query.edit_message_text(
-                "❌ Erreur lors de l'activation de la maintenance.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
-                ]])
-            )
+            logger.error("Erreur passage en mode maintenance : %s", exc, exc_info=True)
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")]])
+            await self._safe_edit_or_send(query, context, "❌ Erreur lors de l'activation de la maintenance.", reply_markup=kb)
 
     async def get_bot_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche l'état courant du service et des paramètres."""
@@ -163,14 +189,14 @@ class BotManager:
 
             if update.callback_query:
                 await update.callback_query.answer()
-                await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+                await self._safe_edit_or_send(update.callback_query, context, text, reply_markup=keyboard)
             elif update.message:
                 await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
         except Exception as exc:
-            logger.error("Erreur extraction statut bot: %s", exc, exc_info=True)
+            logger.error("Erreur extraction statut bot : %s", exc, exc_info=True)
             err = "❌ Impossible de lire le statut du bot."
             if update.callback_query:
-                await update.callback_query.edit_message_text(err)
+                await self._safe_edit_or_send(update.callback_query, context, err)
             elif update.message:
                 await update.message.reply_text(err)

@@ -5,7 +5,13 @@ import os
 import threading
 from dotenv import load_dotenv
 
-load_dotenv()
+# Chargement robuste du .env depuis le même dossier que config.py
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_env_path):
+    load_dotenv(dotenv_path=_env_path, override=True)
+else:
+    load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +36,7 @@ class Config:
         logger.info("Toutes les variables d'environnement requises sont présentes")
 
     def _setup_basic_config(self):
-        """Configuration des identifiants principaux."""
+        """Configuration des identifiants principaux et jetons webhook."""
         self.BOT_TOKEN = os.getenv("BOT_TOKEN")
 
         owner_id_str = os.getenv("OWNER_ID", "0")
@@ -38,6 +44,8 @@ class Config:
             raise ValueError("OWNER_ID doit être un entier valide")
         self.OWNER_ID = int(owner_id_str)
         self.OWNER_ALIAS = os.getenv("OWNER_ALIAS", "Propriétaire")
+        self.CRON_SECRET_TOKEN = os.getenv("CRON_SECRET_TOKEN")
+        self.TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 
     def _setup_cache_system(self):
         """Initialise les structures de cache en mémoire."""
@@ -200,9 +208,8 @@ class Config:
         logger.info("Service demandes désactivé")
 
     def are_demandes_enabled(self) -> bool:
-        """Vérifie si les demandes sont acceptées (lecture directe avec fallback)."""
+        """Vérifie si les demandes sont acceptées."""
         if self._db_manager:
-            # Vérification du mode maintenance d'abord
             maint = str(self._db_manager.get_config_value("maintenance_mode", "false")).lower()
             if maint in ("true", "1", "yes"):
                 return False

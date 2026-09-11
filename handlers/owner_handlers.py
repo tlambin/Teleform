@@ -30,6 +30,38 @@ class OwnerHandlers:
         self.alias_manager = AliasManager(db_manager, config)
         logger.info("OwnerHandlers initialisé")
 
+    async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
+        """Met à jour le message ou supprime la photo existante pour envoyer le texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+
     async def run_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Déclenche la routine de purge et d'optimisation."""
         user = update.effective_user
@@ -42,7 +74,7 @@ class OwnerHandlers:
 
         if update.callback_query:
             await update.callback_query.answer()
-            await update.callback_query.edit_message_text("🔧 <b>Maintenance en cours...</b>", parse_mode="HTML")
+            await self._safe_edit_or_send(update.callback_query, context, "🔧 <b>Maintenance en cours...</b>")
         else:
             await update.message.reply_text("🔧 <b>Maintenance en cours...</b>", parse_mode="HTML")
 
@@ -76,16 +108,14 @@ class OwnerHandlers:
             ]])
 
             if update.callback_query:
-                await update.callback_query.edit_message_text(
-                    message, parse_mode="HTML", reply_markup=keyboard
-                )
+                await self._safe_edit_or_send(update.callback_query, context, message, reply_markup=keyboard)
             else:
                 await update.message.reply_text(message, parse_mode="HTML", reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur maintenance manuelle : %s", exc, exc_info=True)
             if update.callback_query:
-                await update.callback_query.edit_message_text("❌ Échec lors de la maintenance.")
+                await self._safe_edit_or_send(update.callback_query, context, "❌ Échec lors de la maintenance.")
             else:
                 await update.message.reply_text("❌ Échec lors de la maintenance.")
 
@@ -102,7 +132,7 @@ class OwnerHandlers:
         self.db_manager.set_config_value("maintenance_mode", "false")
 
         message, keyboard = self.interface.get_gerer_bot_menu()
-        await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
+        await self._safe_edit_or_send(query, context, message, reply_markup=keyboard)
 
     async def bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Demande confirmation avant de couper la création de demandes."""
@@ -117,13 +147,12 @@ class OwnerHandlers:
                 InlineKeyboardButton("❌ Annuler", callback_data="cancel_bot_off")
             ]
         ])
-        await query.edit_message_text(
+        text = (
             "⚠️ <b>Suspension des nouvelles demandes</b>\n\n"
             "Les utilisateurs ne pourront plus soumettre de formulaires jusqu'à la réactivation.\n"
-            "Confirmez-vous cette action ?",
-            parse_mode="HTML",
-            reply_markup=keyboard
+            "Confirmez-vous cette action ?"
         )
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def confirmer_bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Enregistre la coupure des demandes et persiste l'état."""
@@ -137,7 +166,7 @@ class OwnerHandlers:
         self.db_manager.set_config_value("demandes_enabled", "false")
 
         message, keyboard = self.interface.get_gerer_bot_menu()
-        await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
+        await self._safe_edit_or_send(query, context, message, reply_markup=keyboard)
 
     async def cancel_bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Annule la coupure et revient au menu de gestion."""
@@ -146,7 +175,7 @@ class OwnerHandlers:
             return
         await query.answer()
         message, keyboard = self.interface.get_gerer_bot_menu()
-        await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
+        await self._safe_edit_or_send(query, context, message, reply_markup=keyboard)
 
     async def toggle_demandes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Bascule d'état via commande /toggle_demandes avec persistance SQL."""
@@ -191,7 +220,7 @@ class OwnerHandlers:
         elif data == "gerer_vips":
             await query.answer()
             msg, kb = self.interface.get_gerer_vips_menu()
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
         elif data.startswith("perm_admin_"):
             try:
                 admin_target_id = int(data.replace("perm_admin_", ""))
@@ -271,7 +300,7 @@ class OwnerHandlers:
             "<i>Cliquez sur un bouton pour modifier instantanément les accès :</i>"
         )
 
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def handle_set_permission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Bascule une permission en base et rafraîchit la vue."""
@@ -318,7 +347,7 @@ class OwnerHandlers:
                 InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_add")
             ]])
 
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
             return self.WAITING_ADMIN_ID
 
         except Exception as exc:
@@ -361,9 +390,10 @@ class OwnerHandlers:
                     await update.message.reply_text("⚠️ Cet utilisateur est déjà administrateur.")
                     return self.WAITING_ADMIN_ID
 
-                base_alias = user_data.get("first_name") or user_data.get("username") or f"Admin{target_id}"
-                alias = str(base_alias)[:20]
+            base_alias = user_data.get("first_name") or user_data.get("username") or f"Admin{target_id}"
+            alias = str(base_alias)[:20]
 
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO admins (user_id, alias, added_by, perm_reseaux, perm_type, alias_locked, date_added)
@@ -429,7 +459,7 @@ class OwnerHandlers:
         if query:
             await query.answer()
             message, keyboard = self.interface.get_gerer_admins_menu()
-            await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, message, reply_markup=keyboard)
         return ConversationHandler.END
 
     # ==================== SUPPRESSION D'ADMINISTRATEUR ====================
@@ -456,14 +486,12 @@ class OwnerHandlers:
                 admins = cursor.fetchall()
 
             if not admins:
-                await query.edit_message_text(
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")]])
+                text = (
                     "👥 <b>Révocation d'Administrateur</b>\n\n"
-                    "Aucun administrateur supplémentaire n'est configuré.",
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")
-                    ]])
+                    "Aucun administrateur supplémentaire n'est configuré."
                 )
+                await self._safe_edit_or_send(query, context, text, reply_markup=kb)
                 return ConversationHandler.END
 
             lines = [
@@ -482,7 +510,7 @@ class OwnerHandlers:
                 InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_remove")
             ]])
 
-            await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, "\n".join(lines), reply_markup=keyboard)
             return self.WAITING_ADMIN_REMOVE
 
         except Exception as exc:
@@ -532,7 +560,7 @@ class OwnerHandlers:
         return self.WAITING_CONFIRMATION
 
     async def confirmer_admin_suppression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Supprime l'administrateur de la base de données et du cache."""
+        """Supprime l'administrateur de la base de données avec commit explicite."""
         query = update.callback_query
         if not query or not self.config.is_owner(update.effective_user.id):
             return ConversationHandler.END
@@ -543,12 +571,12 @@ class OwnerHandlers:
         context.user_data.pop("admins_list", None)
 
         if not selected:
-            await query.edit_message_text("❌ Erreur : aucun administrateur sélectionné.")
+            await self._safe_edit_or_send(query, context, "❌ Erreur : aucun administrateur sélectionné.")
             return ConversationHandler.END
 
         target_id = selected["user_id"]
         try:
-            with self.db_manager.get_cursor() as cursor:
+            with self.db_manager.transaction() as cursor:
                 cursor.execute("DELETE FROM admins WHERE user_id = %s", (target_id,))
 
             self.config.remove_admin(target_id)
@@ -560,16 +588,13 @@ class OwnerHandlers:
             ])
 
             alias_esc = html.escape(str(selected.get("alias") or f"Admin_{target_id}"))
-            await query.edit_message_text(
-                f"✅ <b>Droits administrateur révoqués pour {alias_esc}.</b>",
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
+            text = f"✅ <b>Droits administrateur révoqués pour {alias_esc}.</b>"
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
             return ConversationHandler.END
 
         except Exception as exc:
             logger.error("Erreur révocation admin : %s", exc, exc_info=True)
-            await query.edit_message_text("❌ Échec lors de la révocation en base.")
+            await self._safe_edit_or_send(query, context, "❌ Échec lors de la révocation en base.")
             return ConversationHandler.END
 
     async def cancel_admin_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -581,25 +606,24 @@ class OwnerHandlers:
         if query:
             await query.answer()
             message, keyboard = self.interface.get_gerer_admins_menu()
-            await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, message, reply_markup=keyboard)
         return ConversationHandler.END
 
-    # ==================== GESTION DES MEMBRES VIP (Owner Only) ====================
+    # ==================== GESTION DES MEMBRES VIP ====================
 
     async def start_add_vip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Ouvre le dialogue pour promouvoir manuellement un utilisateur en VIP."""
+        """Ouvre le dialogue pour promouvoir un utilisateur en VIP."""
         query = update.callback_query
         if not query or not self.config.is_owner(update.effective_user.id):
             return ConversationHandler.END
 
         await query.answer()
-
-        await query.edit_message_text(
+        text = (
             "⭐ <b>Promouvoir un Membre VIP</b>\n\n"
-            "Envoyez l'<b>ID numérique</b> ou le <b>@username</b> du compte à promouvoir :",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]])
+            "Envoyez l'<b>ID numérique</b> ou le <b>@username</b> du compte à promouvoir :"
         )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]])
+        await self._safe_edit_or_send(query, context, text, reply_markup=kb)
         return self.WAITING_VIP_USER
 
     async def process_vip_target_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -704,7 +728,7 @@ class OwnerHandlers:
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Gestion VIPs", callback_data="gerer_vips")]])
 
         if update.callback_query:
-            await update.callback_query.edit_message_text(succes_msg, parse_mode="HTML", reply_markup=kb)
+            await self._safe_edit_or_send(update.callback_query, context, succes_msg, reply_markup=kb)
         elif update.message:
             await update.message.reply_text(succes_msg, parse_mode="HTML", reply_markup=kb)
 
@@ -720,10 +744,8 @@ class OwnerHandlers:
 
         vips = self.db_manager.get_vip_users_list()
         if not vips:
-            await query.edit_message_text(
-                "📭 Aucun membre VIP actif à révoquer.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_vips")]])
-            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_vips")]])
+            await self._safe_edit_or_send(query, context, "📭 Aucun membre VIP actif à révoquer.", reply_markup=kb)
             return ConversationHandler.END
 
         lines = ["⭐ <b>Révocation de Membre VIP</b>\n", f"Membres actifs : <b>{len(vips)}</b>\n"]
@@ -734,12 +756,9 @@ class OwnerHandlers:
 
         lines.append("\nEnvoyez le <b>numéro</b> de la personne à révoquer :")
         context.user_data["vip_remove_list"] = vips
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]])
 
-        await query.edit_message_text(
-            "\n".join(lines),
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]])
-        )
+        await self._safe_edit_or_send(query, context, "\n".join(lines), reply_markup=kb)
         return self.WAITING_VIP_REMOVE
 
     async def process_vip_remove_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -790,7 +809,7 @@ class OwnerHandlers:
         if query:
             await query.answer()
             msg, kb = self.interface.get_gerer_vips_menu()
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
         return ConversationHandler.END
 
     # ==================== STATISTIQUES ====================
@@ -820,12 +839,12 @@ class OwnerHandlers:
                 cursor.execute("SELECT COUNT(*) AS total, COALESCE(SUM(montant), 0) AS montant FROM demandes WHERE prioritaire = TRUE")
                 prio_row = cursor.fetchone()
                 total_prio = prio_row["total"]
-                montant_total = float(prio_row["montant"])
+                montant_total = float(prio_row["montant"] or 0.0)
 
                 cursor.execute("SELECT statut, COUNT(*) AS count FROM demandes GROUP BY statut ORDER BY count DESC")
                 statuts_rows = cursor.fetchall()
 
-            db_stats = self.db_manager.get_database_size()
+            db_stats = self.db_manager.get_database_size() or {}
             storage_usage = float(check_storage_usage() or 0.0)
 
             lines = [
@@ -861,13 +880,9 @@ class OwnerHandlers:
                 InlineKeyboardButton("🔙 Menu Gestion Bot", callback_data="gerer_bot")
             ]])
 
-            await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, "\n".join(lines), reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur calcul statistiques : %s", exc, exc_info=True)
-            await query.edit_message_text(
-                "❌ Impossible de charger les statistiques.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")
-                ]])
-            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_bot")]])
+            await self._safe_edit_or_send(query, context, "❌ Impossible de charger les statistiques.", reply_markup=kb)

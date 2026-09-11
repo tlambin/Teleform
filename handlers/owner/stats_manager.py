@@ -17,6 +17,38 @@ class StatsManager:
         self.config = config
         logger.info("StatsManager initialisé")
 
+    async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
+        """Met à jour le message ou supprime la photo existante pour émettre du texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+
     async def show_general_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche le panneau complet des statistiques à destination de l'Owner."""
         user = update.effective_user
@@ -39,23 +71,7 @@ class StatsManager:
             ])
 
             if update.callback_query:
-                query = update.callback_query
-                if query.message and query.message.photo:
-                    chat_id = query.message.chat_id
-                    try:
-                        await query.message.delete()
-                    except Exception:
-                        pass
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=message,
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                    )
-                else:
-                    await query.edit_message_text(
-                        message, parse_mode="HTML", reply_markup=keyboard
-                    )
+                await self._safe_edit_or_send(update.callback_query, context, message, reply_markup=keyboard)
             elif update.message:
                 await update.message.reply_text(
                     message, parse_mode="HTML", reply_markup=keyboard
@@ -65,7 +81,7 @@ class StatsManager:
             logger.error("Erreur calcul statistiques complètes : %s", exc, exc_info=True)
             err_msg = "❌ Erreur technique lors du calcul des statistiques."
             if update.callback_query:
-                await update.callback_query.edit_message_text(err_msg)
+                await self._safe_edit_or_send(update.callback_query, context, err_msg)
             elif update.message:
                 await update.message.reply_text(err_msg)
 
@@ -154,13 +170,13 @@ class StatsManager:
             stats["statuts"] = cursor.fetchall()
 
         # Métriques Stockage et Base
-        stats["db_stats"] = self.db_manager.get_database_size()
-        stats["storage_usage"] = check_storage_usage()
+        stats["db_stats"] = self.db_manager.get_database_size() or {}
+        stats["storage_usage"] = float(check_storage_usage() or 0.0)
         return stats
 
     def _format_stats_message(self, stats: dict) -> str:
         """Met en forme l'affichage des métriques."""
-        storage = float(stats.get("storage_usage", 0.0))
+        storage = float(stats.get("storage_usage") or 0.0)
         db_size = stats.get("db_stats", {}).get("total_size_mb", 0.0)
 
         lines = [

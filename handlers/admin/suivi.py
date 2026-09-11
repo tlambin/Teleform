@@ -25,8 +25,8 @@ class SuiviManager:
         """Récupère ou initialise les réglages de tri et filtre de suivi."""
         if "suivi_settings" not in context.user_data:
             context.user_data["suivi_settings"] = {
-                "sort_by": "date_suivi",  # 'date_suivi', 'date_creation', 'age', 'montant', 'statut', 'nom'
-                "order": "DESC",           # 'ASC' ou 'DESC'
+                "sort_by": "date_suivi",
+                "order": "DESC",
                 "search": None,
             }
         return context.user_data["suivi_settings"]
@@ -357,6 +357,10 @@ class SuiviManager:
                 )
         except Exception as err:
             logger.warning("Recréation photo suivi suite à: %s", err)
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
             await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=photo_id,
@@ -366,12 +370,15 @@ class SuiviManager:
             )
 
     async def _render_clean_text(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
-        """Gère le mode texte pur."""
+        """Gère le mode texte pur en supprimant la photo si nécessaire."""
         is_current_photo = bool(query.message and query.message.photo)
 
         if is_current_photo:
             chat_id = query.message.chat_id
-            await query.message.delete()
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -380,24 +387,34 @@ class SuiviManager:
                 disable_web_page_preview=True
             )
         else:
-            await query.edit_message_text(
-                text=text,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-                disable_web_page_preview=True
-            )
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True
+                    )
 
     def _format_suivi_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
         """Formate la fiche avec échappement HTML strict."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
+        montant_val = float(demande.get("montant") or 0.0)
+        montant_str = f" ({montant_val:.2f}€)" if demande.get("prioritaire") else ""
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or ""))
-        statut_esc = html.escape(str(demande.get("statut") or ""))
+        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
+        statut_esc = html.escape(str(demande.get("statut") or "En cours"))
         req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
         if demande.get("username"):
@@ -411,7 +428,7 @@ class SuiviManager:
 
         lines = [
             f"💌 <b>Demande suivie #{req_num}</b> ({page + 1}/{total})\n",
-            f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
+            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
             f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
             f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
@@ -471,7 +488,7 @@ class SuiviManager:
             InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}"),
         ])
 
-        # Bouton profil utilisateur demandeur
+        # Profil demandeur
         buttons.append([
             InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
         ])

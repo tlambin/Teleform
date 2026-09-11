@@ -26,10 +26,10 @@ class DispoManager:
         """Récupère ou initialise les filtres de la session utilisateur."""
         if "dispo_filters" not in context.user_data:
             context.user_data["dispo_filters"] = {
-                "reseau": "all",        # 'all', 'insta', 'snap', 'both'
-                "age_range": "all",     # 'all', '18_25', '26_35', '36_plus'
-                "type_demande": "all",  # 'all', 'prio', 'standard'
-                "search": None,         # str ou None
+                "reseau": "all",
+                "age_range": "all",
+                "type_demande": "all",
+                "search": None,
             }
         return context.user_data["dispo_filters"]
 
@@ -106,7 +106,7 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=0)
             return
 
-        # 8. Pioche aléatoire (🎲)
+        # 8. Pioche aléatoire
         elif data == "dispo_random":
             await self.show_random_demande(update, context)
             return
@@ -239,13 +239,14 @@ class DispoManager:
         """Exécute la requête SQL dynamique selon les permissions de l'admin et les filtres choisis."""
         filters = self._get_active_filters(context)
 
+        join_params = [int(user_id)]
         sql_where = [
             "ds.demande_id IS NULL",
             "d.statut IN ('📨 Reçue', '⏳ En attente')"
         ]
-        params = [user_id]
+        where_params = []
 
-        # 1. Application des permissions administrateur
+        # 1. Permissions admin
         perms = self.db_manager.get_admin_permissions(user_id)
         p_reseau = perms.get("perm_reseaux", "all")
         p_type = perms.get("perm_type", "all")
@@ -260,7 +261,7 @@ class DispoManager:
         elif p_type == "standard_only":
             sql_where.append("d.prioritaire = 0")
 
-        # 2. Application des filtres de session
+        # 2. Filtres session
         if filters["reseau"] == "insta":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
         elif filters["reseau"] == "snap":
@@ -286,7 +287,7 @@ class DispoManager:
                 "(d.prenom LIKE %s OR d.nom LIKE %s OR d.localisation LIKE %s "
                 "OR d.instagram LIKE %s OR d.snapchat LIKE %s OR d.details LIKE %s)"
             )
-            params.extend([pattern] * 6)
+            where_params.extend([pattern] * 6)
 
         query_sql = f"""
             SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name
@@ -297,8 +298,10 @@ class DispoManager:
             ORDER BY d.prioritaire DESC, d.date_creation DESC
         """
 
+        full_params = tuple(join_params + where_params)
+
         with self.db_manager.get_cursor() as cursor:
-            cursor.execute(query_sql, tuple(params))
+            cursor.execute(query_sql, full_params)
             return cursor.fetchall()
 
     async def show_demandes_disponibles_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
@@ -372,6 +375,10 @@ class DispoManager:
                 )
         except Exception as err:
             logger.warning("Recréation photo dispo suite à : %s", err)
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
             await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=photo_id,
@@ -386,7 +393,10 @@ class DispoManager:
 
         if is_current_photo:
             chat_id = query.message.chat_id
-            await query.message.delete()
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -395,24 +405,34 @@ class DispoManager:
                 disable_web_page_preview=True
             )
         else:
-            await query.edit_message_text(
-                text=text,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-                disable_web_page_preview=True
-            )
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True
+                    )
 
     def _format_demande_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
         """Formate la fiche avec échappement HTML strict."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_str = f" ({float(demande['montant']):.2f}€)" if demande.get("prioritaire") else ""
+        montant_val = float(demande.get("montant") or 0.0)
+        montant_str = f" ({montant_val:.2f}€)" if demande.get("prioritaire") else ""
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or ""))
-        statut_esc = html.escape(str(demande.get("statut") or ""))
+        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
+        statut_esc = html.escape(str(demande.get("statut") or "En cours"))
         req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
         if demande.get("username"):
@@ -426,7 +446,7 @@ class DispoManager:
 
         lines = [
             f"📮 <b>Demande disponible #{req_num}</b> ({page + 1}/{total})\n",
-            f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
+            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
             f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
             f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
@@ -481,7 +501,7 @@ class DispoManager:
             InlineKeyboardButton("🎲 Au hasard", callback_data="dispo_random")
         ])
 
-        # 2. Bouton d'inspection du profil demandeur
+        # 2. Profil demandeur
         buttons.append([
             InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
         ])

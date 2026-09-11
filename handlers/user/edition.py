@@ -41,20 +41,22 @@ class EditionManager:
             return
 
         if not self._verify_request_ownership(demande_id, update.effective_user.id):
-            await query.edit_message_text("❌ Vous n'êtes pas autorisé à modifier cette demande.")
+            await self._update_view(query, "❌ Vous n'êtes pas autorisé à modifier cette demande.")
             return
 
         demande = self._get_request_details(demande_id)
         if not demande:
-            await query.edit_message_text("❌ Demande introuvable.")
+            await self._update_view(query, "❌ Demande introuvable.")
             return
 
         if demande.get("statut") != "📨 Reçue":
-            await query.edit_message_text(
-                "⚠️ Cette demande est déjà en cours de traitement ou traitée et ne peut plus être modifiée.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📋 Retour à mes demandes", callback_data="voir_demandes")
-                ]])
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Retour à mes demandes", callback_data="voir_demandes")
+            ]])
+            await self._update_view(
+                query,
+                "⚠️ Cette demande est déjà en cours de traitement et ne peut plus être modifiée.",
+                reply_markup=kb
             )
             return
 
@@ -80,7 +82,7 @@ class EditionManager:
             return
 
         if not self._verify_request_ownership(demande_id, update.effective_user.id):
-            await query.edit_message_text("❌ Action non autorisée.")
+            await self._update_view(query, "❌ Action non autorisée.")
             return
 
         context.user_data["editing"] = {
@@ -104,20 +106,22 @@ class EditionManager:
             return
 
         if not self._verify_request_ownership(demande_id, update.effective_user.id):
-            await query.edit_message_text("❌ Action non autorisée.")
+            await self._update_view(query, "❌ Action non autorisée.")
             return
 
         demande = self._get_request_details(demande_id)
         if not demande:
-            await query.edit_message_text("❌ Demande introuvable.")
+            await self._update_view(query, "❌ Demande introuvable.")
             return
 
         if demande.get("statut") != "📨 Reçue":
-            await query.edit_message_text(
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Mes demandes", callback_data="voir_demandes")
+            ]])
+            await self._update_view(
+                query,
                 "⚠️ Cette demande est déjà prise en charge et ne peut plus être supprimée directement.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📋 Mes demandes", callback_data="voir_demandes")
-                ]])
+                reply_markup=kb
             )
             return
 
@@ -138,13 +142,10 @@ class EditionManager:
                 await self._show_modify_menu(query, demande)
                 return
 
-        await query.edit_message_text(
-            "❌ <b>Édition annulée.</b>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
-            ]])
-        )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
+        ]])
+        await self._update_view(query, "❌ <b>Édition annulée.</b>", reply_markup=kb)
 
     async def handle_edit_text_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Intercepte la saisie texte transmise par UserHandlers lorsque 'editing' est présent."""
@@ -157,7 +158,8 @@ class EditionManager:
 
         demande_id = editing_data["demande_id"]
         field_name = editing_data["field"]
-        user_input = Validators.clean_input(update.message.text)
+        raw_text = update.message.text.strip()
+        user_input = Validators.clean_input(raw_text)
 
         try:
             validated_value = self._validate_field_input(field_name, user_input)
@@ -201,12 +203,12 @@ class EditionManager:
             return
 
         if not self._verify_request_ownership(demande_id, update.effective_user.id):
-            await query.edit_message_text("❌ Action non autorisée.")
+            await self._update_view(query, "❌ Action non autorisée.")
             return
 
         demande = self._get_request_details(demande_id)
         if not demande:
-            await query.edit_message_text("❌ Demande introuvable.")
+            await self._update_view(query, "❌ Demande introuvable.")
             return
 
         try:
@@ -214,19 +216,20 @@ class EditionManager:
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
                 cursor.execute("DELETE FROM demandes WHERE id = %s", (demande_id,))
 
-            logger.info("Demande #%s et ses liaisons supprimées par l'utilisateur %s", demande_id, update.effective_user.id)
+            logger.info("Demande #%s supprimée par l'utilisateur %s", demande_id, update.effective_user.id)
             num_demande = demande.get("request_number", demande_id)
-            await query.edit_message_text(
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes"),
+                InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
+            ]])
+            await self._update_view(
+                query,
                 f"✅ <b>Demande n°{html.escape(str(num_demande))} supprimée avec succès.</b>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes"),
-                    InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
-                ]])
+                reply_markup=kb
             )
         except Exception as exc:
             logger.error("Erreur suppression demande %s : %s", demande_id, exc, exc_info=True)
-            await query.edit_message_text("❌ Une erreur technique est survenue lors de la suppression.")
+            await self._update_view(query, "❌ Une erreur technique est survenue lors de la suppression.")
 
     def _verify_request_ownership(self, demande_id: int, user_id: int) -> bool:
         """Contrôle la correspondance entre l'utilisateur et le créateur de la demande."""
@@ -250,14 +253,13 @@ class EditionManager:
             return None
 
     def _update_field_in_database(self, demande_id: int, field_name: str, value) -> bool:
-        """Met à jour un champ autorisé en base."""
+        """Met à jour un champ autorisé en base avec commit transactionnel."""
         if field_name not in self.ALLOWED_FIELDS:
             return False
 
-        # Sécurisation du nom de colonne par liste blanche stricte
         query = f"UPDATE demandes SET `{field_name}` = %s, date_modification = NOW() WHERE id = %s"
         try:
-            with self.db_manager.get_cursor() as cursor:
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(query, (value, int(demande_id)))
                 return cursor.rowcount > 0
         except Exception as exc:
@@ -266,6 +268,10 @@ class EditionManager:
 
     def _validate_field_input(self, field_name: str, user_input: str):
         """Valide et nettoie la valeur saisie selon les règles métier."""
+        if user_input in ("-", "/skip", "skip", ""):
+            if field_name in ("nom", "instagram", "snapchat", "details"):
+                return None
+
         if field_name == "prenom":
             return Validators.validate_prenom(user_input)
         if field_name == "nom":
@@ -282,6 +288,21 @@ class EditionManager:
             return Validators.validate_details(user_input) if user_input else None
         raise ValidationError(f"Champ {field_name} non modifiable")
 
+    async def _update_view(self, query, text: str, reply_markup=None):
+        """Met à jour le message qu'il s'agisse d'un message photo (caption) ou d'un message texte."""
+        if query.message and query.message.photo:
+            await query.edit_message_caption(
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+        else:
+            await query.edit_message_text(
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+
     async def _show_modify_menu(self, query, demande: dict):
         """Génère l'interface des champs modifiables."""
         prenom_esc = html.escape(demande.get("prenom") or "")
@@ -292,7 +313,7 @@ class EditionManager:
 
         text = (
             f"✏️ <b>Modifier la demande n°{req_num}</b>\n\n"
-            f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)\n"
+            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)\n"
             f"📍 <b>Localisation :</b> {loc_esc}\n\n"
             "Sélectionnez la donnée à modifier :"
         )
@@ -316,7 +337,7 @@ class EditionManager:
             [InlineKeyboardButton("🔙 Retour aux demandes", callback_data="voir_demandes")]
         ]
 
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        await self._update_view(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _show_edit_prompt(self, query, field_name: str, demande_id: int):
         """Affiche les instructions de saisie pour le champ sélectionné."""
@@ -326,12 +347,12 @@ class EditionManager:
         text = (
             f"✏️ <b>Modification : {html.escape(field_label)}</b>\n\n"
             f"{help_text}\n\n"
-            "Envoyez votre nouveau texte ci-dessous :"
+            "Envoyez votre nouvelle valeur par message texte :"
         )
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton("❌ Annuler", callback_data="cancel_edit")
         ]])
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        await self._update_view(query, text, reply_markup=keyboard)
 
     async def _show_delete_confirmation(self, query, demande: dict):
         """Affiche l'écran d'avertissement avant suppression."""
@@ -349,4 +370,4 @@ class EditionManager:
             [InlineKeyboardButton("🗑️ Confirmer la suppression", callback_data=f"confirm_delete_{demande['id']}")],
             [InlineKeyboardButton("❌ Annuler", callback_data=f"modify_{demande['id']}")]
         ])
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        await self._update_view(query, text, reply_markup=keyboard)

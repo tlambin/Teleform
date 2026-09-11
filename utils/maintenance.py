@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import subprocess
 from typing import Dict
 
@@ -99,23 +100,25 @@ def archive_old_requests(db_manager):
 
 def check_storage_usage() -> float:
     """Retourne l'espace disque consommé dans le répertoire utilisateur en Mo."""
+    home = os.path.expanduser("~")
     try:
-        home = os.path.expanduser("~")
-        res = subprocess.run(["du", "-sb", home], capture_output=True, text=True)
-
+        res = subprocess.run(["du", "-sk", home], capture_output=True, text=True)
         if res.returncode == 0:
-            bytes_used = int(res.stdout.split()[0])
-            mb_used = bytes_used / (1024 * 1024)
+            kb_used = int(res.stdout.split()[0])
+            mb_used = kb_used / 1024.0
 
             if mb_used > 400.0:
                 logger.warning("⚠️ Espace disque critique : %.1f Mo / 512 Mo", mb_used)
                 cleanup_temp_files()
 
             return round(mb_used, 2)
+    except Exception:
+        pass
 
-        logger.error("Erreur commande 'du' : %s", res.stderr)
-        return 0.0
-
+    try:
+        usage = shutil.disk_usage(home)
+        mb_used = (usage.total - usage.free) / (1024 * 1024)
+        return round(mb_used, 2)
     except Exception as exc:
         logger.error("Erreur calcul espace disque : %s", exc)
         return 0.0
@@ -131,7 +134,7 @@ def optimize_database(db_manager):
         with db_manager.get_cursor() as cursor:
             for tbl in tables:
                 try:
-                    cursor.execute(f"OPTIMIZE TABLE {tbl}")
+                    cursor.execute(f"OPTIMIZE TABLE `{tbl}`")
                 except Exception as tbl_exc:
                     logger.warning("Échec optimisation table %s : %s", tbl, tbl_exc)
 
@@ -143,9 +146,9 @@ def optimize_database(db_manager):
 
 
 def cleanup_database(db_manager):
-    """Purge les archives de plus de 3 mois et les comptes inactifs sans historique."""
+    """Purge les archives de plus de 3 mois et les comptes inactifs avec commit explicite."""
     try:
-        with db_manager.get_cursor() as cursor:
+        with db_manager.transaction() as cursor:
             cursor.execute(
                 """
                 DELETE FROM archives
@@ -194,13 +197,16 @@ def get_system_stats(db_manager) -> Dict:
 
         with db_manager.get_cursor() as cursor:
             cursor.execute("SELECT COUNT(*) AS count FROM demandes")
-            stats["demandes_count"] = cursor.fetchone()["count"]
+            row = cursor.fetchone()
+            stats["demandes_count"] = row["count"] if row else 0
 
             cursor.execute("SELECT COUNT(*) AS count FROM archives")
-            stats["archives_count"] = cursor.fetchone()["count"]
+            row = cursor.fetchone()
+            stats["archives_count"] = row["count"] if row else 0
 
             cursor.execute("SELECT COUNT(*) AS count FROM users")
-            stats["users_count"] = cursor.fetchone()["count"]
+            row = cursor.fetchone()
+            stats["users_count"] = row["count"] if row else 0
 
         return stats
 

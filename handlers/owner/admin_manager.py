@@ -26,6 +26,45 @@ class AdminManager:
         """Injection différée de l'InterfaceManager si nécessaire."""
         self.interface = interface_manager
 
+    def _get_interface(self):
+        """Récupère l'InterfaceManager existant ou l'initialise à la volée."""
+        if not self.interface:
+            from utils.interface_manager import InterfaceManager
+            self.interface = InterfaceManager(self.config, self.db_manager)
+        return self.interface
+
+    async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
+        """Met à jour le message ou supprime la photo existante pour émettre du texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+
     async def list_admins(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche la liste complète des administrateurs enregistrés."""
         user = update.effective_user
@@ -83,7 +122,7 @@ class AdminManager:
                 await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
         except Exception as exc:
-            logger.error("Erreur récupération liste admins: %s", exc, exc_info=True)
+            logger.error("Erreur récupération liste admins : %s", exc, exc_info=True)
             if update.message:
                 await update.message.reply_text("❌ Impossible de charger la liste des administrateurs.")
 
@@ -110,15 +149,15 @@ class AdminManager:
                 InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_add")
             ]])
 
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
             return self.WAITING_ADMIN_ID
 
         except Exception as exc:
-            logger.error("Erreur interface ajout admin: %s", exc, exc_info=True)
+            logger.error("Erreur interface ajout admin : %s", exc, exc_info=True)
             return ConversationHandler.END
 
     async def traiter_admin_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Valide l'identifiant et enregistre le nouvel administrateur."""
+        """Valide l'identifiant et enregistre le nouvel administrateur avec commit explicite."""
         if not update.message or not update.message.text:
             return self.WAITING_ADMIN_ID
 
@@ -153,9 +192,10 @@ class AdminManager:
                     await update.message.reply_text("⚠️ Cet utilisateur possède déjà les privilèges administrateur.")
                     return self.WAITING_ADMIN_ID
 
-                base_alias = user_data.get("first_name") or user_data.get("username") or f"Admin{target_id}"
-                alias = str(base_alias)[:20]
+            base_alias = user_data.get("first_name") or user_data.get("username") or f"Admin{target_id}"
+            alias = str(base_alias)[:20]
 
+            with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO admins (user_id, alias, added_by, perm_reseaux, perm_type, alias_locked, date_added)
@@ -165,7 +205,7 @@ class AdminManager:
                 )
 
             self.config.add_admin(target_id)
-            logger.info("Admin promu: %s (%s) par le propriétaire", target_id, alias)
+            logger.info("Admin promu : %s (%s) par le propriétaire", target_id, alias)
 
             alias_esc = html.escape(alias)
             nom_user_esc = html.escape(str(user_data.get("first_name") or ""))
@@ -190,6 +230,7 @@ class AdminManager:
                     parse_mode="HTML",
                     reply_markup=welcome_kb
                 )
+                logger.info("Notification envoyée à l'admin %s", target_id)
             except Exception as notif_err:
                 logger.warning("Impossible de notifier le nouvel admin %s : %s", target_id, notif_err)
 
@@ -210,16 +251,18 @@ class AdminManager:
             return ConversationHandler.END
 
         except Exception as exc:
-            logger.error("Erreur enregistrement administrateur: %s", exc, exc_info=True)
+            logger.error("Erreur enregistrement administrateur : %s", exc, exc_info=True)
             await update.message.reply_text("❌ Erreur technique lors de l'enregistrement.")
             return ConversationHandler.END
 
     async def cancel_admin_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Interrompt la procédure d'ajout d'administrateur."""
         query = update.callback_query
-        if query and self.interface:
-            message, keyboard = self.interface.get_gerer_admins_menu()
-            await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
+        if query:
+            await query.answer()
+            interface = self._get_interface()
+            message, keyboard = interface.get_gerer_admins_menu()
+            await self._safe_edit_or_send(query, context, message, reply_markup=keyboard)
         return ConversationHandler.END
 
     async def admin_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -228,6 +271,8 @@ class AdminManager:
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
             return ConversationHandler.END
+
+        await query.answer()
 
         try:
             with self.db_manager.get_cursor() as cursor:
@@ -244,14 +289,12 @@ class AdminManager:
                 admins = cursor.fetchall()
 
             if not admins:
-                await query.edit_message_text(
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")]])
+                text = (
                     "👥 <b>Révocation d'Administrateur</b>\n\n"
-                    "Aucun administrateur révocable n'est configuré actuellement.",
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")
-                    ]])
+                    "Aucun administrateur révocable n'est configuré actuellement."
                 )
+                await self._safe_edit_or_send(query, context, text, reply_markup=kb)
                 return ConversationHandler.END
 
             lines = [
@@ -272,11 +315,11 @@ class AdminManager:
                 InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_remove")
             ]])
 
-            await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, "\n".join(lines), reply_markup=keyboard)
             return self.WAITING_ADMIN_REMOVE
 
         except Exception as exc:
-            logger.error("Erreur affichage suppression admin: %s", exc, exc_info=True)
+            logger.error("Erreur affichage suppression admin : %s", exc, exc_info=True)
             return ConversationHandler.END
 
     async def traiter_admin_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -332,16 +375,18 @@ class AdminManager:
         if not query or not user or not self.config.is_owner(user.id):
             return ConversationHandler.END
 
+        await query.answer()
+
         selected = context.user_data.pop("admin_to_remove", None)
         context.user_data.pop("admins_list", None)
 
         if not selected:
-            await query.edit_message_text("❌ Erreur : aucun administrateur sélectionné.")
+            await self._safe_edit_or_send(query, context, "❌ Erreur : aucun administrateur sélectionné.")
             return ConversationHandler.END
 
         target_id = int(selected["user_id"])
         try:
-            with self.db_manager.get_cursor() as cursor:
+            with self.db_manager.transaction() as cursor:
                 cursor.execute("DELETE FROM admins WHERE user_id = %s", (target_id,))
 
             self.config.remove_admin(target_id)
@@ -353,16 +398,13 @@ class AdminManager:
             ])
 
             alias_esc = html.escape(str(selected.get("alias") or f"Admin_{target_id}"))
-            await query.edit_message_text(
-                f"✅ <b>Droits administrateur retirés avec succès pour {alias_esc}.</b>",
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
+            text = f"✅ <b>Droits administrateur retirés avec succès pour {alias_esc}.</b>"
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
             return ConversationHandler.END
 
         except Exception as exc:
-            logger.error("Erreur exécution révocation admin: %s", exc, exc_info=True)
-            await query.edit_message_text("❌ Erreur technique lors de la révocation.")
+            logger.error("Erreur exécution révocation admin : %s", exc, exc_info=True)
+            await self._safe_edit_or_send(query, context, "❌ Erreur technique lors de la révocation.")
             return ConversationHandler.END
 
     async def cancel_admin_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -371,7 +413,9 @@ class AdminManager:
         context.user_data.pop("admins_list", None)
         context.user_data.pop("admin_to_remove", None)
 
-        if query and self.interface:
-            message, keyboard = self.interface.get_gerer_admins_menu()
-            await query.edit_message_text(message, parse_mode="HTML", reply_markup=keyboard)
+        if query:
+            await query.answer()
+            interface = self._get_interface()
+            message, keyboard = interface.get_gerer_admins_menu()
+            await self._safe_edit_or_send(query, context, message, reply_markup=keyboard)
         return ConversationHandler.END

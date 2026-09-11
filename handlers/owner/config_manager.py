@@ -26,6 +26,38 @@ class ConfigManager:
         self.config = config
         logger.info("ConfigManager initialisé")
 
+    async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
+        """Met à jour le message ou supprime la photo existante pour émettre du texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+
     async def show_config_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche le menu récapitulatif des configurations courantes."""
         user = update.effective_user
@@ -45,34 +77,16 @@ class ConfigManager:
             keyboard = self._create_config_keyboard()
 
             if update.callback_query:
-                query = update.callback_query
-                if query.message and query.message.photo:
-                    chat_id = query.message.chat_id
-                    try:
-                        await query.message.delete()
-                    except Exception:
-                        pass
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=message,
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                    )
-                else:
-                    await query.edit_message_text(
-                        message, parse_mode="HTML", reply_markup=keyboard
-                    )
+                await self._safe_edit_or_send(update.callback_query, context, message, reply_markup=keyboard)
             elif update.message:
-                await update.message.reply_text(
-                    message, parse_mode="HTML", reply_markup=keyboard
-                )
+                await update.message.reply_text(message, parse_mode="HTML", reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur affichage menu configuration : %s", exc, exc_info=True)
-            await self._send_error_message(update, "❌ Erreur lors de la récupération de la configuration.")
+            await self._send_error_message(update, context, "❌ Erreur lors de la récupération de la configuration.")
 
     async def toggle_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Bascule l'état du mode maintenance."""
+        """Bascule l'état du mode maintenance avec synchronisation SQL."""
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
@@ -87,24 +101,29 @@ class ConfigManager:
 
             if new_val:
                 self.config.disable_demandes()
+                self.set_setting("bot_active", "false")
+                self.set_setting("demandes_enabled", "false")
             else:
                 self.config.enable_demandes()
+                self.set_setting("bot_active", "true")
+                self.set_setting("demandes_enabled", "true")
 
             status_str = "activé" if new_val else "désactivé"
             logger.info("Maintenance %s par le propriétaire %s", status_str, user.id)
 
-            await query.edit_message_text(
+            text = (
                 f"🛠️ <b>Mode maintenance {status_str}</b>\n\n"
-                f"Le service est désormais {'restreint au propriétaire' if new_val else 'disponible selon les paramètres standards'}.",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour Configuration", callback_data="gerer_bot")
-                ]]),
+                f"Le service est désormais {'restreint au propriétaire' if new_val else 'disponible selon les paramètres standards'}."
             )
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Retour Configuration", callback_data="gerer_bot")
+            ]])
+
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur bascule mode maintenance : %s", exc)
-            await self._send_error_message(update, "❌ Erreur lors de la mise à jour de la maintenance.")
+            await self._send_error_message(update, context, "❌ Erreur lors de la mise à jour de la maintenance.")
 
     async def toggle_priority_requests(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Autorise ou interdit la soumission de demandes prioritaires."""
@@ -121,18 +140,19 @@ class ConfigManager:
             self.set_setting("allow_priority_requests", "true" if new_val else "false")
 
             status_str = "autorisées" if new_val else "désactivées"
-            await query.edit_message_text(
+            text = (
                 f"💎 <b>Demandes prioritaires {status_str}</b>\n\n"
-                f"Les demandes prioritaires payantes sont dorénavant {'acceptées' if new_val else 'refusées'}.",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Retour Configuration", callback_data="gerer_bot")
-                ]]),
+                f"Les demandes prioritaires payantes sont dorénavant {'acceptées' if new_val else 'refusées'}."
             )
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Retour Configuration", callback_data="gerer_bot")
+            ]])
+
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur bascule demandes prioritaires : %s", exc)
-            await self._send_error_message(update, "❌ Erreur lors du réglage des demandes prioritaires.")
+            await self._send_error_message(update, context, "❌ Erreur lors du réglage des demandes prioritaires.")
 
     def get_setting(self, key: str, default=None):
         """Récupère une valeur de configuration depuis la table config."""
@@ -209,12 +229,12 @@ class ConfigManager:
         ]
         return InlineKeyboardMarkup(keyboard)
 
-    async def _send_error_message(self, update: Update, text: str):
+    async def _send_error_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         """Envoie un message d'erreur avec retour sécurisé."""
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 Menu Owner", callback_data="gerer_bot")
         ]])
         if update.callback_query:
-            await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+            await self._safe_edit_or_send(update.callback_query, context, text, reply_markup=kb)
         elif update.message:
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)

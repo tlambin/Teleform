@@ -2,7 +2,7 @@
 
 import html
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
@@ -102,9 +102,19 @@ class DemandeManager:
         page: int = 0,
         edit_message: bool = True
     ):
-        """Affiche une demande à la fois avec navigation dynamique."""
+        """Affiche une demande à la fois avec sa photo obligatoire et sa pagination."""
         try:
             with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) AS total FROM demandes WHERE user_id = %s", (int(user_id),))
+                count_res = cursor.fetchone()
+                total_pages = count_res["total"] if count_res else 0
+
+                if total_pages == 0:
+                    await self._send_no_requests_message(update, context, edit_message, user_id)
+                    return
+
+                page = max(0, min(page, total_pages - 1))
+
                 cursor.execute(
                     """
                     SELECT id, request_number, prenom, nom, age, localisation,
@@ -114,72 +124,77 @@ class DemandeManager:
                     FROM demandes
                     WHERE user_id = %s
                     ORDER BY id DESC
+                    LIMIT 1 OFFSET %s
                     """,
-                    (int(user_id),),
+                    (int(user_id), page),
                 )
-                demandes = cursor.fetchall()
+                demande = cursor.fetchone()
 
-            if not demandes:
-                await self._send_no_requests_message(update, edit_message, user_id)
+            if not demande:
+                await self._send_no_requests_message(update, context, edit_message, user_id)
                 return
 
-            total_pages = len(demandes)
-            page = max(0, min(page, total_pages - 1))
-            demande = demandes[page]
-
-            message = self._format_demande_card(demande, page, total_pages)
+            caption_text = self._format_demande_card(demande, page, total_pages)
             keyboard = self._build_navigation_keyboard(demande, page, total_pages, user_id)
+            photo_id = demande.get("photo_id")
+            chat_id = update.effective_chat.id if update.effective_chat else None
 
-            if edit_message and update.callback_query:
+            # Navigation via callback query
+            if edit_message and update.callback_query and update.callback_query.message:
                 query = update.callback_query
-                if query.message and query.message.photo:
-                    chat_id = query.message.chat_id
+
+                # Si le message affiché est déjà une photo, remplacement média direct
+                if query.message.photo:
+                    await query.edit_message_media(
+                        media=InputMediaPhoto(media=photo_id, caption=caption_text, parse_mode="HTML"),
+                        reply_markup=keyboard,
+                    )
+                else:
+                    # Si le message d'origine était du texte (ex. menu texte), suppression et envoi photo
                     try:
                         await query.message.delete()
                     except Exception:
                         pass
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=message,
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                        disable_web_page_preview=True,
-                    )
-                else:
-                    await query.edit_message_text(
-                        message,
-                        parse_mode="HTML",
-                        reply_markup=keyboard,
-                        disable_web_page_preview=True,
-                    )
+                    if chat_id:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo_id,
+                            caption=caption_text,
+                            parse_mode="HTML",
+                            reply_markup=keyboard,
+                        )
             else:
-                target = update.message or (update.callback_query.message if update.callback_query else None)
-                if target:
-                    await target.reply_text(
-                        message,
+                # Appel via commande directe (/demandes)
+                if chat_id:
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo_id,
+                        caption=caption_text,
                         parse_mode="HTML",
                         reply_markup=keyboard,
-                        disable_web_page_preview=True,
                     )
 
         except Exception as exc:
             logger.error("Erreur consultation demandes : %s", exc, exc_info=True)
-            await self._send_error_message(update, edit_message)
+            await self._send_error_message(update, context, edit_message)
 
     def _format_demande_card(self, demande: dict, current_page: int, total_pages: int) -> str:
         """Met en forme la fiche d'une demande avec échappement HTML sécurisé."""
         type_badge = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
-        montant_str = f" - <b>{float(demande['montant']):.2f} €</b>" if demande.get("prioritaire") else ""
+
+        montant = float(demande.get("montant") or 0.0)
+        montant_str = f" - <b>{montant:.2f} €</b>" if demande.get("prioritaire") else ""
 
         prenom_esc = html.escape(demande.get("prenom") or "")
         nom_esc = html.escape(demande.get("nom") or "")
-        nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or ""))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Non renseigné"
+        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
         statut_esc = html.escape(str(demande.get("statut", "En cours")))
+        age_str = demande.get("age") if demande.get("age") is not None else "?"
 
         lignes = [
             f"📋 <b>Demande #{demande.get('request_number', demande['id'])}</b> ({current_page + 1}/{total_pages})\n",
-            f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
+            f"👤 <b>Identité :</b> {nom_complet} ({age_str} ans)",
             f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {type_badge}{montant_str}",
             f"📊 <b>Statut :</b> <code>{statut_esc}</code>"
@@ -188,7 +203,7 @@ class DemandeManager:
         admin_id = demande.get("admin_en_charge")
         if admin_id:
             alias = self.db_manager.get_admin_alias(admin_id)
-            lignes.append(f"👨‍💼 <b>Référent :</b> {html.escape(alias)}")
+            lignes.append(f"👨‍💼 <b>Référent :</b> {html.escape(alias or 'Attitré')}")
 
         reseaux = []
         if demande.get("instagram"):
@@ -227,7 +242,6 @@ class DemandeManager:
 
         if admin_en_charge:
             actions_row = []
-
             if is_vip:
                 actions_row.append(
                     InlineKeyboardButton("💬 Contacter mon référent", callback_data=f"vip_contact_admin_{demande_id}")
@@ -267,7 +281,7 @@ class DemandeManager:
 
         return InlineKeyboardMarkup(buttons)
 
-    async def _send_no_requests_message(self, update: Update, edit_message: bool, user_id: int):
+    async def _send_no_requests_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, edit_message: bool, user_id: int):
         """Message affiché quand aucune demande n'est enregistrée."""
         can_create, _ = self.check_creation_quota(user_id)
         btn_creation = (
@@ -286,6 +300,8 @@ class DemandeManager:
             [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
         ])
 
+        chat_id = update.effective_chat.id if update.effective_chat else None
+
         if edit_message and update.callback_query:
             query = update.callback_query
             if query.message and query.message.photo:
@@ -293,20 +309,22 @@ class DemandeManager:
                     await query.message.delete()
                 except Exception:
                     pass
-                await update.effective_chat.send_message(text, parse_mode="HTML", reply_markup=keyboard)
+                if chat_id:
+                    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
             else:
                 await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
         else:
-            target = update.message or (update.callback_query.message if update.callback_query else None)
-            if target:
-                await target.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+            if chat_id:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
 
-    async def _send_error_message(self, update: Update, edit_message: bool):
+    async def _send_error_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, edit_message: bool):
         """Message en cas de problème de connexion base."""
         text = "❌ <b>Erreur technique</b> lors de la récupération de vos demandes."
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
         ])
+        chat_id = update.effective_chat.id if update.effective_chat else None
+
         if edit_message and update.callback_query:
             query = update.callback_query
             if query.message and query.message.photo:
@@ -314,10 +332,10 @@ class DemandeManager:
                     await query.message.delete()
                 except Exception:
                     pass
-                await update.effective_chat.send_message(text, parse_mode="HTML", reply_markup=keyboard)
+                if chat_id:
+                    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)
             else:
                 await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
         else:
-            target = update.message or (update.callback_query.message if update.callback_query else None)
-            if target:
-                await target.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+            if chat_id:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=keyboard)

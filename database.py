@@ -23,6 +23,7 @@ class DatabaseManager:
         self._cache: Dict[str, Any] = {}
         self._cache_timestamp: Dict[str, float] = {}
         self._cache_ttl = 300.0
+        self.database_name = ""
 
         self._init_connection_pool()
         logger.info("DatabaseManager initialisé avec pool de %d connexions.", self.pool_size)
@@ -51,7 +52,7 @@ class DatabaseManager:
             or getattr(self.config, "db_password", None)
             or ""
         )
-        database = (
+        self.database_name = (
             os.getenv("DB_NAME")
             or getattr(self.config, "DB_NAME", None)
             or getattr(self.config, "db_name", None)
@@ -63,7 +64,7 @@ class DatabaseManager:
             "host": host,
             "user": user,
             "password": password,
-            "database": database,
+            "database": self.database_name,
             "port": port,
             "autocommit": False,
             "buffered": True,
@@ -78,42 +79,51 @@ class DatabaseManager:
                 pool_reset_session=True,
                 **db_config,
             )
-            logger.info("Pool MySQL établi sur %s (base: %s)", host, database)
+            logger.info("Pool MySQL établi sur %s (base: %s)", host, self.database_name)
         except Error as exc:
             logger.critical("Échec de connexion MySQL au serveur %s : %s", host, exc, exc_info=True)
             raise
 
     def _get_connection(self):
-        """Récupère une connexion disponible depuis le pool ou réinitialise si épuisé."""
+        """Récupère une connexion saine avec ping actif pour contrer le timeout 300s de PythonAnywhere."""
         try:
             if not self._pool:
                 self._init_connection_pool()
             conn = self._pool.get_connection()
-            if not conn.is_connected():
+            try:
+                conn.ping(reconnect=True, attempts=3, delay=1)
+            except Exception:
                 conn.reconnect(attempts=3, delay=1)
             return conn
         except (Error, Exception) as exc:
             logger.warning("Connexion perdue ou pool saturé (%s), tentative de réinitialisation...", exc)
             self._init_connection_pool()
-            return self._pool.get_connection()
+            conn = self._pool.get_connection()
+            conn.ping(reconnect=True, attempts=3, delay=1)
+            return conn
 
     @contextmanager
     def get_cursor(self, dictionary: bool = True):
-        """Gestionnaire de contexte pour requêtes unitaires avec commit automatique."""
+        """Gestionnaire de contexte sécurisé évitant toute fuite de connexion sous uWSGI."""
         conn = self._get_connection()
-        cursor = conn.cursor(dictionary=dictionary)
+        cursor = None
         try:
+            cursor = conn.cursor(dictionary=dictionary)
             yield cursor
             conn.commit()
         except Exception as exc:
-            conn.rollback()
-            logger.error("Erreur SQL dans get_cursor: %s", exc)
-            raise
-        finally:
             try:
-                cursor.close()
+                conn.rollback()
             except Exception:
                 pass
+            logger.error("Erreur SQL dans get_cursor : %s", exc)
+            raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
             try:
                 conn.close()
             except Exception:
@@ -121,22 +131,27 @@ class DatabaseManager:
 
     @contextmanager
     def transaction(self, dictionary: bool = True):
-        """Gestionnaire de contexte pour transactions atomiques multi-tables."""
+        """Gestionnaire de contexte pour transactions atomiques sécurisées."""
         conn = self._get_connection()
-        cursor = conn.cursor(dictionary=dictionary)
+        cursor = None
         try:
+            cursor = conn.cursor(dictionary=dictionary)
             yield cursor
             conn.commit()
             logger.debug("Transaction SQL validée avec succès (commit).")
         except Exception as exc:
-            conn.rollback()
-            logger.error("Échec transaction SQL. Annulation complète exécutée (rollback): %s", exc)
-            raise
-        finally:
             try:
-                cursor.close()
+                conn.rollback()
             except Exception:
                 pass
+            logger.error("Échec transaction SQL. Rollback exécuté : %s", exc)
+            raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
             try:
                 conn.close()
             except Exception:
@@ -252,7 +267,6 @@ class DatabaseManager:
                 for query in tables:
                     cursor.execute(query)
 
-                # Migration automatique de la table config si colonnes non alignées
                 try:
                     cursor.execute("DESCRIBE config")
                     cols = [r["Field"].lower() for r in cursor.fetchall()]
@@ -299,7 +313,6 @@ class DatabaseManager:
                         if getattr(e, "errno", None) != 1060:
                             logger.debug("Info colonne %s.%s : %s", table, col, e)
 
-                # Initialisation des clés système par défaut si absentes
                 try:
                     k_col, v_col = self._get_config_columns()
                     default_configs = [
@@ -360,7 +373,6 @@ class DatabaseManager:
                 cursor.execute("SHOW COLUMNS FROM config")
                 cols = [c["Field"].lower() for c in cursor.fetchall()]
 
-                # Détection de la colonne clé
                 if "config_key" in cols:
                     key_col = "config_key"
                 elif "key_name" in cols:
@@ -368,7 +380,6 @@ class DatabaseManager:
                 elif "key" in cols:
                     key_col = "`key`"
 
-                # Détection de la colonne valeur
                 if "config_value" in cols:
                     val_col = "config_value"
                 elif "value" in cols:
@@ -1120,6 +1131,7 @@ class DatabaseManager:
 
     def get_database_size(self) -> Dict[str, Any]:
         try:
+            db_name = getattr(self, "database_name", None) or os.getenv("DB_NAME", "paraworld$telegramDB")
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
@@ -1131,7 +1143,7 @@ class DatabaseManager:
                     WHERE table_schema = %s
                     ORDER BY (data_length + index_length) DESC
                     """,
-                    (self.config.DB_CONFIG["database"],),
+                    (db_name,),
                 )
                 tables = cursor.fetchall()
                 total_size = sum(float(t.get("size_mb", 0) or 0) for t in tables)
@@ -1141,7 +1153,7 @@ class DatabaseManager:
                 "tables": tables,
             }
         except Exception as exc:
-            logger.error("Erreur calcul taille base de données: %s", exc)
+            logger.error("Erreur calcul taille base de données : %s", exc)
             return {"total_size_mb": 0.0, "tables": []}
 
 

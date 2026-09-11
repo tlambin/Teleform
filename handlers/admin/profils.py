@@ -18,17 +18,53 @@ class ProfilsManager:
 
     def _render_progress_bar(self, rate: float) -> str:
         """Génère une jauge graphique sur 10 blocs."""
-        filled = int(round(rate / 10))
+        try:
+            val = float(rate or 0)
+        except (ValueError, TypeError):
+            val = 0.0
+        filled = int(round(val / 10))
         filled = max(0, min(10, filled))
         empty = 10 - filled
         return f"{'🟩' * filled}{'⬜' * empty}"
+
+    async def _render_clean_view(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
+        """Met à jour le message ou supprime la photo existante pour envoyer le profil texte."""
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+                disable_web_page_preview=True
+            )
+        else:
+            try:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True
+                    )
 
     # ==================== PROFIL ADMINISTRATEUR ====================
 
     async def show_admin_profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
         """Affiche la fiche détaillée de performance d'un administrateur."""
         query = update.callback_query
-        if not query:
+        if not query or not update.effective_user:
             return
 
         user_id = update.effective_user.id
@@ -44,13 +80,16 @@ class ProfilsManager:
         if is_owner and admin_id == self.config.OWNER_ID:
             date_str = "Créateur / Propriétaire"
         else:
-            date_str = stats["date_added"].strftime("%d/%m/%Y") if stats.get("date_added") else "Inconnue"
+            dt_added = stats.get("date_added")
+            date_str = dt_added.strftime("%d/%m/%Y") if dt_added and hasattr(dt_added, "strftime") else "Inconnue"
 
         taux = stats.get("taux_reussite", 0)
         bar = self._render_progress_bar(taux)
 
         res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(stats.get("perm_reseaux"), str(stats.get("perm_reseaux", "all")))
         typ_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(stats.get("perm_type"), str(stats.get("perm_type", "all")))
+
+        montant_total = float(stats.get("montant_total") or 0.0)
 
         lines = [
             f"🦈 <b>Profil Administrateur : {alias_esc}</b>",
@@ -67,7 +106,7 @@ class ProfilsManager:
             f"{bar}\n",
             "💎 <b>GESTION PRIORITAIRE</b>",
             f"• Demandes prioritaires : <b>{stats.get('prioritaires_traitees', 0)}</b>",
-            f"• Volume financier traité : <b>{stats.get('montant_total', 0.0):.2f}€</b>"
+            f"• Volume financier traité : <b>{montant_total:.2f}€</b>"
         ]
 
         text = "\n".join(lines)
@@ -82,19 +121,14 @@ class ProfilsManager:
         else:
             buttons.append([InlineKeyboardButton("🔙 Menu Paramètres", callback_data="parametres")])
 
-        keyboard = InlineKeyboardMarkup(buttons)
-
-        if query.message and query.message.photo:
-            await query.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-        else:
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        await self._render_clean_view(query, context, text, InlineKeyboardMarkup(buttons))
 
     # ==================== PROFIL DEMANDEUR / UTILISATEUR ====================
 
     async def show_user_profile_by_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Résout le demandeur Telegram directement via la demande."""
         query = update.callback_query
-        if not query:
+        if not query or not update.effective_user:
             return
 
         user_id = update.effective_user.id
@@ -118,7 +152,7 @@ class ProfilsManager:
                 )
                 demande = cursor.fetchone()
         except Exception as exc:
-            logger.error("Erreur récupération demande #%s: %s", demande_id, exc)
+            logger.error("Erreur récupération demande #%s : %s", demande_id, exc)
 
         if not demande:
             await query.answer("❌ Demande introuvable en base.", show_alert=True)
@@ -144,6 +178,8 @@ class ProfilsManager:
         dt_act = demande.get("derniere_activite") or stats.get("derniere_activite")
         date_act = str(dt_act)[:16] if dt_act else "Inconnue"
 
+        montant_investi = float(stats.get("montant_total_investi") or 0.0)
+
         lines = [
             f"👤 <b>Fiche Utilisateur : {prenom_demandeur}</b>",
             f"🏷️ Pseudo : {pseudo}",
@@ -157,7 +193,7 @@ class ProfilsManager:
             f"📨 En attente de prise en charge : <b>{stats.get('en_attente', 0)}</b>",
             f"✅ Terminées avec succès : <b>{stats.get('reussies', 0)}</b>",
             f"❌ Demandes échouées / refusées : <b>{stats.get('abandonnees', 0)}</b>\n",
-            f"💎 <b>Demandes payantes :</b> {stats.get('total_prio', 0)} (Total investi : <b>{stats.get('montant_total_investi', 0.0):.2f}€</b>)"
+            f"💎 <b>Demandes payantes :</b> {stats.get('total_prio', 0)} (Total investi : <b>{montant_investi:.2f}€</b>)"
         ]
 
         text = "\n".join(lines)
@@ -165,7 +201,4 @@ class ProfilsManager:
             InlineKeyboardButton("↩️ Retour à la demande", callback_data=f"retour_texte_{demande_id}")
         ]])
 
-        if query.message and query.message.photo:
-            await query.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-        else:
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        await self._render_clean_view(query, context, text, keyboard)

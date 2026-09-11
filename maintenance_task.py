@@ -4,6 +4,7 @@
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -23,11 +24,25 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        RotatingFileHandler(LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=2),
+        RotatingFileHandler(LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8"),
         logging.StreamHandler(sys.stdout),
     ],
 )
 logger = logging.getLogger("MaintenanceTask")
+
+
+def _truncate_file(file_path: str, keep_lines: int = 1000):
+    """Tronque un fichier en ne conservant que les dernières lignes (purement en Python)."""
+    if not os.path.exists(file_path):
+        return
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+        if len(lines) > keep_lines:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.writelines(lines[-keep_lines:])
+    except Exception as exc:
+        logger.warning("Échec tronquage du fichier %s : %s", file_path, exc)
 
 
 class UnifiedMaintenance:
@@ -39,13 +54,19 @@ class UnifiedMaintenance:
 
     def check_storage_usage(self) -> float:
         """Calcule l'espace disque consommé dans le répertoire utilisateur (Mo)."""
+        home = os.path.expanduser("~")
         try:
-            home = os.path.expanduser("~")
-            res = subprocess.run(["du", "-sb", home], capture_output=True, text=True)
+            res = subprocess.run(["du", "-sk", home], capture_output=True, text=True)
             if res.returncode == 0:
-                bytes_used = int(res.stdout.split()[0])
-                return round(bytes_used / (1024 * 1024), 2)
-            return 0.0
+                kb_used = int(res.stdout.split()[0])
+                return round(kb_used / 1024.0, 2)
+        except Exception:
+            pass
+
+        try:
+            usage = shutil.disk_usage(home)
+            mb_used = (usage.total - usage.free) / (1024 * 1024)
+            return round(mb_used, 2)
         except Exception as exc:
             logger.error("Erreur mesure disque : %s", exc)
             return 0.0
@@ -127,8 +148,7 @@ class UnifiedMaintenance:
 
             log_files = ["/tmp/bot.log", "/tmp/bot_output.log", LOG_FILE]
             for lp in log_files:
-                if os.path.exists(lp):
-                    subprocess.run(f"tail -n 100 {lp} > {lp}.tmp && mv {lp}.tmp {lp}", shell=True)
+                _truncate_file(lp, keep_lines=100)
 
             if self.db_manager:
                 from utils.maintenance import cleanup_database
@@ -188,7 +208,7 @@ if __name__ == "__main__":
         from database import DatabaseManager
 
         cfg = Config()
-        # pool_size=1 pour ne pas saturer le quota de 9 connexions MySQL
+        # pool_size=1 pour ne pas saturer le quota de connexions MySQL
         db = DatabaseManager(cfg, pool_size=1)
         task = UnifiedMaintenance(db)
         task.run()

@@ -50,13 +50,14 @@ class PhotosManager:
 
             priorite_icon = "💎" if demande.get("prioritaire") else "📝"
             type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-            montant_str = f" ({float(demande['montant']):.2f} €)" if demande.get("prioritaire") else ""
+            montant_val = float(demande.get("montant") or 0.0)
+            montant_str = f" ({montant_val:.2f} €)" if demande.get("prioritaire") else ""
 
             prenom_esc = html.escape(str(demande.get("prenom") or ""))
             nom_esc = html.escape(str(demande.get("nom") or ""))
             nom_complet = f"{prenom_esc} {nom_esc}".strip()
-            loc_esc = html.escape(str(demande.get("localisation") or ""))
-            statut_esc = html.escape(str(demande.get("statut") or ""))
+            loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
+            statut_esc = html.escape(str(demande.get("statut") or "En cours"))
             req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
             if demande.get("username"):
@@ -70,7 +71,7 @@ class PhotosManager:
 
             caption_lines = [
                 f"📷 <b>Photo de la demande #{req_num}</b>\n",
-                f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
+                f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
                 f"📍 <b>Localisation :</b> {loc_esc}",
                 f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
                 f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
@@ -98,13 +99,31 @@ class PhotosManager:
                 ]
             ])
 
-            media = InputMediaPhoto(
-                media=demande["photo_id"],
-                caption=caption,
-                parse_mode="HTML"
-            )
+            chat_id = query.message.chat_id if query.message else None
 
-            await query.edit_message_media(media=media, reply_markup=keyboard)
+            # Si le message d'origine est déjà une photo, on remplace le média
+            if query.message and query.message.photo:
+                media = InputMediaPhoto(
+                    media=demande["photo_id"],
+                    caption=caption,
+                    parse_mode="HTML"
+                )
+                await query.edit_message_media(media=media, reply_markup=keyboard)
+            else:
+                # Si le message d'origine est du texte pur, on supprime et on envoie la photo
+                if query.message:
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                if chat_id:
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=demande["photo_id"],
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=keyboard
+                    )
 
         except Exception as exc:
             logger.error("Erreur affichage photo intégrée %s : %s", demande_id, exc, exc_info=True)
@@ -142,13 +161,14 @@ class PhotosManager:
 
             priorite_icon = "💎" if demande.get("prioritaire") else "📝"
             type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-            montant_str = f" ({float(demande['montant']):.2f} €)" if demande.get("prioritaire") else ""
+            montant_val = float(demande.get("montant") or 0.0)
+            montant_str = f" ({montant_val:.2f} €)" if demande.get("prioritaire") else ""
 
             prenom_esc = html.escape(str(demande.get("prenom") or ""))
             nom_esc = html.escape(str(demande.get("nom") or ""))
             nom_complet = f"{prenom_esc} {nom_esc}".strip()
-            loc_esc = html.escape(str(demande.get("localisation") or ""))
-            statut_esc = html.escape(str(demande.get("statut") or ""))
+            loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
+            statut_esc = html.escape(str(demande.get("statut") or "En cours"))
             req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
             if demande.get("username"):
@@ -162,7 +182,7 @@ class PhotosManager:
 
             lines = [
                 f"💌 <b>Demande #{req_num}</b>\n",
-                f"👤 <b>Identité :</b> {nom_complet} ({demande['age']} ans)",
+                f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
                 f"📍 <b>Localisation :</b> {loc_esc}",
                 f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
                 f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
@@ -198,19 +218,20 @@ class PhotosManager:
                 ]
             ]
 
-            chat_id = query.message.chat_id
+            chat_id = query.message.chat_id if query.message else None
             try:
                 await query.message.delete()
             except Exception:
                 pass
 
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="\n".join(lines),
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                disable_web_page_preview=True
-            )
+            if chat_id:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="\n".join(lines),
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    disable_web_page_preview=True
+                )
 
         except Exception as exc:
             logger.error("Erreur retour vue texte : %s", exc, exc_info=True)
