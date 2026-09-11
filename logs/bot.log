@@ -1040,3 +1040,225 @@ telegram.error.TimedOut: Timed out
 2026-09-11 13:31:57,471 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
 2026-09-11 13:31:57,605 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
 2026-09-11 13:32:00,244 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-11 14:07:23,486 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-11 14:07:23,487 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-11 14:07:23,512 - database - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base: paraworld$telegramDB)
+2026-09-11 14:07:23,513 - database - INFO - DatabaseManager initialisé avec pool de 2 connexions.
+2026-09-11 14:07:23,514 - config - INFO - Cache admin rechargé : 2 administrateurs
+2026-09-11 14:07:23,524 - handlers.user.compte - INFO - CompteManager initialisé
+2026-09-11 14:07:23,524 - handlers.user.navigation - INFO - NavigationManager initialisé
+2026-09-11 14:07:23,524 - handlers.user.formulaire - INFO - FormulaireManager initialisé
+2026-09-11 14:07:23,524 - handlers.user.demande - INFO - DemandeManager initialisé
+2026-09-11 14:07:23,524 - handlers.user.edition - INFO - EditionManager initialisé
+2026-09-11 14:07:23,524 - handlers.admin.suivi - INFO - SuiviManager initialisé
+2026-09-11 14:07:23,524 - handlers.admin.alias - INFO - AliasManager initialisé
+2026-09-11 14:07:23,524 - handlers.admin.statuts - INFO - StatutsManager initialisé
+2026-09-11 14:07:23,524 - handlers.admin.photos - INFO - PhotosManager initialisé
+2026-09-11 14:07:23,524 - handlers.admin.dispo - INFO - DispoManager initialisé
+2026-09-11 14:07:23,524 - handlers.admin.alias - INFO - AliasManager initialisé
+2026-09-11 14:07:23,524 - handlers.admin.notifs - INFO - NotifsManager initialisé
+2026-09-11 14:07:23,524 - handlers.admin.contact - INFO - ContactManager initialisé
+2026-09-11 14:07:23,525 - handlers.admin.profils - INFO - ProfilsManager initialisé
+2026-09-11 14:07:23,525 - handlers.admin.alias - INFO - AliasManager initialisé
+2026-09-11 14:07:23,525 - handlers.owner_handlers - INFO - OwnerHandlers initialisé
+2026-09-11 14:07:24,187 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-11 14:07:24,187 - main - INFO - ⏰ JobQueue activée : vérification des rappels admins toutes les 3600s.
+2026-09-11 14:07:24,231 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/getMe "HTTP/1.1 200 OK"
+2026-09-11 14:07:24,232 - apscheduler.scheduler - INFO - Added job "check_and_send_admin_reminders" to job store "default"
+2026-09-11 14:07:24,233 - apscheduler.scheduler - INFO - Scheduler started
+2026-09-11 14:07:24,233 - telegram.ext.Application - INFO - Application started
+2026-09-11 14:08:37,682 - apscheduler.executors.default - WARNING - Run time of job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-11 13:07:39 UTC)" was missed by 0:00:58.511787
+2026-09-11 14:08:42,690 - telegram.ext.Application - ERROR - No error handlers are registered, logging exception.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/usr/local/lib/python3.13/site-packages/httpx/_transports/default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_async/connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_async/connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool_request.request
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_async/http_proxy.py", line 288, in handle_async_request
+    connect_response = await self._connection.handle_async_request(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        connect_request
+        ^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_async/connection.py", line 101, in handle_async_request
+    raise exc
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_async/connection.py", line 78, in handle_async_request
+    stream = await self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_async/connection.py", line 124, in _connect
+    stream = await self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_backends/auto.py", line 31, in connect_tcp
+    return await self._backend.connect_tcp(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_backends/anyio.py", line 113, in connect_tcp
+    with map_exceptions(exc_map):
+         ~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/local/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/request/_httpxrequest.py", line 279, in do_request
+    res = await self._client.request(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/httpx/_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/httpx/_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/httpx/_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/httpx/_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/httpx/_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/httpx/_transports/default.py", line 393, in handle_async_request
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectTimeout
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/ext/_application.py", line 1315, in process_update
+    await coroutine
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/ext/_handlers/basehandler.py", line 159, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/paraworld/teleform/handlers/user_handlers.py", line 50, in start
+    await update.message.reply_text(
+    ...<3 lines>...
+    )
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/_message.py", line 2228, in reply_text
+    return await self.get_bot().send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/ext/_extbot.py", line 3150, in send_message
+    return await super().send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<23 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/_bot.py", line 1138, in send_message
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/ext/_extbot.py", line 638, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<23 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/_bot.py", line 828, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/_bot.py", line 712, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/ext/_extbot.py", line 378, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/_bot.py", line 741, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/request/_baserequest.py", line 198, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/request/_baserequest.py", line 305, in _request_wrapper
+    code, payload = await self.do_request(
+                    ^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/home/paraworld/.local/lib/python3.13/site-packages/telegram/request/_httpxrequest.py", line 296, in do_request
+    raise TimedOut from err
+telegram.error.TimedOut: Timed out
+2026-09-11 14:08:42,913 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-11 14:08:43,088 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-11 14:08:43,257 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-11 14:08:43,422 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-11 14:08:43,595 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-11 14:08:43,760 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-11 14:10:40,918 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-11 14:10:40,919 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-11 14:10:40,949 - database - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base: paraworld$telegramDB)
+2026-09-11 14:10:40,949 - database - INFO - DatabaseManager initialisé avec pool de 2 connexions.
+2026-09-11 14:10:40,951 - config - INFO - Cache admin rechargé : 2 administrateurs
+2026-09-11 14:10:40,959 - handlers.user.compte - INFO - CompteManager initialisé
+2026-09-11 14:10:40,959 - handlers.user.navigation - INFO - NavigationManager initialisé
+2026-09-11 14:10:40,959 - handlers.user.formulaire - INFO - FormulaireManager initialisé
+2026-09-11 14:10:40,959 - handlers.user.demande - INFO - DemandeManager initialisé
+2026-09-11 14:10:40,959 - handlers.user.edition - INFO - EditionManager initialisé
+2026-09-11 14:10:40,959 - handlers.admin.suivi - INFO - SuiviManager initialisé
+2026-09-11 14:10:40,959 - handlers.admin.alias - INFO - AliasManager initialisé
+2026-09-11 14:10:40,959 - handlers.admin.statuts - INFO - StatutsManager initialisé
+2026-09-11 14:10:40,959 - handlers.admin.photos - INFO - PhotosManager initialisé
+2026-09-11 14:10:40,960 - handlers.admin.dispo - INFO - DispoManager initialisé
+2026-09-11 14:10:40,960 - handlers.admin.alias - INFO - AliasManager initialisé
+2026-09-11 14:10:40,960 - handlers.admin.notifs - INFO - NotifsManager initialisé
+2026-09-11 14:10:40,960 - handlers.admin.contact - INFO - ContactManager initialisé
+2026-09-11 14:10:40,960 - handlers.admin.profils - INFO - ProfilsManager initialisé
+2026-09-11 14:10:40,960 - handlers.admin.alias - INFO - AliasManager initialisé
+2026-09-11 14:10:40,960 - handlers.owner_handlers - INFO - OwnerHandlers initialisé
+2026-09-11 14:10:41,805 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/getMe "HTTP/1.1 200 OK"
+2026-09-11 14:10:41,806 - telegram.ext.Application - INFO - Application started
+2026-09-11 14:10:46,399 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-11 14:10:48,028 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-11 14:10:48,172 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"

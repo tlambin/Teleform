@@ -69,15 +69,15 @@ def check_log_permissions() -> bool:
 
 
 async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Vérifie chaque heure si des administrateurs doivent recevoir un rappel de leurs suivis."""
+    """Vérifie si des administrateurs doivent recevoir un rappel de leurs suivis."""
     db_manager = context.job.data.get("db_manager")
     if not db_manager:
         return
 
     now_paris = datetime.now(PARIS_TZ)
     current_hour = now_paris.hour
-    current_weekday = now_paris.weekday()  # 0 = Lundi, 6 = Dimanche
-    current_monthday = now_paris.day        # 1 à 31
+    current_weekday = now_paris.weekday()
+    current_monthday = now_paris.day
     today_date = now_paris.date()
 
     admin_prefs_list = db_manager.get_all_admin_preferences()
@@ -85,7 +85,6 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
     for pref in admin_prefs_list:
         user_id = pref["user_id"]
 
-        # 🛑 Ne pas envoyer de rappel périodique si l'admin est en mode pause
         if db_manager.is_admin_paused(user_id):
             continue
 
@@ -166,7 +165,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
 # ==================== HANDLERS TELEGRAM STARS ====================
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Valide les commandes Stars (abonnements VIP ou relances à 1 €)."""
+    """Valide les commandes Stars (abonnements VIP ou relances)."""
     query = update.pre_checkout_query
     payload = query.invoice_payload
 
@@ -182,13 +181,12 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     payload = payment.invoice_payload
     user_id = update.effective_user.id
     db_manager = context.application.bot_data.get("db_manager")
-    config = context.application.bot_data.get("config")
+    user_handlers = context.application.bot_data.get("user_handlers")
 
-    if not db_manager:
-        logger.error("DatabaseManager introuvable dans bot_data lors du paiement Stars.")
+    if not db_manager or not user_handlers:
+        logger.error("Gestionnaires introuvables dans bot_data lors du paiement Stars.")
         return
 
-    # Cas 1 : Abonnement VIP 30 jours
     if payload.startswith(f"vip_sub_{user_id}_"):
         db_manager.set_user_vip(user_id, is_vip=True, duration_days=30)
 
@@ -208,14 +206,12 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text(merci_msg, parse_mode="HTML", reply_markup=kb)
         logger.info("Abonnement VIP 30 jours activé via Stars pour l'utilisateur %s", user_id)
 
-    # Cas 2 : Paiement d'une relance hebdomadaire pour demande standard (50 Stars / 1 €)
     elif payload.startswith("remind_pay_"):
         parts = payload.split("_")
         demande_id = int(parts[2])
 
-        user_handlers = UserHandlers(config, db_manager)
         await user_handlers._dispatch_admin_reminder(update, context, demande_id, is_paid_boost=True)
-        logger.info("Rappel payant (1 €) validé pour la demande #%s par l'utilisateur %s", demande_id, user_id)
+        logger.info("Rappel payant validé pour la demande #%s par l'utilisateur %s", demande_id, user_id)
 
 
 class TelegramBot:
@@ -257,7 +253,6 @@ class TelegramBot:
         """Crée les ConversationHandlers du bot."""
         demande_handler = self.user_handlers.formulaire.get_conversation_handler()
 
-        # Modification d'alias (Admin ou Owner)
         modify_alias_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -278,7 +273,6 @@ class TelegramBot:
             per_user=True,
         )
 
-        # Contact Admin -> Propriétaire
         contact_owner_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -302,7 +296,6 @@ class TelegramBot:
             per_user=True,
         )
 
-        # Réponse Propriétaire -> Admin
         owner_reply_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -326,7 +319,6 @@ class TelegramBot:
             per_user=True,
         )
 
-        # Ajout d'admin par l'Owner
         add_admin_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -347,7 +339,6 @@ class TelegramBot:
             per_user=True,
         )
 
-        # Révocation d'admin par l'Owner
         remove_admin_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -374,7 +365,6 @@ class TelegramBot:
             per_user=True,
         )
 
-        # Promotion VIP par l'Owner
         add_vip_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -399,7 +389,6 @@ class TelegramBot:
             per_user=True,
         )
 
-        # Révocation VIP par l'Owner
         remove_vip_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -432,64 +421,52 @@ class TelegramBot:
         ]
 
     def setup_application(self) -> Application:
-        """Configure et câble tous les handlers du bot ainsi que la tâche de fond."""
-        app = Application.builder().token(self.config.BOT_TOKEN).build()
+        """Configure et câble tous les handlers du bot."""
+        app = Application.builder().token(self.config.BOT_TOKEN).job_queue(None).build()
         app.bot_data["db_manager"] = self.db_manager
         app.bot_data["config"] = self.config
+        app.bot_data["user_handlers"] = self.user_handlers
 
-        # Enregistrement prioritaire des ConversationHandlers
         for handler in self.create_conversation_handlers():
             app.add_handler(handler)
 
-        # Gestion des paiements Telegram Stars (XTR)
         app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-        # Commandes standard
         app.add_handler(CommandHandler("start", self.user_handlers.start))
         app.add_handler(CommandHandler("demandes", self.user_handlers.voir_demandes))
         app.add_handler(CommandHandler("toggle_demandes", self.owner_handlers.toggle_demandes))
         app.add_handler(CommandHandler("maintenance", self.owner_handlers.run_maintenance))
 
-        # 1. Callbacks propriétaire (permissions admin, contrôle bot, stats, VIP)
+        # 1. Callbacks propriétaire
         app.add_handler(CallbackQueryHandler(
             self.owner_handlers.handle_owner_callbacks,
             pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips)$",
         ))
 
-        # 2. Callbacks admin (prioritaires sur l'interface générale pour éviter d'intercepter menu_notifs, pref_ et admin_)
+        # 2. Callbacks admin
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
             pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
         ))
 
-        # 3. Callbacks d'interface générale (menus de base, quotas et navigation)
+        # 3. Callbacks interface générale
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_interface_callbacks,
-            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_bot|menu_limits|limit_.*)$",
+            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|gerer_admins|gerer_bot|menu_limits|limit_.*)$",
         ))
 
-        # 4. Callbacks utilisateur (formulaires, options VIP, boutique Stars et relances)
+        # 4. Callbacks utilisateur
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
             pattern=r"^(nav_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*)$",
         ))
 
-        # Messages hors commandes
+        # Messages texte et médias
         app.add_handler(MessageHandler(
             (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & ~filters.COMMAND,
             self.user_handlers.handle_text_messages,
         ))
-
-        # Tâche récurrente : vérifie les rappels de suivis toutes les heures
-        if app.job_queue:
-            app.job_queue.run_repeating(
-                check_and_send_admin_reminders,
-                interval=3600,
-                first=15,
-                data={"db_manager": self.db_manager},
-            )
-            logger.info("⏰ JobQueue activée : vérification des rappels admins toutes les 3600s.")
 
         async def post_init(application: Application):
             await self.setup_bot_commands(application)
@@ -500,31 +477,19 @@ class TelegramBot:
     def run(self):
         """Démarre le bot en mode polling local."""
         app = self.setup_application()
-        logger.info("🚀 Bot Telegram démarré avec succès (mode polling + VIP Telegram Stars)")
+        logger.info("Bot démarré en mode local")
         app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
     try:
         check_log_permissions()
-
-        logger.info("1. Initialisation de la base de données...")
         config = Config()
         db_manager = DatabaseManager(config)
         db_manager.create_tables()
-        logger.info("✅ Base de données initialisée")
-
-        logger.info("2. Configuration avec cache intelligent...")
         config.set_db_manager(db_manager)
-        logger.info("Admins chargés au démarrage : %s", config.admin_ids)
-
-        if not config.admin_ids:
-            logger.warning("⚠️ Aucun admin trouvé au démarrage !")
-
-        logger.info("3. Démarrage de l'application...")
         bot = TelegramBot(config, db_manager)
         bot.run()
-
     except Exception as e:
         logger.critical("Erreur critique au démarrage : %s", e, exc_info=True)
         sys.exit(1)
