@@ -161,7 +161,13 @@ class StatutsManager:
                 await self._apply_status_change(query, context, demande_id, "✅ Réussie", reussie_substatus=sub_type)
                 return
 
-            # 4. Interrupteur Difficile
+            # 4. Archivage immédiat validé par l'admin
+            if data.startswith("status_archive_now_"):
+                demande_id = int(data.replace("status_archive_now_", ""))
+                await self._archive_demande_now(query, context, demande_id)
+                return
+
+            # 5. Interrupteur Difficile
             if data.startswith("status_toggle_diff_"):
                 demande_id = int(data.replace("status_toggle_diff_", ""))
                 new_diff_state = self.db_manager.toggle_demande_difficile(demande_id)
@@ -195,7 +201,7 @@ class StatutsManager:
                 await self.show_status_change_menu(update, context, demande_id)
                 return
 
-            # 5. Application En attente / En cours
+            # 6. Application En attente / En cours
             if data.startswith("status_apply_"):
                 parts = data.split("_")
                 demande_id = int(parts[2])
@@ -221,7 +227,7 @@ class StatutsManager:
         nouveau_statut: str,
         reussie_substatus: str = None
     ):
-        """Met à jour le statut, actualise les suivis, alerte le demandeur et rafraîchit la fiche."""
+        """Met à jour le statut, actualise les suivis, alerte le demandeur et informe l'admin."""
         admin_id = query.from_user.id
         admin_alias = self.db_manager.get_admin_alias(admin_id)
 
@@ -290,6 +296,81 @@ class StatutsManager:
             await self._update_photo_caption(query, demande_fresh)
         else:
             await self._update_existing_text_message(query, demande_fresh)
+
+        # Alertes et rappels de livraison pour l'administrateur
+        req_num = html.escape(str(demande.get("request_number", demande_id)))
+        prenom_esc = html.escape(str(demande.get("prenom") or "la cible"))
+        has_delivered = bool(demande_fresh.get("has_delivered_content", False))
+
+        if nouveau_statut == "✅ Réussie" and reussie_substatus == "active":
+            remind_text = (
+                f"💡 <b>Rappel de livraison (Demande #{req_num})</b>\n\n"
+                f"Le statut a été passé en <b>Réussie (🟢 Active)</b>.\n"
+                f"Pensez à transmettre dès à présent à l'utilisateur le contenu déjà obtenu sur <b>{prenom_esc}</b> !"
+            )
+            remind_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 Transmettre le contenu obtenu", callback_data=f"contacter_{demande_id}")]
+            ])
+            await context.bot.send_message(chat_id=admin_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
+
+        elif nouveau_statut == "✅ Réussie" and reussie_substatus == "terminee":
+            if not has_delivered:
+                remind_text = (
+                    f"⚠️ <b>Action requise (Demande #{req_num})</b>\n\n"
+                    f"La demande a été déclarée <b>Réussie (❎ Terminée)</b>.\n\n"
+                    f"👉 Vous devez <b>obligatoirement envoyer le contenu obtenu</b> à l'utilisateur.\n"
+                    "<i>Le bouton d'archivage sera débloqué dès votre premier envoi (et la demande s'auto-archivera sous 72h).</i>"
+                )
+                remind_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Transmettre le contenu maintenant", callback_data=f"contacter_{demande_id}")]
+                ])
+                await context.bot.send_message(chat_id=admin_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
+            else:
+                remind_text = (
+                    f"📦 <b>Dossier #{req_num} prêt pour l'archivage</b>\n\n"
+                    "Le contenu a bien été livré. Vous pouvez archiver ce dossier immédiatement pour clore la fiche, "
+                    "ou le laisser s'archiver automatiquement dans 72h."
+                )
+                remind_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📦 Archiver le dossier maintenant", callback_data=f"status_archive_now_{demande_id}")]
+                ])
+                await context.bot.send_message(chat_id=admin_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
+
+    async def _archive_demande_now(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
+        """Archive immédiatement une demande terminée ayant livré son contenu."""
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM demandes WHERE id = %s", (demande_id,))
+            demande = cursor.fetchone()
+
+        if not demande:
+            await query.answer("❌ Demande introuvable.", show_alert=True)
+            return
+
+        if not demande.get("has_delivered_content"):
+            await query.answer("⚠️ Impossible d'archiver : vous devez d'abord transmettre le contenu au client !", show_alert=True)
+            return
+
+        success = self.db_manager.archiver_demande_reussie(demande_id)
+        if success:
+            req_num = html.escape(str(demande.get("request_number", demande_id)))
+            await query.answer(f"✅ Demande #{req_num} archivée avec succès !")
+            back_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Retour à mes suivis", callback_data="demandes_suivies")
+            ]])
+            msg = (
+                f"📦 <b>Demande #{req_num} archivée !</b>\n\n"
+                "Le dossier est désormais clos et archivé. Le quota du demandeur a été libéré."
+            )
+            if query.message and query.message.photo:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await context.bot.send_message(chat_id=query.from_user.id, text=msg, parse_mode="HTML", reply_markup=back_kb)
+            else:
+                await query.edit_message_text(text=msg, parse_mode="HTML", reply_markup=back_kb)
+        else:
+            await query.answer("❌ Erreur lors de l'archivage.", show_alert=True)
 
     async def _initiate_abandon_flow(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int, admin_id: int):
         """Initialise la demande du motif d'abandon auprès de l'administrateur."""
@@ -416,6 +497,37 @@ class StatutsManager:
             logger.error("Erreur traitement motif abandon demande %s : %s", demande_id, exc, exc_info=True)
             await update.message.reply_text("❌ Une erreur est survenue lors de l'enregistrement de l'abandon.")
 
+    def _build_demande_keyboard(self, demande: dict) -> InlineKeyboardMarkup:
+        """Construit le clavier d'actions avec insertion conditionnelle du bouton d'archivage."""
+        demande_id = demande["id"]
+        is_reussie = (demande.get("statut") == "✅ Réussie")
+        sub_status = demande.get("reussie_substatus")
+        has_delivered = bool(demande.get("has_delivered_content", False))
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
+                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}"),
+            ],
+            [
+                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
+            ]
+        ]
+
+        # Condition d'affichage pour la demande réussie et terminée
+        if is_reussie and sub_status == "terminee":
+            if has_delivered:
+                keyboard.insert(1, [
+                    InlineKeyboardButton("📦 Archiver le dossier", callback_data=f"status_archive_now_{demande_id}")
+                ])
+            else:
+                keyboard.insert(1, [
+                    InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
+                ])
+
+        keyboard.append([InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")])
+        return InlineKeyboardMarkup(keyboard)
+
     async def _update_existing_text_message(self, query, demande: dict):
         """Actualise le corps du message texte après transition d'état."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
@@ -477,21 +589,10 @@ class StatutsManager:
 
         lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
 
-        keyboard = [
-            [
-                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
-                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
-            ],
-            [
-                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
-            ],
-            [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")],
-        ]
-
         await query.edit_message_text(
             text="\n".join(lines),
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_markup=self._build_demande_keyboard(demande),
             disable_web_page_preview=True,
         )
 
@@ -529,19 +630,8 @@ class StatutsManager:
 
         caption = "\n".join(caption_lines)
 
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
-                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
-            ],
-            [
-                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
-            ],
-            [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")],
-        ])
-
         await query.edit_message_caption(
             caption=caption,
             parse_mode="HTML",
-            reply_markup=keyboard,
+            reply_markup=self._build_demande_keyboard(demande),
         )

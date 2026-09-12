@@ -207,6 +207,8 @@ class DatabaseManager:
                 statut VARCHAR(32) DEFAULT '📥 Reçue',
                 is_difficile BOOLEAN NOT NULL DEFAULT FALSE,
                 reussie_substatus VARCHAR(20) DEFAULT NULL,
+                has_delivered_content BOOLEAN NOT NULL DEFAULT FALSE,
+                date_livraison DATETIME DEFAULT NULL,
                 admin_en_charge BIGINT DEFAULT NULL,
                 ancien_admin_alias VARCHAR(64) DEFAULT NULL,
                 raison_abandon TEXT DEFAULT NULL,
@@ -248,6 +250,8 @@ class DatabaseManager:
                 statut VARCHAR(32),
                 is_difficile BOOLEAN NOT NULL DEFAULT FALSE,
                 reussie_substatus VARCHAR(20) DEFAULT NULL,
+                has_delivered_content BOOLEAN NOT NULL DEFAULT FALSE,
+                date_livraison DATETIME DEFAULT NULL,
                 date_creation DATETIME,
                 date_archivage DATETIME DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_archive_user (user_id)
@@ -274,6 +278,8 @@ class DatabaseManager:
             ("admins", "is_paused", "BOOLEAN DEFAULT FALSE"),
             ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
+            ("demandes", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("demandes", "date_livraison", "DATETIME DEFAULT NULL"),
             ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
             ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
             ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
@@ -282,6 +288,8 @@ class DatabaseManager:
             ("demandes", "last_vip_reminder", "DATETIME DEFAULT NULL"),
             ("archives", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("archives", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
+            ("archives", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("archives", "date_livraison", "DATETIME DEFAULT NULL"),
             ("admin_preferences", "notif_new_mode", "VARCHAR(16) DEFAULT 'sound'"),
             ("admin_preferences", "rappel_mode", "VARCHAR(16) DEFAULT 'sound'"),
             ("admin_preferences", "rappel_freq", "VARCHAR(16) DEFAULT 'daily'"),
@@ -747,6 +755,93 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur mise à jour statut demande %s : %s", demande_id, exc)
             return False
+
+    def mark_content_delivered(self, demande_id: int):
+        """Marque le contenu comme livré et initialise la date pour le décompte de 72h."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET has_delivered_content = TRUE,
+                        date_livraison = COALESCE(date_livraison, NOW()),
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (int(demande_id),)
+                )
+        except Exception as exc:
+            logger.error("Erreur marquage livraison demande %s : %s", demande_id, exc)
+
+    def archiver_demande_reussie(self, demande_id: int) -> bool:
+        """Déplace une demande réussie et terminée vers les archives et libère le quota du demandeur."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute("SELECT * FROM demandes WHERE id = %s", (int(demande_id),))
+                demande = cursor.fetchone()
+                if not demande:
+                    return False
+
+                cursor.execute(
+                    """
+                    INSERT INTO archives (
+                        original_id, user_id, prenom, nom, age, localisation,
+                        photo_id, instagram, snapchat, details, prioritaire,
+                        montant, statut, is_difficile, reussie_substatus,
+                        has_delivered_content, date_livraison, date_creation, date_archivage
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    )
+                    """,
+                    (
+                        demande["id"],
+                        demande["user_id"],
+                        demande.get("prenom"),
+                        demande.get("nom"),
+                        demande.get("age"),
+                        demande.get("localisation"),
+                        demande.get("photo_id"),
+                        demande.get("instagram"),
+                        demande.get("snapchat"),
+                        demande.get("details"),
+                        demande.get("prioritaire", False),
+                        demande.get("montant", 0.0),
+                        demande.get("statut"),
+                        demande.get("is_difficile", False),
+                        demande.get("reussie_substatus"),
+                        demande.get("has_delivered_content", False),
+                        demande.get("date_livraison"),
+                        demande.get("date_creation")
+                    )
+                )
+
+                cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (int(demande_id),))
+                cursor.execute("DELETE FROM demandes WHERE id = %s", (int(demande_id),))
+                return True
+        except Exception as exc:
+            logger.error("Erreur archivage demande réussie %s : %s", demande_id, exc)
+            return False
+
+    def get_expired_delivered_demandes(self, hours: int = 72) -> List[Dict[str, Any]]:
+        """Récupère les demandes terminées avec contenu livré depuis plus de X heures pour auto-archivage."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, user_id, request_number, prenom
+                    FROM demandes
+                    WHERE statut = '✅ Réussie'
+                      AND reussie_substatus = 'terminee'
+                      AND has_delivered_content = TRUE
+                      AND date_livraison IS NOT NULL
+                      AND TIMESTAMPDIFF(HOUR, date_livraison, NOW()) >= %s
+                    """,
+                    (hours,)
+                )
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur extraction demandes prêtes pour auto-archivage : %s", exc)
+            return []
 
     @staticmethod
     def format_statut_display(statut: str, is_difficile: bool = False, reussie_substatus: Optional[str] = None) -> str:

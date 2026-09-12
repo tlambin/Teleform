@@ -111,7 +111,7 @@ class AdminHandlers:
             elif data.startswith("retour_texte_"):
                 await self.photos.retour_texte_demande(update, context)
 
-            # 6. Gestion dynamique des statuts
+            # 6. Gestion dynamique des statuts et archivage
             elif data.startswith("change_status_") or data.startswith("mark_treated_menu_"):
                 demande_id = int(data.split("_")[-1])
                 await self.statuts.show_status_change_menu(update, context, demande_id)
@@ -402,7 +402,7 @@ class AdminHandlers:
         return True
 
     async def _dispatch_media_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Envoie l'ensemble du lot au demandeur sous forme d'albums natifs et documents groupés."""
+        """Envoie l'ensemble du lot au demandeur et valide la livraison dans la base de données."""
         query = update.callback_query
         session = context.user_data.pop("contact_session", None)
 
@@ -493,10 +493,14 @@ class AdminHandlers:
                     reply_markup=user_keyboard
                 )
 
+            # ⚡ Marquer le contenu comme livré dans la base et horodater date_livraison
+            self.db_manager.mark_content_delivered(demande_id)
+
             total_items = len(visuals) + len(docs) + len(texts)
             done_text = (
                 f"✅ <b>Lot de {total_items} élément{'s' if total_items > 1 else ''} envoyé avec succès !</b>\n"
-                f"Les fichiers ont été transmis sous votre alias officiel : <code>{alias_esc}</code>"
+                f"Les fichiers ont été transmis sous votre alias officiel : <code>{alias_esc}</code>\n\n"
+                "📦 <i>Le contenu est marqué comme livré. Si la demande est terminée, le dossier pourra être archivé (ou le sera sous 72h).</i>"
             )
             back_keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton("↩️ Retour à la demande", callback_data=f"retour_texte_{demande_id}")

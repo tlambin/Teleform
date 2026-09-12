@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point d'entrée principal de l'application Telegram avec gestion des VIP, Telegram Stars et mode pause."""
+"""Point d'entrée principal de l'application Telegram avec gestion des VIP, Telegram Stars, mode pause et auto-archivage."""
 
 from datetime import datetime
 import logging
@@ -165,6 +165,26 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
             logger.info("Rappel automatique envoyé à l'admin %s (mode : %s)", user_id, rappel_mode)
         except Exception as err:
             logger.warning("Erreur envoi rappel programmé à l'admin %s : %s", user_id, err)
+
+
+async def check_and_auto_archive_demandes(context: ContextTypes.DEFAULT_TYPE):
+    """Archive automatiquement les demandes terminées et livrées depuis plus de 72 heures."""
+    db_manager = getattr(context, "job", None) and context.job.data.get("db_manager")
+    if not db_manager and hasattr(context, "application"):
+        db_manager = context.application.bot_data.get("db_manager")
+
+    if not db_manager:
+        return
+
+    try:
+        expired_demandes = db_manager.get_expired_delivered_demandes(hours=72)
+        for dem in expired_demandes:
+            dem_id = dem["id"]
+            req_num = dem.get("request_number") or dem_id
+            if db_manager.archiver_demande_reussie(dem_id):
+                logger.info("📦 Demande #%s archivée automatiquement après 72h post-livraison.", req_num)
+    except Exception as exc:
+        logger.error("Erreur exécution auto-archivage 72h : %s", exc)
 
 
 # ==================== HANDLERS TELEGRAM STARS ====================
@@ -465,7 +485,7 @@ class TelegramBot:
             pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips)$",
         ))
 
-        # ⚡ AJOUT DE status_.* ICI POUR RÉCEPTIONNER LES BOUTONS DU MENU DE STATUT
+        # Aiguillage de toutes les actions d'administration et de gestion des statuts
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
             pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
@@ -486,7 +506,9 @@ class TelegramBot:
             self.user_handlers.handle_text_messages,
         ))
 
+        # Tâches périodiques en arrière-plan
         if app.job_queue:
+            # 1. Rappels administratifs périodiques
             app.job_queue.run_repeating(
                 check_and_send_admin_reminders,
                 interval=3600,
@@ -494,6 +516,15 @@ class TelegramBot:
                 data={"db_manager": self.db_manager},
             )
             logger.info("⏰ JobQueue activée : vérification des rappels admins toutes les 3600s.")
+
+            # 2. Auto-archivage des demandes livrées depuis 72h
+            app.job_queue.run_repeating(
+                check_and_auto_archive_demandes,
+                interval=3600,
+                first=30,
+                data={"db_manager": self.db_manager},
+            )
+            logger.info("📦 JobQueue activée : auto-archivage des demandes livrées (+72h) toutes les 3600s.")
 
         async def post_init(application: Application):
             await self.setup_bot_commands(application)
