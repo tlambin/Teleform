@@ -77,9 +77,8 @@ class StatutsManager:
                 InlineKeyboardButton("❌ Abandonner", callback_data=f"status_prompt_abandon_{demande_id}")
             ])
 
-            # 4. Bouton Annuler / Retour
-            return_callback = f"voir_photo_{demande_id}" if is_photo_message else f"retour_texte_{demande_id}"
-            keyboard.append([InlineKeyboardButton("🔙 Annuler", callback_data=return_callback)])
+            # 4. Bouton Annuler (retour propre aux suivis)
+            keyboard.append([InlineKeyboardButton("🔙 Annuler", callback_data="demandes_suivies")])
 
             text = (
                 f"📊 <b>Changer le Statut</b>\n\n"
@@ -309,7 +308,7 @@ class StatutsManager:
             "soit de l'abandonner définitivement (ce qui libère son quota).</i>"
         )
         cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")
+            InlineKeyboardButton("❌ Annuler", callback_data="demandes_suivies")
         ]])
 
         if query.message and query.message.photo:
@@ -480,7 +479,7 @@ class StatutsManager:
 
         keyboard = [
             [
-                InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande['id']}"),
+                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
                 InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}"),
             ],
             [
@@ -488,8 +487,6 @@ class StatutsManager:
             ],
             [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")],
         ]
-        if demande.get("photo_id"):
-            keyboard[0].insert(0, InlineKeyboardButton("📷 Photo", callback_data=f"voir_photo_{demande['id']}"))
 
         await query.edit_message_text(
             text="\n".join(lines),
@@ -540,7 +537,7 @@ class StatutsManager:
             [
                 InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
             ],
-            [InlineKeyboardButton("📄 Mode Texte", callback_data=f"retour_texte_{demande['id']}")],
+            [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")],
         ])
 
         await query.edit_message_caption(

@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class PhotosManager:
-    """Gestionnaire de bascule entre l'affichage photo et la fiche textuelle."""
+    """Gestionnaire d'affichage des fiches demandes avec photo intégrée."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
@@ -17,7 +17,7 @@ class PhotosManager:
         logger.info("PhotosManager initialisé")
 
     async def voir_photo_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Bascule le message texte existant vers l'affichage photo avec légende enrichie."""
+        """Affiche ou met à jour la fiche avec sa photo native sans bouton de bascule texte."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -35,7 +35,7 @@ class PhotosManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name
+                    SELECT d.*, u.username, u.first_name AS user_first_name
                     FROM demandes d
                     LEFT JOIN users u ON d.user_id = u.user_id
                     WHERE d.id = %s
@@ -57,7 +57,13 @@ class PhotosManager:
             nom_esc = html.escape(str(demande.get("nom") or ""))
             nom_complet = f"{prenom_esc} {nom_esc}".strip()
             loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-            statut_esc = html.escape(str(demande.get("statut") or "En cours"))
+            
+            statut_display = self.db_manager.format_statut_display(
+                demande.get("statut", "📥 Reçue"),
+                demande.get("is_difficile", False),
+                demande.get("reussie_substatus")
+            )
+            statut_esc = html.escape(statut_display)
             req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
             if demande.get("username"):
@@ -88,20 +94,19 @@ class PhotosManager:
 
             keyboard = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("🔄 Changer Statut", callback_data=f"change_status_{demande['id']}"),
+                    InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
                     InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}")
                 ],
                 [
                     InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
                 ],
                 [
-                    InlineKeyboardButton("📄 Revenir au texte", callback_data=f"retour_texte_{demande['id']}")
+                    InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")
                 ]
             ])
 
             chat_id = query.message.chat_id if query.message else None
 
-            # Si le message d'origine est déjà une photo, on remplace le média
             if query.message and query.message.photo:
                 media = InputMediaPhoto(
                     media=demande["photo_id"],
@@ -110,7 +115,6 @@ class PhotosManager:
                 )
                 await query.edit_message_media(media=media, reply_markup=keyboard)
             else:
-                # Si le message d'origine est du texte pur, on supprime et on envoie la photo
                 if query.message:
                     try:
                         await query.message.delete()
@@ -129,7 +133,7 @@ class PhotosManager:
             logger.error("Erreur affichage photo intégrée %s : %s", demande_id, exc, exc_info=True)
 
     async def retour_texte_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Supprime le message photo et renvoie la fiche textuelle standard pour restaurer la vue."""
+        """Redirige proprement vers la fiche native (avec photo si disponible, texte sinon)."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -147,7 +151,7 @@ class PhotosManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name
+                    SELECT d.*, u.username, u.first_name AS user_first_name
                     FROM demandes d
                     LEFT JOIN users u ON d.user_id = u.user_id
                     WHERE d.id = %s
@@ -159,6 +163,10 @@ class PhotosManager:
             if not demande:
                 return
 
+            if demande.get("photo_id"):
+                await self.voir_photo_demande(update, context)
+                return
+
             priorite_icon = "💎" if demande.get("prioritaire") else "📝"
             type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
             montant_val = float(demande.get("montant") or 0.0)
@@ -168,7 +176,13 @@ class PhotosManager:
             nom_esc = html.escape(str(demande.get("nom") or ""))
             nom_complet = f"{prenom_esc} {nom_esc}".strip()
             loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-            statut_esc = html.escape(str(demande.get("statut") or "En cours"))
+            
+            statut_display = self.db_manager.format_statut_display(
+                demande.get("statut", "📥 Reçue"),
+                demande.get("is_difficile", False),
+                demande.get("reussie_substatus")
+            )
+            statut_esc = html.escape(statut_display)
             req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
             if demande.get("username"):
@@ -206,7 +220,6 @@ class PhotosManager:
 
             keyboard = [
                 [
-                    InlineKeyboardButton("📷 Photo", callback_data=f"voir_photo_{demande['id']}"),
                     InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
                     InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}")
                 ],
@@ -234,4 +247,4 @@ class PhotosManager:
                 )
 
         except Exception as exc:
-            logger.error("Erreur retour vue texte : %s", exc, exc_info=True)
+            logger.error("Erreur retour vue : %s", exc, exc_info=True)

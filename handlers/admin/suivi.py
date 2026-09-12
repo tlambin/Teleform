@@ -220,7 +220,10 @@ class SuiviManager:
         }
         sort_column = col_map.get(sb, "ds.date_suivi")
 
-        sql_where = ["ds.admin_id = %s"]
+        sql_where = [
+            "ds.admin_id = %s",
+            "ds.statut_suivi = 'active'"
+        ]
         params = [admin_id]
 
         if settings["search"]:
@@ -292,51 +295,6 @@ class SuiviManager:
         else:
             await self._render_clean_text(query, context, text_card, keyboard)
 
-    async def suivre_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Assigne une demande disponible à l'administrateur connecté."""
-        query = update.callback_query
-        if not query or not update.effective_user:
-            return
-
-        admin_id = update.effective_user.id
-        if not self.config.is_admin(admin_id):
-            return
-
-        try:
-            demande_id = int(query.data.replace("suivre_demande_", ""))
-        except (ValueError, TypeError):
-            await query.answer("❌ ID de demande invalide.", show_alert=True)
-            return
-
-        try:
-            with self.db_manager.transaction() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                    VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE 
-                        admin_id = VALUES(admin_id),
-                        derniere_action = NOW(),
-                        statut_suivi = 'active'
-                    """,
-                    (demande_id, admin_id),
-                )
-                cursor.execute(
-                    """
-                    UPDATE demandes 
-                    SET statut = '🔄 En cours', admin_en_charge = %s, date_modification = NOW()
-                    WHERE id = %s
-                    """,
-                    (admin_id, demande_id),
-                )
-
-            await query.answer("✅ Demande prise en charge !")
-            await self.show_demandes_suivies_page(update, context, page=0)
-
-        except Exception as exc:
-            logger.error("Erreur prise en charge demande #%s: %s", demande_id, exc, exc_info=True)
-            await query.answer("❌ Erreur lors de la prise en charge.", show_alert=True)
-
     async def _render_photo(self, query, context: ContextTypes.DEFAULT_TYPE, photo_id: str, caption: str, keyboard: InlineKeyboardMarkup):
         """Affiche ou remplace la photo sans casser la vue."""
         is_current_photo = bool(query.message and query.message.photo)
@@ -356,7 +314,7 @@ class SuiviManager:
                     reply_markup=keyboard
                 )
         except Exception as err:
-            logger.warning("Recréation photo suivi suite à: %s", err)
+            logger.warning("Recréation photo suivi suite à : %s", err)
             try:
                 await query.message.delete()
             except Exception:
@@ -414,7 +372,13 @@ class SuiviManager:
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
         loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-        statut_esc = html.escape(str(demande.get("statut") or "En cours"))
+
+        statut_label = self.db_manager.format_statut_display(
+            demande.get("statut", "⏳ En attente"),
+            demande.get("is_difficile", False),
+            demande.get("reussie_substatus")
+        )
+        statut_esc = html.escape(statut_label)
         req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
         if demande.get("username"):
@@ -478,20 +442,17 @@ class SuiviManager:
         return "\n".join(lines)
 
     def _build_suivi_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Clavier avec actions, consultation profil demandeur, pagination et tri."""
+        """Clavier avec actions directes, profil demandeur et navigation."""
         demande_id = demande["id"]
-        buttons = []
-
-        # Actions principales
-        buttons.append([
-            InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
-            InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}"),
-        ])
-
-        # Profil demandeur
-        buttons.append([
-            InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
-        ])
+        buttons = [
+            [
+                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
+                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}"),
+            ],
+            [
+                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
+            ]
+        ]
 
         # Pagination
         nav_row = []
@@ -503,7 +464,6 @@ class SuiviManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # Tris et navigation
         buttons.append([
             InlineKeyboardButton("⚙️ Trier / Rechercher", callback_data="suivi_sort_menu"),
             InlineKeyboardButton("📮 Disponibles", callback_data="demandes_disponibles")
