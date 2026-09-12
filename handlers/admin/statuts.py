@@ -4,35 +4,35 @@ import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from .alias import AliasManager
+from .notifs import NotifsManager
 
 logger = logging.getLogger(__name__)
 
 
 class StatutsManager:
-    """Gestionnaire des transitions d'états des demandes et des notifications associées."""
+    """Gestionnaire des transitions d'états des demandes et des options associées."""
 
-    def __init__(self, db_manager, config, statuts_disponibles):
+    def __init__(self, db_manager, config, statuts_disponibles=None):
         self.db_manager = db_manager
         self.config = config
-        self.statuts_disponibles = statuts_disponibles
-        self.alias_manager = AliasManager(db_manager, config)
+        self.notifs_manager = NotifsManager(db_manager, config)
         logger.info("StatutsManager initialisé")
 
     async def show_status_change_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Affiche la liste des statuts disponibles sous forme de boutons."""
+        """Affiche le panneau principal de paramétrage du statut avec interrupteurs et sous-options."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
         if not self.config.is_admin(update.effective_user.id):
+            await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
             return
 
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT request_number, prenom, nom, statut, photo_id
+                    SELECT request_number, prenom, nom, statut, is_difficile, reussie_substatus, photo_id
                     FROM demandes WHERE id = %s
                     """,
                     (demande_id,),
@@ -40,32 +40,52 @@ class StatutsManager:
                 demande = cursor.fetchone()
 
             if not demande:
+                await query.answer("❌ Demande introuvable.", show_alert=True)
                 return
 
             prenom_esc = html.escape(str(demande.get("prenom") or ""))
             nom_esc = html.escape(str(demande.get("nom") or ""))
             nom_complet = f"{prenom_esc} {nom_esc}".strip()
-            statut_esc = html.escape(str(demande.get("statut") or ""))
+            current_status = demande.get("statut") or "📥 Reçue"
+            is_diff = bool(demande.get("is_difficile", False))
+            reussie_sub = demande.get("reussie_substatus")
+            statut_display = self.db_manager.format_statut_display(current_status, is_diff, reussie_sub)
             req_num = html.escape(str(demande.get("request_number", demande_id)))
             is_photo_message = bool(query.message and query.message.photo)
 
             keyboard = []
-            for idx, statut in enumerate(self.statuts_disponibles):
-                label = f"• {statut} •" if statut == demande["statut"] else statut
+
+            # 1. Statuts principaux de traitement
+            btn_attente = "• ⏳ En attente •" if current_status == "⏳ En attente" else "⏳ En attente"
+            btn_encours = "• 🔄 En cours •" if current_status == "🔄 En cours" else "🔄 En cours"
+            keyboard.append([
+                InlineKeyboardButton(btn_attente, callback_data=f"status_apply_{demande_id}_attente"),
+                InlineKeyboardButton(btn_encours, callback_data=f"status_apply_{demande_id}_encours")
+            ])
+
+            # 2. Interrupteur Difficile (si En attente ou En cours)
+            if current_status in ("⏳ En attente", "🔄 En cours"):
+                toggle_icon = "🟢 ACTIVÉE" if is_diff else "⚪ DÉSACTIVÉE"
                 keyboard.append([
-                    InlineKeyboardButton(label, callback_data=f"set_status_{demande_id}_{idx}")
+                    InlineKeyboardButton(f"⚠️ Option Difficile : {toggle_icon}", callback_data=f"status_toggle_diff_{demande_id}")
                 ])
 
-            return_callback = f"voir_photo_{demande_id}" if is_photo_message else f"retour_texte_{demande_id}"
+            # 3. Statut Réussie et Abandon
+            btn_reussie = f"• {statut_display} •" if current_status == "✅ Réussie" else "✅ Réussie..."
             keyboard.append([
-                InlineKeyboardButton("🔙 Annuler", callback_data=return_callback)
+                InlineKeyboardButton(btn_reussie, callback_data=f"status_sub_reussie_{demande_id}"),
+                InlineKeyboardButton("❌ Abandonner", callback_data=f"status_prompt_abandon_{demande_id}")
             ])
+
+            # 4. Bouton Annuler / Retour
+            return_callback = f"voir_photo_{demande_id}" if is_photo_message else f"retour_texte_{demande_id}"
+            keyboard.append([InlineKeyboardButton("🔙 Annuler", callback_data=return_callback)])
 
             text = (
                 f"📊 <b>Changer le Statut</b>\n\n"
                 f"📝 <b>Demande #{req_num}</b> - {nom_complet}\n"
-                f"Statut actuel : <code>{statut_esc}</code>\n\n"
-                "Sélectionnez le nouveau statut ci-dessous :"
+                f"Statut actuel : <b>{html.escape(statut_display)}</b>\n\n"
+                "Choisissez le nouveau statut ou ajustez les options ci-dessous :"
             )
 
             if is_photo_message:
@@ -84,118 +104,219 @@ class StatutsManager:
         except Exception as exc:
             logger.error("Erreur affichage menu changement statut : %s", exc, exc_info=True)
 
-    async def set_status_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Applique le nouveau statut ou intercepte l'abandon pour demander un motif."""
+    async def show_reussie_suboptions(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
+        """Affiche le sous-panneau de sélection pour le statut ✅ Réussie."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
-        admin_id = update.effective_user.id
-        if not self.config.is_admin(admin_id):
+        is_photo = bool(query.message and query.message.photo)
+        text = (
+            "✅ <b>Demande Réussie - Précision</b>\n\n"
+            "Veuillez définir la nature de la réussite :\n\n"
+            "• <b>🟢 Active :</b> La demande a abouti, mais le suivi reste ouvert pour obtenir des contenus supplémentaires.\n"
+            "• <b>❎ Terminée :</b> La demande est pleinement finalisée, aucun contenu de plus ne sera recherché."
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("🟢 Active (D'autres contenus possibles)", callback_data=f"status_apply_reussie_{demande_id}_active")],
+            [InlineKeyboardButton("❎ Terminée (Dossier clos)", callback_data=f"status_apply_reussie_{demande_id}_terminee")],
+            [InlineKeyboardButton("🔙 Retour", callback_data=f"change_status_{demande_id}")]
+        ]
+
+        if is_photo:
+            await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def handle_status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Routeur central des actions liées aux statuts."""
+        query = update.callback_query
+        if not query or not query.data or not update.effective_user:
             return
 
+        admin_id = update.effective_user.id
+        if not self.config.is_admin(admin_id):
+            await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
+            return
+
+        data = query.data
         try:
-            parts = query.data.split("_")
-            demande_id = int(parts[2])
-            status_index = int(parts[3])
-
-            if status_index >= len(self.statuts_disponibles):
+            # 1. Demande d'abandon
+            if data.startswith("status_prompt_abandon_"):
+                demande_id = int(data.replace("status_prompt_abandon_", ""))
+                await self._initiate_abandon_flow(query, context, demande_id, admin_id)
                 return
 
-            nouveau_statut = self.statuts_disponibles[status_index]
-
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name
-                    FROM demandes d
-                    LEFT JOIN users u ON d.user_id = u.user_id
-                    WHERE d.id = %s
-                    """,
-                    (demande_id,),
-                )
-                demande = cursor.fetchone()
-
-            if not demande:
-                await query.answer("❌ Demande introuvable.", show_alert=True)
+            # 2. Sous-options Réussie
+            if data.startswith("status_sub_reussie_"):
+                demande_id = int(data.replace("status_sub_reussie_", ""))
+                await self.show_reussie_suboptions(update, context, demande_id)
                 return
 
-            # CAS PARTICULIER : ABANDON -> Demande de motif à l'administrateur
-            if "abandon" in nouveau_statut.lower():
-                context.user_data["waiting_abandon_reason"] = {
-                    "demande_id": demande_id,
-                    "status_index": status_index,
-                }
-                req_num = html.escape(str(demande.get("request_number", demande_id)))
-                prompt_text = (
-                    f"⚠️ <b>Abandon de la demande #{req_num}</b>\n\n"
-                    "Veuillez taper au clavier la <b>raison de l'abandon</b>.\n\n"
-                    "<i>Ce message sera transmis au demandeur pour qu'il comprenne la situation "
-                    "et décide soit de la relancer (remise en dispo), soit de l'archiver (libérant son quota).</i>"
-                )
-                cancel_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")
-                ]])
-
-                if query.message and query.message.photo:
-                    await query.message.delete()
-                    await context.bot.send_message(chat_id=admin_id, text=prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
-                else:
-                    await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
+            # 3. Application Réussie (Active ou Terminée)
+            if data.startswith("status_apply_reussie_"):
+                parts = data.split("_")
+                demande_id = int(parts[3])
+                sub_type = parts[4]  # active ou terminee
+                await self._apply_status_change(query, context, demande_id, "✅ Réussie", reussie_substatus=sub_type)
                 return
 
-            # AUTRES STATUTS : application directe
-            admin_alias = self.db_manager.get_admin_alias(admin_id)
-            old_status = demande["statut"]
-            user_id_demande = demande["user_id"]
-            prenom = demande["prenom"]
-            req_num = demande.get("request_number", demande_id)
+            # 4. Interrupteur Difficile
+            if data.startswith("status_toggle_diff_"):
+                demande_id = int(data.replace("status_toggle_diff_", ""))
+                new_diff_state = self.db_manager.toggle_demande_difficile(demande_id)
+                state_label = "activée ⚠️" if new_diff_state else "désactivée 🟢"
+                await query.answer(f"Option Difficile {state_label} !", show_alert=False)
 
-            with self.db_manager.transaction() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE demandes
-                    SET statut = %s, admin_en_charge = %s, date_modification = NOW()
-                    WHERE id = %s
-                    """,
-                    (nouveau_statut, admin_id, demande_id),
-                )
-
-                if any(k in nouveau_statut for k in ("En cours", "En attente", "Difficile")):
+                # Récupération et notification de la mise à jour de difficulté
+                with self.db_manager.get_cursor() as cursor:
                     cursor.execute(
-                        """
-                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                        VALUES (%s, %s, NOW(), NOW(), 'active')
-                        ON DUPLICATE KEY UPDATE 
-                            admin_id = VALUES(admin_id),
-                            derniere_action = NOW(),
-                            statut_suivi = 'active'
-                        """,
-                        (demande_id, admin_id),
+                        "SELECT id, request_number, user_id, prenom, statut, is_difficile, reussie_substatus FROM demandes WHERE id = %s",
+                        (demande_id,)
+                    )
+                    demande = cursor.fetchone()
+
+                if demande:
+                    admin_alias = self.db_manager.get_admin_alias(admin_id)
+                    current_status = demande["statut"]
+                    await self.notifs_manager.send_status_update_notification(
+                        context=context,
+                        user_id=demande["user_id"],
+                        demande_id=demande["id"],
+                        request_number=demande.get("request_number"),
+                        prenom_cible=demande.get("prenom"),
+                        old_status=current_status,
+                        new_status=current_status,
+                        is_difficile=new_diff_state,
+                        reussie_substatus=demande.get("reussie_substatus"),
+                        admin_alias=admin_alias,
                     )
 
-            if old_status != nouveau_statut:
-                try:
-                    await self.alias_manager.send_status_notification(
-                        context,
-                        user_id_demande,
-                        req_num,
-                        prenom,
-                        old_status,
-                        nouveau_statut,
-                        admin_alias,
-                    )
-                except Exception as notif_err:
-                    logger.warning("Échec notification demandeur : %s", notif_err)
+                await self.show_status_change_menu(update, context, demande_id)
+                return
 
-            demande["statut"] = nouveau_statut
-            if query.message and query.message.photo:
-                await self._update_photo_caption(query, demande, nouveau_statut)
-            else:
-                await self._update_existing_text_message(query, demande, nouveau_statut)
+            # 5. Application En attente / En cours
+            if data.startswith("status_apply_"):
+                parts = data.split("_")
+                demande_id = int(parts[2])
+                target = parts[3]
+                statut_map = {
+                    "attente": "⏳ En attente",
+                    "encours": "🔄 En cours"
+                }
+                target_statut = statut_map.get(target)
+                if target_statut:
+                    await self._apply_status_change(query, context, demande_id, target_statut)
+                return
 
         except Exception as exc:
-            logger.error("Erreur mise à jour statut demande : %s", exc, exc_info=True)
+            logger.error("Erreur routage callback statut : %s", exc, exc_info=True)
+            await query.answer("❌ Erreur technique.", show_alert=True)
+
+    async def _apply_status_change(
+        self,
+        query,
+        context: ContextTypes.DEFAULT_TYPE,
+        demande_id: int,
+        nouveau_statut: str,
+        reussie_substatus: str = None
+    ):
+        """Met à jour le statut, actualise les suivis, alerte le demandeur et rafraîchit la fiche."""
+        admin_id = query.from_user.id
+        admin_alias = self.db_manager.get_admin_alias(admin_id)
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT d.*, u.username, u.first_name AS user_first_name
+                FROM demandes d
+                LEFT JOIN users u ON d.user_id = u.user_id
+                WHERE d.id = %s
+                """,
+                (demande_id,)
+            )
+            demande = cursor.fetchone()
+
+        if not demande:
+            await query.answer("❌ Demande introuvable.", show_alert=True)
+            return
+
+        old_status = demande["statut"]
+        old_diff = bool(demande.get("is_difficile", False))
+        old_sub = demande.get("reussie_substatus")
+        old_label = self.db_manager.format_statut_display(old_status, old_diff, old_sub)
+
+        # Enregistrement en base
+        self.db_manager.update_demande_statut(demande_id, nouveau_statut, reussie_substatus=reussie_substatus)
+
+        # Maintien ou clôture dans demandes_suivi
+        with self.db_manager.transaction() as cursor:
+            if nouveau_statut in ("⏳ En attente", "🔄 En cours", "✅ Réussie"):
+                suivi_etat = "active" if (nouveau_statut != "✅ Réussie" or reussie_substatus == "active") else "closed"
+                cursor.execute(
+                    """
+                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                    VALUES (%s, %s, NOW(), NOW(), %s)
+                    ON DUPLICATE KEY UPDATE 
+                        admin_id = VALUES(admin_id),
+                        derniere_action = NOW(),
+                        statut_suivi = VALUES(statut_suivi)
+                    """,
+                    (demande_id, admin_id, suivi_etat)
+                )
+
+        # Notification explicative au demandeur
+        new_diff = old_diff if nouveau_statut in ("⏳ En attente", "🔄 En cours") else False
+        await self.notifs_manager.send_status_update_notification(
+            context=context,
+            user_id=demande["user_id"],
+            demande_id=demande["id"],
+            request_number=demande.get("request_number"),
+            prenom_cible=demande.get("prenom"),
+            old_status=old_label,
+            new_status=nouveau_statut,
+            is_difficile=new_diff,
+            reussie_substatus=reussie_substatus,
+            admin_alias=admin_alias,
+        )
+
+        # Rechargement des données fraîches pour l'affichage fiche
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM demandes WHERE id = %s", (demande_id,))
+            demande_fresh = cursor.fetchone()
+
+        await query.answer("✅ Statut mis à jour !")
+        if query.message and query.message.photo:
+            await self._update_photo_caption(query, demande_fresh)
+        else:
+            await self._update_existing_text_message(query, demande_fresh)
+
+    async def _initiate_abandon_flow(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int, admin_id: int):
+        """Initialise la demande du motif d'abandon auprès de l'administrateur."""
+        context.user_data["waiting_abandon_reason"] = {"demande_id": demande_id}
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute("SELECT request_number FROM demandes WHERE id = %s", (demande_id,))
+            row = cursor.fetchone()
+
+        req_num = html.escape(str(row.get("request_number", demande_id))) if row else str(demande_id)
+        prompt_text = (
+            f"⚠️ <b>Abandon de la demande #{req_num}</b>\n\n"
+            "Veuillez taper au clavier la <b>raison de l'abandon</b>.\n\n"
+            "<i>Ce message sera transmis au demandeur pour qu'il comprenne la situation "
+            "et choisisse soit de remettre la demande en disponible (pour un autre admin), "
+            "soit de l'abandonner définitivement (ce qui libère son quota).</i>"
+        )
+        cancel_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")
+        ]])
+
+        if query.message and query.message.photo:
+            await query.message.delete()
+            await context.bot.send_message(chat_id=admin_id, text=prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
+        else:
+            await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
 
     async def process_abandon_reason(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Enregistre le motif d'abandon fourni au clavier, cumule l'historique et notifie le demandeur."""
@@ -242,6 +363,8 @@ class StatutsManager:
                     """
                     UPDATE demandes 
                     SET statut = '❌ Abandonnée',
+                        is_difficile = FALSE,
+                        reussie_substatus = NULL,
                         admin_en_charge = %s,
                         ancien_admin_alias = %s,
                         raison_abandon = %s,
@@ -256,12 +379,8 @@ class StatutsManager:
             req_num = html.escape(str(demande.get("request_number", demande_id)))
 
             abandon_keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("🔄 Remettre en disponible", callback_data=f"reprendre_demande_{demande_id}")
-                ],
-                [
-                    InlineKeyboardButton("🗑️ Laisser tomber (archiver)", callback_data=f"archiver_demande_{demande_id}")
-                ]
+                [InlineKeyboardButton("🔄 Remettre en disponible", callback_data=f"reprendre_demande_{demande_id}")],
+                [InlineKeyboardButton("🗑️ Laisser tomber (archiver)", callback_data=f"archiver_demande_{demande_id}")]
             ])
 
             msg_demandeur = (
@@ -270,7 +389,7 @@ class StatutsManager:
                 f"📝 <b>Motif communiqué :</b>\n"
                 f"« <i>{raison_esc}</i> »\n\n"
                 "Que souhaitez-vous faire ?\n"
-                "• <b>Remettre en disponible :</b> un autre administrateur pourra la reprendre dans les demandes disponibles (votre demande reste active).\n"
+                "• <b>Remettre en disponible :</b> un autre administrateur pourra la prendre en charge.\n"
                 "• <b>Laisser tomber :</b> la demande sera archivée et votre quota sera libéré immédiatement."
             )
 
@@ -298,8 +417,8 @@ class StatutsManager:
             logger.error("Erreur traitement motif abandon demande %s : %s", demande_id, exc, exc_info=True)
             await update.message.reply_text("❌ Une erreur est survenue lors de l'enregistrement de l'abandon.")
 
-    async def _update_existing_text_message(self, query, demande: dict, nouveau_statut: str):
-        """Actualise le corps du message texte après transition d'état avec historique cumulé."""
+    async def _update_existing_text_message(self, query, demande: dict):
+        """Actualise le corps du message texte après transition d'état."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_val = float(demande.get("montant") or 0.0)
@@ -309,7 +428,13 @@ class StatutsManager:
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
         loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-        statut_esc = html.escape(str(nouveau_statut))
+        
+        statut_display = self.db_manager.format_statut_display(
+            demande.get("statut", "📥 Reçue"),
+            demande.get("is_difficile", False),
+            demande.get("reussie_substatus")
+        )
+        statut_esc = html.escape(statut_display)
         req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
         if demande.get("username"):
@@ -373,7 +498,7 @@ class StatutsManager:
             disable_web_page_preview=True,
         )
 
-    async def _update_photo_caption(self, query, demande: dict, nouveau_statut: str):
+    async def _update_photo_caption(self, query, demande: dict):
         """Actualise la légende de l'image après transition d'état."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
@@ -384,7 +509,13 @@ class StatutsManager:
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
         loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-        statut_esc = html.escape(str(nouveau_statut))
+        
+        statut_display = self.db_manager.format_statut_display(
+            demande.get("statut", "📥 Reçue"),
+            demande.get("is_difficile", False),
+            demande.get("reussie_substatus")
+        )
+        statut_esc = html.escape(statut_display)
         req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
         caption_lines = [

@@ -23,6 +23,10 @@ def create_telegram_app():
 
     # Maintient un pool réduit pour respecter la limite MySQL
     db_manager = DatabaseManager(config, pool_size=2)
+
+    # Vérification et auto-migration automatique des tables et colonnes
+    db_manager.create_tables()
+
     config.set_db_manager(db_manager)
 
     bot = TelegramBot(config, db_manager, request=request)

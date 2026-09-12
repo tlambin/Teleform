@@ -33,17 +33,8 @@ class AdminHandlers:
         self.db_manager = db_manager
         self.interface = InterfaceManager(config, db_manager)
 
-        self.statuts_disponibles = [
-            "📨 Reçue",
-            "⏳ En attente",
-            "🔄 En cours",
-            "✅ Réussie",
-            "⚠️ Difficile",
-            "❌ Abandonnée",
-        ]
-
         self.suivi = SuiviManager(db_manager, config)
-        self.statuts = StatutsManager(db_manager, config, self.statuts_disponibles)
+        self.statuts = StatutsManager(db_manager, config)
         self.photos = PhotosManager(db_manager, config)
         self.dispo = DispoManager(db_manager, config)
         self.alias = AliasManager(db_manager, config)
@@ -72,54 +63,63 @@ class AdminHandlers:
         if not query or not update.effective_user:
             return
 
+        # Réponse immédiate pour couper net tout chargement infini Telegram
+        try:
+            await query.answer()
+        except Exception:
+            pass
+
         user_id = update.effective_user.id
         data = query.data or ""
 
         # Contrôle des droits
         if not (self.config.is_owner(user_id) or self.config.is_admin(user_id)):
             logger.warning("Tentative d'accès administrateur refusée pour l'utilisateur %s", user_id)
-            await query.answer("❌ Accès non autorisé.", show_alert=True)
             return
 
         try:
+            # 1. Demandes disponibles et filtres
             if data == "demandes_disponibles":
                 await self.dispo.show_demandes_disponibles(update, context)
 
             elif data.startswith("dispo_"):
                 await self.dispo.handle_callback_routing(update, context, data)
 
+            # 2. Prise en charge d'une demande disponible -> statut "En attente" + notification
+            elif data.startswith("suivre_demande_"):
+                demande_id = int(data.replace("suivre_demande_", ""))
+                await self.dispo.assign_demande_to_admin(update, context, demande_id)
+
+            # 3. Demandes suivies
             elif data == "demandes_suivies":
                 await self.suivi.show_demandes_suivies(update, context)
 
             elif data.startswith("suivi_"):
                 await self.suivi.handle_callback_routing(update, context, data)
 
+            # 4. Préférences de notifications et rappels
             elif data == "menu_notifs":
                 await self.notifs.show_notifs_menu(update, context)
 
             elif data.startswith("pref_"):
                 await self.notifs.handle_callback_routing(update, context, data)
 
+            # 5. Photos et affichage texte
             elif data.startswith("voir_photo_"):
                 await self.photos.voir_photo_demande(update, context)
 
             elif data.startswith("retour_texte_"):
                 await self.photos.retour_texte_demande(update, context)
 
-            elif data.startswith("suivre_demande_"):
-                await self.suivi.suivre_demande(update, context)
-
-            elif data.startswith("change_status_"):
-                demande_id = int(data.split("_")[2])
+            # 6. Gestion dynamique des statuts
+            elif data.startswith("change_status_") or data.startswith("mark_treated_menu_"):
+                demande_id = int(data.split("_")[-1])
                 await self.statuts.show_status_change_menu(update, context, demande_id)
 
-            elif data.startswith("set_status_"):
-                await self.statuts.set_status_demande(update, context)
+            elif data.startswith("status_"):
+                await self.statuts.handle_status_callback(update, context)
 
-            elif data.startswith("mark_treated_menu_"):
-                demande_id = int(data.replace("mark_treated_menu_", ""))
-                await self.statuts.show_status_change_menu(update, context, demande_id)
-
+            # 7. Profils
             elif data.startswith("profil_admin_"):
                 target_admin_id = int(data.replace("profil_admin_", ""))
                 await self.profils.show_admin_profile(update, context, target_admin_id)
@@ -128,9 +128,11 @@ class AdminHandlers:
                 demande_id = int(data.replace("profil_demande_", ""))
                 await self.profils.show_user_profile_by_demande(update, context, demande_id)
 
+            # 8. Mode pause
             elif data in ("admin_pause_prompt", "admin_pause_keep", "admin_pause_release", "admin_resume"):
                 await self._handle_admin_pause(update, context, data)
 
+            # 9. Contact du demandeur
             elif data.startswith("contacter_") and not data.startswith("contacter_owner"):
                 demande_id = int(data.replace("contacter_", ""))
                 await self._prompt_contact_user(update, context, demande_id)
@@ -155,7 +157,6 @@ class AdminHandlers:
 
             else:
                 logger.warning("Callback admin non intercepté : %s", data)
-                await query.answer("Action non reconnue.", show_alert=True)
 
         except Exception as exc:
             logger.error("Erreur callback admin '%s' : %s", data, exc, exc_info=True)
@@ -278,7 +279,6 @@ class AdminHandlers:
                 row = cursor.fetchone()
 
             if not row:
-                await query.answer("❌ Demande introuvable.", show_alert=True)
                 return
 
             req_num = html.escape(str(row.get("request_number", row["id"])))
@@ -300,7 +300,6 @@ class AdminHandlers:
 
         except Exception as exc:
             logger.error("Erreur prompt contact utilisateur : %s", exc)
-            await query.answer("❌ Erreur technique.", show_alert=True)
 
     async def _start_contact_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int, allow_reply: bool):
         """Initialise la session de collecte de messages et fichiers."""
@@ -313,7 +312,6 @@ class AdminHandlers:
             row = cursor.fetchone()
 
         if not row:
-            await query.answer("❌ Demande introuvable.")
             return
 
         req_num = html.escape(str(row.get("request_number", row["id"])))
@@ -409,8 +407,6 @@ class AdminHandlers:
         session = context.user_data.pop("contact_session", None)
 
         if not session or session.get("demande_id") != demande_id:
-            if query:
-                await query.answer("❌ Aucune session active.", show_alert=True)
             return
 
         admin_id = update.effective_user.id
@@ -425,8 +421,6 @@ class AdminHandlers:
         texts = session["text_notes"]
 
         if not visuals and not docs and not texts:
-            if query:
-                await query.answer("⚠️ Le lot est vide. Envoyez au moins un élément avant d'expédier.", show_alert=True)
             context.user_data["contact_session"] = session
             return
 
@@ -530,4 +524,3 @@ class AdminHandlers:
             )
         except Exception as fallback_exc:
             logger.error("Échec notification erreur admin : %s", fallback_exc)
-            await query.answer("❌ Erreur système.")

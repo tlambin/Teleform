@@ -10,16 +10,18 @@ from telegram import (
     Update,
 )
 from telegram.ext import ContextTypes
+from .notifs import NotifsManager
 
 logger = logging.getLogger(__name__)
 
 
 class DispoManager:
-    """Gestionnaire des demandes non assignées avec filtrage, recherche et pioche aléatoire."""
+    """Gestionnaire des demandes non assignées avec filtrage, recherche et prise en charge."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
+        self.notifs_manager = NotifsManager(db_manager, config)
         logger.info("DispoManager initialisé")
 
     def _get_active_filters(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
@@ -45,33 +47,39 @@ class DispoManager:
 
         filters = self._get_active_filters(context)
 
-        # 1. Menu filtres
+        # 1. Prise en charge d'une demande
+        if data.startswith("suivre_demande_"):
+            demande_id = int(data.replace("suivre_demande_", ""))
+            await self.assign_demande_to_admin(update, context, demande_id)
+            return
+
+        # 2. Menu filtres
         if data == "dispo_filters_menu":
             await self.show_filters_menu(update, context)
             return
 
-        # 2. Bascule Filtre Réseaux
+        # 3. Bascule Filtre Réseaux
         elif data.startswith("dispo_filter_net_"):
             val = data.replace("dispo_filter_net_", "")
             filters["reseau"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 3. Bascule Filtre Âge
+        # 4. Bascule Filtre Âge
         elif data.startswith("dispo_filter_age_"):
             val = data.replace("dispo_filter_age_", "")
             filters["age_range"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 4. Bascule Filtre Priorité
+        # 5. Bascule Filtre Priorité
         elif data.startswith("dispo_filter_type_"):
             val = data.replace("dispo_filter_type_", "")
             filters["type_demande"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 5. Reset Filtres
+        # 6. Reset Filtres
         elif data == "dispo_filter_reset":
             context.user_data["dispo_filters"] = {
                 "reseau": "all",
@@ -82,7 +90,7 @@ class DispoManager:
             await self.show_filters_menu(update, context)
             return
 
-        # 6. Lancement de la recherche textuelle
+        # 7. Lancement de la recherche textuelle
         elif data == "dispo_search_prompt":
             context.user_data["waiting_dispo_search"] = True
             msg = (
@@ -95,7 +103,7 @@ class DispoManager:
             await self._render_clean_text(query, context, msg, keyboard)
             return
 
-        # 7. Annulation ou réinitialisation de la recherche
+        # 8. Annulation ou réinitialisation de la recherche
         elif data == "dispo_cancel_search":
             context.user_data.pop("waiting_dispo_search", None)
             await self.show_demandes_disponibles_page(update, context, page=0)
@@ -106,17 +114,109 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=0)
             return
 
-        # 8. Pioche aléatoire
+        # 9. Pioche aléatoire
         elif data == "dispo_random":
             await self.show_random_demande(update, context)
             return
 
-        # 9. Pagination standard
+        # 10. Pagination standard
         elif data.startswith("dispo_prev_") or data.startswith("dispo_next_"):
             parts = data.split("_")
             curr = int(parts[2])
             page = max(0, curr - 1) if "prev" in data else curr + 1
             await self.show_demandes_disponibles_page(update, context, page=page)
+
+    async def assign_demande_to_admin(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
+        """Prend en charge la demande : bascule à '⏳ En attente' et avertit le demandeur."""
+        query = update.callback_query
+        admin_id = update.effective_user.id
+
+        if not self.config.is_admin(admin_id):
+            await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
+            return
+
+        try:
+            with self.db_manager.transaction() as cursor:
+                # Vérifier si la demande est encore libre
+                cursor.execute(
+                    """
+                    SELECT id, user_id, request_number, prenom, statut, admin_en_charge
+                    FROM demandes WHERE id = %s FOR UPDATE
+                    """,
+                    (demande_id,)
+                )
+                demande = cursor.fetchone()
+
+                if not demande:
+                    await query.answer("❌ Demande introuvable.", show_alert=True)
+                    return
+
+                if demande.get("admin_en_charge"):
+                    await query.answer("⚠️ Cette demande est déjà prise en charge par un autre admin.", show_alert=True)
+                    await self.show_demandes_disponibles_page(update, context, page=0)
+                    return
+
+                # Bascule du statut vers ⏳ En attente
+                nouveau_statut = "⏳ En attente"
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET statut = %s,
+                        admin_en_charge = %s,
+                        is_difficile = FALSE,
+                        reussie_substatus = NULL,
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (nouveau_statut, admin_id, demande_id)
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                    VALUES (%s, %s, NOW(), NOW(), 'active')
+                    ON DUPLICATE KEY UPDATE 
+                        admin_id = VALUES(admin_id),
+                        derniere_action = NOW(),
+                        statut_suivi = 'active'
+                    """,
+                    (demande_id, admin_id)
+                )
+
+            admin_alias = self.db_manager.get_admin_alias(admin_id)
+            req_num = demande.get("request_number", demande_id)
+
+            # Notification au demandeur
+            await self.notifs_manager.send_status_update_notification(
+                context=context,
+                user_id=demande["user_id"],
+                demande_id=demande["id"],
+                request_number=req_num,
+                prenom_cible=demande.get("prenom"),
+                old_status=demande.get("statut", "📥 Reçue"),
+                new_status=nouveau_statut,
+                is_difficile=False,
+                reussie_substatus=None,
+                admin_alias=admin_alias,
+            )
+
+            await query.answer(f"✅ Demande #{req_num} prise en charge !", show_alert=False)
+
+            # Redirection vers les demandes suivies
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Aller à mes demandes suivies", callback_data="demandes_suivies")],
+                [InlineKeyboardButton("📮 Continuer dans disponibles", callback_data="demandes_disponibles")]
+            ])
+            success_msg = (
+                f"🎉 <b>Prise en charge validée !</b>\n\n"
+                f"La demande <b>#{req_num}</b> est passée en statut <b>⏳ En attente</b>.\n"
+                f"Le demandeur a été notifié avec l'explication du statut."
+            )
+            await self._render_clean_text(query, context, success_msg, keyboard)
+
+        except Exception as exc:
+            logger.error("Erreur prise en charge demande %s : %s", demande_id, exc, exc_info=True)
+            await query.answer("❌ Erreur lors de la prise en charge.", show_alert=True)
 
     async def handle_search_text_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Récupère le texte de recherche saisi par l'admin."""
@@ -242,7 +342,8 @@ class DispoManager:
         join_params = [int(user_id)]
         sql_where = [
             "ds.demande_id IS NULL",
-            "d.statut IN ('📨 Reçue', '⏳ En attente')"
+            "d.admin_en_charge IS NULL",
+            "d.statut = '📥 Reçue'"
         ]
         where_params = []
 
@@ -432,7 +533,13 @@ class DispoManager:
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
         loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-        statut_esc = html.escape(str(demande.get("statut") or "En cours"))
+        
+        statut_label = self.db_manager.format_statut_display(
+            demande.get("statut", "📥 Reçue"),
+            demande.get("is_difficile", False),
+            demande.get("reussie_substatus")
+        )
+        statut_esc = html.escape(statut_label)
         req_num = html.escape(str(demande.get("request_number", demande["id"])))
 
         if demande.get("username"):
@@ -493,20 +600,17 @@ class DispoManager:
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
         """Construit le clavier d'actions enrichi avec Filtres, Aléatoire et Profil Demandeur."""
         demande_id = demande["id"]
-        buttons = []
+        buttons = [
+            [
+                InlineKeyboardButton("❤️ Prendre en charge", callback_data=f"suivre_demande_{demande_id}"),
+                InlineKeyboardButton("🎲 Au hasard", callback_data="dispo_random")
+            ],
+            [
+                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
+            ]
+        ]
 
-        # 1. Action directe
-        buttons.append([
-            InlineKeyboardButton("❤️ Prendre en charge", callback_data=f"suivre_demande_{demande_id}"),
-            InlineKeyboardButton("🎲 Au hasard", callback_data="dispo_random")
-        ])
-
-        # 2. Profil demandeur
-        buttons.append([
-            InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
-        ])
-
-        # 3. Pagination
+        # Pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"dispo_prev_{page}"))
@@ -516,13 +620,10 @@ class DispoManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # 4. Filtres & recherche
         buttons.append([
             InlineKeyboardButton("⚙️ Filtres / Recherche", callback_data="dispo_filters_menu"),
             InlineKeyboardButton("💌 Mes Suivis", callback_data="demandes_suivies")
         ])
-
-        # 5. Accueil
         buttons.append([
             InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
         ])

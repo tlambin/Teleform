@@ -1,8 +1,10 @@
-"""Module de gestion des préférences de notifications et rappels des administrateurs."""
+"""Module de gestion des préférences de notifications, rappels admins et notifications utilisateurs."""
 
 import html
 import logging
+from typing import Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
@@ -10,13 +12,108 @@ logger = logging.getLogger(__name__)
 JOURS_SEMAINE = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
 
+def get_statut_explication(statut: str, is_difficile: bool = False, reussie_substatus: Optional[str] = None) -> str:
+    """Retourne l'explication textuelle officielle du statut pour le demandeur."""
+    clean = str(statut or "").strip()
+
+    if clean == "📥 Reçue":
+        return "La demande a bien été reçue. Elle est actuellement en attente d'attribution."
+
+    if clean == "⏳ En attente":
+        if is_difficile:
+            return "Un admin a pris en charge la demande et attend un contact. La cible n'a toujours pas répondu (délai > 1 mois)."
+        return "Un admin a pris en charge la demande. Il attend d'établir un premier contact."
+
+    if clean == "🔄 En cours":
+        if is_difficile:
+            return "Le contact est établi avec la cible, mais celle-ci s'avère réticente ou peu encline à être sollicitée."
+        return "Le contact est établi. La demande est en cours de traitement."
+
+    if clean == "✅ Réussie":
+        if reussie_substatus == "terminee":
+            return "La demande est terminée avec succès. Aucun contenu supplémentaire ne sera recherché."
+        return "La demande a été réussie avec succès ! Le suivi reste actif car d'autres contenus peuvent être obtenus."
+
+    if clean == "❌ Abandonnée":
+        return "La demande n'a pas pu aboutir. Consultez le motif rédigé par votre référent."
+
+    return "Le statut de votre demande a été mis à jour."
+
+
 class NotifsManager:
-    """Gestionnaire de l'interface des préférences d'alertes et de rappels."""
+    """Gestionnaire des préférences d'alertes admins et des notifications envoyées aux utilisateurs."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
         logger.info("NotifsManager initialisé")
+
+    # ==================== NOTIFICATIONS UTILISATEURS ====================
+
+    async def send_status_update_notification(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        user_id: int,
+        demande_id: int,
+        request_number: Optional[int],
+        prenom_cible: str,
+        old_status: str,
+        new_status: str,
+        is_difficile: bool = False,
+        reussie_substatus: Optional[str] = None,
+        admin_alias: Optional[str] = None,
+        raison_abandon: Optional[str] = None,
+    ) -> bool:
+        """Transmet une alerte explicative au demandeur lors de chaque transition d'état."""
+        try:
+            num_str = f"#{request_number}" if request_number else f"ID-{demande_id}"
+            prenom_esc = html.escape(str(prenom_cible or "votre contact"))
+            old_esc = html.escape(str(old_status or "Inconnu"))
+            alias_esc = html.escape(str(admin_alias or "Équipe"))
+
+            nouveau_libelle = self.db_manager.format_statut_display(new_status, is_difficile, reussie_substatus)
+            new_esc = html.escape(nouveau_libelle)
+            explication_esc = html.escape(get_statut_explication(new_status, is_difficile, reussie_substatus))
+
+            lignes = [
+                f"📢 <b>Mise à jour de votre demande {num_str}</b>\n",
+                f"👤 Cible : <b>{prenom_esc}</b>",
+                f"• Ancien statut : <s>{old_esc}</s>",
+                f"• Nouveau statut : <b>{new_esc}</b>\n",
+                "ℹ️ <b>Signification :</b>",
+                f"« <i>{explication_esc}</i> »\n",
+            ]
+
+            if new_status == "❌ Abandonnée" and raison_abandon:
+                lignes.append(f"📝 <b>Motif :</b> {html.escape(str(raison_abandon))}\n")
+
+            lignes.append(f"👨‍💼 <b>Référent :</b> {alias_esc}")
+
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🗂️ Consulter mes demandes", callback_data="voir_demandes")]
+            ])
+
+            await context.bot.send_message(
+                chat_id=int(user_id),
+                text="\n".join(lignes),
+                parse_mode="HTML",
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
+            )
+            logger.info("Notification de statut envoyée à %s pour la demande %s (%s)", user_id, demande_id, nouveau_libelle)
+            return True
+
+        except Forbidden:
+            logger.warning("Notification bloquée (bot bloqué par l'utilisateur %s)", user_id)
+            return False
+        except TelegramError as exc:
+            logger.error("Erreur Telegram envoi notification à %s : %s", user_id, exc)
+            return False
+        except Exception as exc:
+            logger.error("Erreur inattendue envoi notification à %s : %s", user_id, exc, exc_info=True)
+            return False
+
+    # ==================== PRÉFÉRENCES ADMINISTRATEURS ====================
 
     async def _render_clean_menu(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
         """Met à jour le message ou supprime la photo existante pour envoyer le menu texte."""
@@ -112,7 +209,6 @@ class NotifsManager:
             ],
         ]
 
-        # Options détaillées si les rappels sont activés
         if mode_rappel != "off":
             keyboard.append([
                 InlineKeyboardButton(btn_freq_daily, callback_data="pref_freq_daily"),

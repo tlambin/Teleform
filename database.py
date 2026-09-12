@@ -79,7 +79,7 @@ class DatabaseManager:
                 pool_reset_session=True,
                 **db_config,
             )
-            logger.info("Pool MySQL établi sur %s (base: %s)", host, self.database_name)
+            logger.info("Pool MySQL établi sur %s (base : %s)", host, self.database_name)
         except Error as exc:
             logger.critical("Échec de connexion MySQL au serveur %s : %s", host, exc, exc_info=True)
             raise
@@ -158,7 +158,7 @@ class DatabaseManager:
                 pass
 
     def create_tables(self):
-        """Crée ou met à jour les tables nécessaires au fonctionnement du bot."""
+        """Crée ou met à jour les tables nécessaires au fonctionnement du bot avec vérification des colonnes."""
         tables = [
             """
             CREATE TABLE IF NOT EXISTS config (
@@ -204,7 +204,9 @@ class DatabaseManager:
                 details TEXT,
                 prioritaire BOOLEAN DEFAULT FALSE,
                 montant DECIMAL(10, 2) DEFAULT 0.00,
-                statut VARCHAR(32) DEFAULT '📨 Reçue',
+                statut VARCHAR(32) DEFAULT '📥 Reçue',
+                is_difficile BOOLEAN NOT NULL DEFAULT FALSE,
+                reussie_substatus VARCHAR(20) DEFAULT NULL,
                 admin_en_charge BIGINT DEFAULT NULL,
                 ancien_admin_alias VARCHAR(64) DEFAULT NULL,
                 raison_abandon TEXT DEFAULT NULL,
@@ -244,6 +246,8 @@ class DatabaseManager:
                 prioritaire BOOLEAN DEFAULT FALSE,
                 montant DECIMAL(10, 2) DEFAULT 0.00,
                 statut VARCHAR(32),
+                is_difficile BOOLEAN NOT NULL DEFAULT FALSE,
+                reussie_substatus VARCHAR(20) DEFAULT NULL,
                 date_creation DATETIME,
                 date_archivage DATETIME DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_archive_user (user_id)
@@ -262,11 +266,40 @@ class DatabaseManager:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """
         ]
+
+        expected_columns = [
+            ("admins", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
+            ("admins", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
+            ("admins", "alias_locked", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "is_paused", "BOOLEAN DEFAULT FALSE"),
+            ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
+            ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
+            ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
+            ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
+            ("demandes", "request_number", "INT DEFAULT NULL"),
+            ("demandes", "date_modification", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+            ("demandes", "last_vip_reminder", "DATETIME DEFAULT NULL"),
+            ("archives", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("archives", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
+            ("admin_preferences", "notif_new_mode", "VARCHAR(16) DEFAULT 'sound'"),
+            ("admin_preferences", "rappel_mode", "VARCHAR(16) DEFAULT 'sound'"),
+            ("admin_preferences", "rappel_freq", "VARCHAR(16) DEFAULT 'daily'"),
+            ("admin_preferences", "rappel_heure", "INT DEFAULT 18"),
+            ("admin_preferences", "rappel_jour_semaine", "INT DEFAULT 6"),
+            ("admin_preferences", "rappel_jour_mois", "INT DEFAULT 1"),
+            ("admin_preferences", "last_rappel_date", "DATE DEFAULT NULL"),
+            ("users", "is_vip", "BOOLEAN DEFAULT FALSE"),
+            ("users", "vip_until", "DATETIME DEFAULT NULL"),
+        ]
+
         try:
             with self.get_cursor() as cursor:
+                # 1. Création des tables de base
                 for query in tables:
                     cursor.execute(query)
 
+                # 2. Harmonisation de la table config
                 try:
                     cursor.execute("DESCRIBE config")
                     cols = [r["Field"].lower() for r in cursor.fetchall()]
@@ -284,35 +317,18 @@ class DatabaseManager:
                 except Exception as cfg_err:
                     logger.warning("Vérification schéma config : %s", cfg_err)
 
-                columns_to_add = [
-                    ("admins", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
-                    ("admins", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
-                    ("admins", "alias_locked", "BOOLEAN DEFAULT FALSE"),
-                    ("admins", "is_paused", "BOOLEAN DEFAULT FALSE"),
-                    ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
-                    ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
-                    ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
-                    ("demandes", "request_number", "INT DEFAULT NULL"),
-                    ("demandes", "date_modification", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
-                    ("demandes", "last_vip_reminder", "DATETIME DEFAULT NULL"),
-                    ("admin_preferences", "notif_new_mode", "VARCHAR(16) DEFAULT 'sound'"),
-                    ("admin_preferences", "rappel_mode", "VARCHAR(16) DEFAULT 'sound'"),
-                    ("admin_preferences", "rappel_freq", "VARCHAR(16) DEFAULT 'daily'"),
-                    ("admin_preferences", "rappel_heure", "INT DEFAULT 18"),
-                    ("admin_preferences", "rappel_jour_semaine", "INT DEFAULT 6"),
-                    ("admin_preferences", "rappel_jour_mois", "INT DEFAULT 1"),
-                    ("admin_preferences", "last_rappel_date", "DATE DEFAULT NULL"),
-                    ("users", "is_vip", "BOOLEAN DEFAULT FALSE"),
-                    ("users", "vip_until", "DATETIME DEFAULT NULL"),
-                ]
-                for table, col, col_def in columns_to_add:
+                # 3. Auto-migration des colonnes avec vérification SHOW COLUMNS
+                for table, col, col_def in expected_columns:
                     try:
-                        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
-                        logger.info("Colonne %s.%s vérifiée/ajoutée.", table, col)
+                        cursor.execute(f"SHOW COLUMNS FROM {table} LIKE %s", (col,))
+                        if not cursor.fetchone():
+                            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+                            logger.info("🛠️ Auto-migration : colonne ajoutée -> %s.%s", table, col)
                     except Error as e:
                         if getattr(e, "errno", None) != 1060:
                             logger.debug("Info colonne %s.%s : %s", table, col, e)
 
+                # 4. Paramètres de config par défaut
                 try:
                     k_col, v_col = self._get_config_columns()
                     default_configs = [
@@ -448,7 +464,7 @@ class DatabaseManager:
                 self._set_cached_value("cfg_all", result)
                 return result
         except Exception as exc:
-            logger.error("Erreur lecture globale config: %s", exc)
+            logger.error("Erreur lecture globale config : %s", exc)
             return {}
 
     def is_bot_active(self) -> bool:
@@ -527,7 +543,7 @@ class DatabaseManager:
                 self._set_cached_value(cache_key, alias)
                 return alias
         except Exception as exc:
-            logger.error("Erreur extraction alias admin %s: %s", user_id, exc)
+            logger.error("Erreur extraction alias admin %s : %s", user_id, exc)
             return "Admin"
 
     def set_admin_alias(self, user_id: int, new_alias: str) -> bool:
@@ -540,7 +556,7 @@ class DatabaseManager:
             return ok
 
         try:
-            with self.get_cursor() as cursor:
+            with self.transaction() as cursor:
                 cursor.execute(
                     "UPDATE admins SET alias = %s WHERE user_id = %s",
                     (clean_alias, user_id),
@@ -548,7 +564,7 @@ class DatabaseManager:
             self.clear_cache(f"alias_{user_id}")
             return True
         except Exception as exc:
-            logger.error("Erreur mise à jour alias admin %s: %s", user_id, exc)
+            logger.error("Erreur mise à jour alias admin %s : %s", user_id, exc)
             return False
 
     def can_admin_edit_alias(self, user_id: int) -> bool:
@@ -560,16 +576,16 @@ class DatabaseManager:
                 row = cursor.fetchone()
                 return not bool(row.get("alias_locked")) if row else False
         except Exception as exc:
-            logger.error("Erreur vérification verrou alias pour %s: %s", user_id, exc)
+            logger.error("Erreur vérification verrou alias pour %s : %s", user_id, exc)
             return False
 
     def lock_admin_alias(self, user_id: int):
         try:
-            with self.get_cursor() as cursor:
+            with self.transaction() as cursor:
                 cursor.execute("UPDATE admins SET alias_locked = TRUE WHERE user_id = %s", (user_id,))
             self.clear_cache(f"alias_{user_id}")
         except Exception as exc:
-            logger.error("Erreur verrouillage alias %s: %s", user_id, exc)
+            logger.error("Erreur verrouillage alias %s : %s", user_id, exc)
 
     # ==================== MODE PAUSE ADMINISTRATEUR ====================
 
@@ -592,7 +608,7 @@ class DatabaseManager:
 
     def set_admin_pause_status(self, user_id: int, paused: bool) -> bool:
         try:
-            with self.get_cursor() as cursor:
+            with self.transaction() as cursor:
                 cursor.execute(
                     "UPDATE admins SET is_paused = %s WHERE user_id = %s",
                     (paused, int(user_id))
@@ -608,10 +624,10 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT d.id, d.user_id, d.request_number, d.prenom, d.nom, d.statut
+                    SELECT d.id, d.user_id, d.request_number, d.prenom, d.nom, d.statut, d.is_difficile, d.reussie_substatus
                     FROM demandes d
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
-                    WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente', '⚠️ Difficile')
+                    WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours')
                     """,
                     (int(admin_id),)
                 )
@@ -631,7 +647,7 @@ class DatabaseManager:
                     SELECT d.id, d.user_id, d.request_number, d.prenom
                     FROM demandes d
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
-                    WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente', '⚠️ Difficile')
+                    WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours')
                     """,
                     (int(admin_id),)
                 )
@@ -647,6 +663,8 @@ class DatabaseManager:
                         SET statut = '❌ Abandonnée',
                             ancien_admin_alias = %s,
                             admin_en_charge = NULL,
+                            is_difficile = FALSE,
+                            reussie_substatus = NULL,
                             raison_abandon = %s,
                             date_modification = NOW()
                         WHERE id IN ({placeholders})
@@ -659,6 +677,92 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur abandon des demandes suite pause admin %s : %s", admin_id, exc)
             return []
+
+    # ==================== GESTION DES STATUTS ET OPTIONS ====================
+
+    def toggle_demande_difficile(self, demande_id: int) -> bool:
+        """Bascule l'interrupteur 'is_difficile' et renvoie le nouvel état."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET is_difficile = NOT is_difficile,
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (int(demande_id),)
+                )
+                cursor.execute(
+                    "SELECT is_difficile FROM demandes WHERE id = %s",
+                    (int(demande_id),)
+                )
+                row = cursor.fetchone()
+                return bool(row["is_difficile"]) if row else False
+        except Exception as exc:
+            logger.error("Erreur bascule statut difficile pour demande %s : %s", demande_id, exc)
+            return False
+
+    def update_demande_statut(self, demande_id: int, nouveau_statut: str, reussie_substatus: Optional[str] = None) -> bool:
+        """Met à jour le statut principal et ajuste les options associées."""
+        try:
+            with self.transaction() as cursor:
+                if nouveau_statut == "✅ Réussie":
+                    sub = reussie_substatus if reussie_substatus in ("active", "terminee") else "active"
+                    cursor.execute(
+                        """
+                        UPDATE demandes
+                        SET statut = %s,
+                            is_difficile = FALSE,
+                            reussie_substatus = %s,
+                            date_modification = NOW()
+                        WHERE id = %s
+                        """,
+                        (nouveau_statut, sub, int(demande_id))
+                    )
+                elif nouveau_statut in ("⏳ En attente", "🔄 En cours"):
+                    cursor.execute(
+                        """
+                        UPDATE demandes
+                        SET statut = %s,
+                            reussie_substatus = NULL,
+                            date_modification = NOW()
+                        WHERE id = %s
+                        """,
+                        (nouveau_statut, int(demande_id))
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE demandes
+                        SET statut = %s,
+                            is_difficile = FALSE,
+                            reussie_substatus = NULL,
+                            date_modification = NOW()
+                        WHERE id = %s
+                        """,
+                        (nouveau_statut, int(demande_id))
+                    )
+            return True
+        except Exception as exc:
+            logger.error("Erreur mise à jour statut demande %s : %s", demande_id, exc)
+            return False
+
+    @staticmethod
+    def format_statut_display(statut: str, is_difficile: bool = False, reussie_substatus: Optional[str] = None) -> str:
+        """Formate le libellé complet du statut avec ses options pour l'affichage."""
+        clean_statut = str(statut or "").strip()
+        if clean_statut in ("⏳ En attente", "🔄 En cours"):
+            if is_difficile:
+                return f"{clean_statut} ⚠️ (Difficile)"
+            return clean_statut
+
+        if clean_statut == "✅ Réussie":
+            if reussie_substatus == "terminee":
+                return "✅ Réussie (❎ Terminée)"
+            return "✅ Réussie (🟢 Active)"
+
+        return clean_statut
 
     # ==================== GESTION DES PERMISSIONS ADMIN ====================
 
@@ -685,14 +789,14 @@ class DatabaseManager:
             self._set_cached_value(cache_key, default_perms)
             return default_perms
         except Exception as exc:
-            logger.error("Erreur lecture permissions admin %s: %s", user_id, exc)
+            logger.error("Erreur lecture permissions admin %s : %s", user_id, exc)
             return default_perms
 
     def update_admin_permission(self, user_id: int, perm_key: str, perm_value: str) -> bool:
         if perm_key not in ("perm_reseaux", "perm_type"):
             return False
         try:
-            with self.get_cursor() as cursor:
+            with self.transaction() as cursor:
                 cursor.execute(
                     f"UPDATE admins SET {perm_key} = %s WHERE user_id = %s",
                     (perm_value, user_id)
@@ -700,7 +804,7 @@ class DatabaseManager:
             self.clear_cache(f"perm_{user_id}")
             return True
         except Exception as exc:
-            logger.error("Erreur mise à jour permission %s pour admin %s: %s", perm_key, user_id, exc)
+            logger.error("Erreur mise à jour permission %s pour admin %s : %s", perm_key, user_id, exc)
             return False
 
     # ==================== PRÉFÉRENCES NOTIFICATIONS & RAPPELS ====================
@@ -741,7 +845,7 @@ class DatabaseManager:
             self._set_cached_value(cache_key, default_prefs)
             return default_prefs
         except Exception as exc:
-            logger.error("Erreur récupération préférences admin %s: %s", user_id, exc)
+            logger.error("Erreur récupération préférences admin %s : %s", user_id, exc)
             return default_prefs
 
     def update_admin_preference(self, user_id: int, key: str, value: Any) -> bool:
@@ -754,7 +858,7 @@ class DatabaseManager:
             return False
 
         try:
-            with self.get_cursor() as cursor:
+            with self.transaction() as cursor:
                 cursor.execute(
                     f"""
                     INSERT INTO admin_preferences (user_id, {key})
@@ -766,12 +870,12 @@ class DatabaseManager:
             self.clear_cache(f"admin_prefs_{user_id}")
             return True
         except Exception as exc:
-            logger.error("Erreur mise à jour préférence %s pour admin %s: %s", key, user_id, exc)
+            logger.error("Erreur mise à jour préférence %s pour admin %s : %s", key, user_id, exc)
             return False
 
     def mark_admin_reminder_sent(self, user_id: int):
         try:
-            with self.get_cursor() as cursor:
+            with self.transaction() as cursor:
                 cursor.execute(
                     """
                     UPDATE admin_preferences
@@ -782,7 +886,7 @@ class DatabaseManager:
                 )
             self.clear_cache(f"admin_prefs_{user_id}")
         except Exception as exc:
-            logger.error("Erreur mise à jour last_rappel_date pour %s: %s", user_id, exc)
+            logger.error("Erreur mise à jour last_rappel_date pour %s : %s", user_id, exc)
 
     def get_all_admin_preferences(self) -> List[Dict[str, Any]]:
         try:
@@ -827,7 +931,7 @@ class DatabaseManager:
 
     def set_user_vip(self, user_id: int, is_vip: bool, duration_days: Optional[int] = None) -> bool:
         try:
-            with self.get_cursor() as cursor:
+            with self.transaction() as cursor:
                 if is_vip:
                     if duration_days and duration_days > 0:
                         cursor.execute(
@@ -930,7 +1034,7 @@ class DatabaseManager:
 
     def record_demande_reminder_sent(self, demande_id: int):
         try:
-            with self.get_cursor() as cursor:
+            with self.transaction() as cursor:
                 cursor.execute(
                     "UPDATE demandes SET last_vip_reminder = NOW() WHERE id = %s",
                     (int(demande_id),)
@@ -985,7 +1089,7 @@ class DatabaseManager:
                     SELECT COUNT(*) AS total
                     FROM demandes d
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
-                    WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente', '⚠️ Difficile')
+                    WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours')
                     """,
                     (admin_id,)
                 )
@@ -1019,7 +1123,7 @@ class DatabaseManager:
 
             return stats
         except Exception as exc:
-            logger.error("Erreur calcul statistiques admin %s: %s", admin_id, exc, exc_info=True)
+            logger.error("Erreur calcul statistiques admin %s : %s", admin_id, exc, exc_info=True)
             return stats
 
     def get_user_stats(self, user_id: int, demande_id: Optional[int] = None) -> Dict[str, Any]:
@@ -1066,14 +1170,14 @@ class DatabaseManager:
                         stats["date_inscription"] = u_row.get("date_inscription") or stats["date_inscription"]
                         stats["derniere_activite"] = u_row.get("derniere_activite")
                 except Exception as e_user:
-                    logger.debug("Info lecture table users: %s", e_user)
+                    logger.debug("Info lecture table users : %s", e_user)
 
                 cursor.execute(
                     """
                     SELECT
                         COUNT(*) AS total,
-                        SUM(CASE WHEN statut IN ('🔄 En cours', '⚠️ Difficile') THEN 1 ELSE 0 END) AS en_cours,
-                        SUM(CASE WHEN statut IN ('📨 Reçue', '⏳ En attente') THEN 1 ELSE 0 END) AS en_attente,
+                        SUM(CASE WHEN statut = '🔄 En cours' THEN 1 ELSE 0 END) AS en_cours,
+                        SUM(CASE WHEN statut IN ('📥 Reçue', '⏳ En attente') THEN 1 ELSE 0 END) AS en_attente,
                         SUM(CASE WHEN statut = '✅ Réussie' THEN 1 ELSE 0 END) AS reussies,
                         SUM(CASE WHEN statut = '❌ Abandonnée' THEN 1 ELSE 0 END) AS abandonnees,
                         SUM(CASE WHEN prioritaire = 1 THEN 1 ELSE 0 END) AS total_prio,
@@ -1124,7 +1228,7 @@ class DatabaseManager:
 
             return stats
         except Exception as exc:
-            logger.error("Erreur calcul statistiques utilisateur %s: %s", user_id, exc, exc_info=True)
+            logger.error("Erreur calcul statistiques utilisateur %s : %s", user_id, exc, exc_info=True)
             return stats
 
     # ==================== UTILITAIRE / MÉTRIQUES ====================

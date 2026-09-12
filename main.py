@@ -120,7 +120,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
                     SELECT d.id, d.request_number, d.prenom, d.nom, d.statut, ds.date_suivi
                     FROM demandes d
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
-                    WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente', '⚠️ Difficile')
+                    WHERE ds.admin_id = %s AND d.statut IN ('🔄 En cours', '⏳ En attente')
                     ORDER BY ds.date_suivi ASC
                     """,
                     (int(user_id),),
@@ -465,9 +465,10 @@ class TelegramBot:
             pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips)$",
         ))
 
+        # ⚡ AJOUT DE status_.* ICI POUR RÉCEPTIONNER LES BOUTONS DU MENU DE STATUT
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
+            pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
         ))
 
         app.add_handler(CallbackQueryHandler(
