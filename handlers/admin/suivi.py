@@ -1,5 +1,6 @@
 """Module de gestion, filtrage et tri dynamique des demandes suivies par les administrateurs."""
 
+from datetime import datetime
 import html
 import logging
 from telegram import (
@@ -30,6 +31,30 @@ class SuiviManager:
                 "search": None,
             }
         return context.user_data["suivi_settings"]
+
+    def _format_archive_countdown(self, demande: dict) -> str:
+        """Calcule et renvoie la mention visuelle du compte à rebours d'archivage."""
+        if demande.get("statut") != "✅ Réussie" or demande.get("reussie_substatus") != "terminee":
+            return ""
+
+        if not demande.get("has_delivered_content"):
+            return "⏳ <b>Clôture :</b> <i>En attente de transmission du contenu</i>"
+
+        date_liv = demande.get("date_livraison")
+        if not date_liv:
+            return "📦 <b>Auto-archivage :</b> <i>programmé sous 72h</i>"
+
+        try:
+            if isinstance(date_liv, str):
+                date_liv = datetime.strptime(date_liv[:19], "%Y-%m-%d %H:%M:%S")
+            diff_hours = (datetime.now() - date_liv).total_seconds() / 3600.0
+            hours_left = max(0, int(72 - diff_hours))
+
+            if hours_left > 0:
+                return f"📦 <b>Auto-archivage :</b> dans ~{hours_left}h (Contenu livré)"
+            return "📦 <b>Auto-archivage :</b> <i>imminent...</i>"
+        except Exception:
+            return "📦 <b>Auto-archivage :</b> <i>programmé sous 72h</i>"
 
     async def show_demandes_suivies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Point d'entrée principal."""
@@ -362,7 +387,7 @@ class SuiviManager:
                     )
 
     def _format_suivi_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche avec échappement HTML strict."""
+        """Formate la fiche avec échappement HTML strict et indicateur de compte à rebours d'archivage."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_val = float(demande.get("montant") or 0.0)
@@ -423,6 +448,11 @@ class SuiviManager:
             det_court = (det[:140] + "...") if len(det) > 140 else det
             lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
 
+        # Indicateur visuel d'auto-archivage / clôture
+        archive_badge = self._format_archive_countdown(demande)
+        if archive_badge:
+            lines.append(f"\n{archive_badge}")
+
         s = self._get_sort_settings(context)
         label_sort = {
             "date_suivi": "date suivi",
@@ -442,8 +472,12 @@ class SuiviManager:
         return "\n".join(lines)
 
     def _build_suivi_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Clavier avec actions directes, profil demandeur et navigation."""
+        """Clavier avec actions directes, profil demandeur, bouton archivage conditionnel et pagination."""
         demande_id = demande["id"]
+        is_reussie = (demande.get("statut") == "✅ Réussie")
+        sub_status = demande.get("reussie_substatus")
+        has_delivered = bool(demande.get("has_delivered_content", False))
+
         buttons = [
             [
                 InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
@@ -453,6 +487,17 @@ class SuiviManager:
                 InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
             ]
         ]
+
+        # Bouton d'action d'archivage conditionnel sur le suivi
+        if is_reussie and sub_status == "terminee":
+            if has_delivered:
+                buttons.insert(1, [
+                    InlineKeyboardButton("📦 Archiver le dossier (ou auto 72h)", callback_data=f"status_archive_now_{demande_id}")
+                ])
+            else:
+                buttons.insert(1, [
+                    InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
+                ])
 
         # Pagination
         nav_row = []
