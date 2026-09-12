@@ -255,20 +255,19 @@ class StatutsManager:
         # Enregistrement en base
         self.db_manager.update_demande_statut(demande_id, nouveau_statut, reussie_substatus=reussie_substatus)
 
-        # Maintien ou clôture dans demandes_suivi
+        # Maintien dans demandes_suivi en statut 'active' tant que la demande n'est pas archivée
         with self.db_manager.transaction() as cursor:
             if nouveau_statut in ("⏳ En attente", "🔄 En cours", "✅ Réussie"):
-                suivi_etat = "active" if (nouveau_statut != "✅ Réussie" or reussie_substatus == "active") else "closed"
                 cursor.execute(
                     """
                     INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                    VALUES (%s, %s, NOW(), NOW(), %s)
+                    VALUES (%s, %s, NOW(), NOW(), 'active')
                     ON DUPLICATE KEY UPDATE 
                         admin_id = VALUES(admin_id),
                         derniere_action = NOW(),
-                        statut_suivi = VALUES(statut_suivi)
+                        statut_suivi = 'active'
                     """,
-                    (demande_id, admin_id, suivi_etat)
+                    (demande_id, admin_id)
                 )
 
         # Notification explicative au demandeur
@@ -514,7 +513,7 @@ class StatutsManager:
             ]
         ]
 
-        # Condition d'affichage pour la demande réussie et terminée
+        # Insertion du bouton d'archivage ou rappel si la demande est terminée
         if is_reussie and sub_status == "terminee":
             if has_delivered:
                 keyboard.insert(1, [
