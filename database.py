@@ -179,7 +179,7 @@ class DatabaseManager:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
             """
-            CREATE TABLE IF NOT EXISTS admins (
+            CREATE TABLE IF NOT EXISTS staff (
                 user_id BIGINT PRIMARY KEY,
                 alias VARCHAR(64) NOT NULL,
                 added_by BIGINT,
@@ -187,6 +187,19 @@ class DatabaseManager:
                 perm_type VARCHAR(16) DEFAULT 'all',
                 alias_locked BOOLEAN DEFAULT FALSE,
                 is_paused BOOLEAN DEFAULT FALSE,
+                date_added DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id BIGINT PRIMARY KEY,
+                alias VARCHAR(64) NOT NULL,
+                is_owner BOOLEAN DEFAULT FALSE,
+                can_manage_staff BOOLEAN DEFAULT TRUE,
+                can_manage_vips BOOLEAN DEFAULT TRUE,
+                can_view_stats BOOLEAN DEFAULT TRUE,
+                can_manage_delais BOOLEAN DEFAULT FALSE,
+                added_by BIGINT DEFAULT NULL,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
@@ -273,10 +286,15 @@ class DatabaseManager:
         ]
 
         expected_columns = [
-            ("admins", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
-            ("admins", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
-            ("admins", "alias_locked", "BOOLEAN DEFAULT FALSE"),
-            ("admins", "is_paused", "BOOLEAN DEFAULT FALSE"),
+            ("staff", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
+            ("staff", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
+            ("staff", "alias_locked", "BOOLEAN DEFAULT FALSE"),
+            ("staff", "is_paused", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "is_owner", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "can_manage_staff", "BOOLEAN DEFAULT TRUE"),
+            ("admins", "can_manage_vips", "BOOLEAN DEFAULT TRUE"),
+            ("admins", "can_view_stats", "BOOLEAN DEFAULT TRUE"),
+            ("admins", "can_manage_delais", "BOOLEAN DEFAULT FALSE"),
             ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
             ("demandes", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -358,6 +376,19 @@ class DatabaseManager:
                 except Exception as seed_err:
                     logger.warning("Initialisation clés de config par défaut : %s", seed_err)
 
+                # Amorçage automatique du propriétaire dans la table admins
+                owner_id = getattr(self.config, "OWNER_ID", 0) or int(self.get_config_value("owner_id", "0"))
+                if owner_id:
+                    owner_alias = self.get_config_value("owner_alias", "Propriétaire")
+                    cursor.execute(
+                        """
+                        INSERT INTO admins (user_id, alias, is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais)
+                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE)
+                        ON DUPLICATE KEY UPDATE is_owner = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE
+                        """,
+                        (owner_id, owner_alias)
+                    )
+
             logger.info("Vérification et création des tables terminées avec succès.")
         except Exception as exc:
             logger.error("Erreur lors de la création des tables : %s", exc)
@@ -382,6 +413,124 @@ class DatabaseManager:
         else:
             self._cache.clear()
             self._cache_timestamp.clear()
+
+    # ==================== CONTRÔLE DES RÔLES ET DROITS ====================
+
+    def is_owner(self, user_id: int) -> bool:
+        """Indique si l'utilisateur est le super-administrateur suprême."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        if uid == getattr(self.config, "OWNER_ID", 0):
+            return True
+
+        cache_key = f"is_owner_{uid}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT is_owner FROM admins WHERE user_id = %s", (uid,))
+                row = cursor.fetchone()
+                val = bool(row.get("is_owner")) if row else False
+                self._set_cached_value(cache_key, val)
+                return val
+        except Exception as exc:
+            logger.error("Erreur contrôle is_owner pour %s : %s", uid, exc)
+            return False
+
+    def is_admin(self, user_id: int) -> bool:
+        """Indique si l'utilisateur est administrateur (manager ou owner)."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        if self.is_owner(uid):
+            return True
+
+        cache_key = f"is_admin_{uid}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT user_id FROM admins WHERE user_id = %s", (uid,))
+                val = bool(cursor.fetchone())
+                self._set_cached_value(cache_key, val)
+                return val
+        except Exception as exc:
+            logger.error("Erreur contrôle is_admin pour %s : %s", uid, exc)
+            return False
+
+    def is_staff(self, user_id: int) -> bool:
+        """Indique si l'utilisateur a accès au traitement des demandes (staff ou admin/owner)."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        if self.is_admin(uid):
+            return True
+
+        cache_key = f"is_staff_{uid}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT user_id FROM staff WHERE user_id = %s", (uid,))
+                val = bool(cursor.fetchone())
+                self._set_cached_value(cache_key, val)
+                return val
+        except Exception as exc:
+            logger.error("Erreur contrôle is_staff pour %s : %s", uid, exc)
+            return False
+
+    def get_admin_privileges(self, user_id: int) -> Dict[str, bool]:
+        """Retourne les permissions granulaires d'un administrateur."""
+        if self.is_owner(user_id):
+            return {
+                "is_owner": True,
+                "can_manage_staff": True,
+                "can_manage_vips": True,
+                "can_view_stats": True,
+                "can_manage_delais": True,
+            }
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais
+                    FROM admins WHERE user_id = %s
+                    """,
+                    (int(user_id),)
+                )
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "is_owner": bool(row["is_owner"]),
+                        "can_manage_staff": bool(row["can_manage_staff"]),
+                        "can_manage_vips": bool(row["can_manage_vips"]),
+                        "can_view_stats": bool(row["can_view_stats"]),
+                        "can_manage_delais": bool(row["can_manage_delais"]),
+                    }
+        except Exception as exc:
+            logger.error("Erreur lecture privilèges admin %s : %s", user_id, exc)
+
+        return {
+            "is_owner": False,
+            "can_manage_staff": False,
+            "can_manage_vips": False,
+            "can_view_stats": False,
+            "can_manage_delais": False,
+        }
 
     # ==================== TABLE CONFIG DYNAMIQUE ====================
 
@@ -507,10 +656,9 @@ class DatabaseManager:
         val = max(0, int(limit))
         return self.set_config_value("max_demandes_per_user", str(val))
 
-    # ==================== GESTION DES DÉLAIS PARAMÉTRABLES ====================
+    # ==================== DÉLAIS PARAMÉTRABLES ====================
 
     def get_auto_archive_hours(self) -> int:
-        """Retourne le délai en heures avant l'archivage automatique (72h par défaut)."""
         val = self.get_config_value("auto_archive_hours", "72")
         try:
             return max(1, int(val))
@@ -518,12 +666,10 @@ class DatabaseManager:
             return 72
 
     def set_auto_archive_hours(self, hours: int) -> bool:
-        """Définit le délai en heures avant l'archivage automatique."""
         val = max(1, int(hours))
         return self.set_config_value("auto_archive_hours", str(val))
 
     def get_delivery_reminder_days(self) -> int:
-        """Retourne le délai en jours avant relance d'une demande terminée non livrée (7j par défaut)."""
         val = self.get_config_value("delivery_reminder_days", "7")
         try:
             return max(1, int(val))
@@ -531,7 +677,6 @@ class DatabaseManager:
             return 7
 
     def set_delivery_reminder_days(self, days: int) -> bool:
-        """Définit le délai en jours avant relance d'une demande terminée non livrée."""
         val = max(1, int(days))
         return self.set_config_value("delivery_reminder_days", str(val))
 
@@ -545,107 +690,120 @@ class DatabaseManager:
     def set_owner_alias(self, alias: str) -> bool:
         return self.set_config_value("owner_alias", alias)
 
-    # ==================== TABLE ADMINS ====================
+    # ==================== GESTION DE LA TABLE STAFF ====================
 
-    def get_admin_alias(self, user_id: int) -> str:
+    def get_staff_alias(self, user_id: int) -> str:
         cache_key = f"alias_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached:
             return cached
 
-        if self.config.is_owner(user_id):
-            alias = self.get_config_value("owner_alias", "Propriétaire")
+        if self.is_owner(user_id):
+            alias = self.get_owner_alias()
             self._set_cached_value(cache_key, alias)
             return alias
 
         try:
             with self.get_cursor() as cursor:
-                cursor.execute(
-                    "SELECT alias FROM admins WHERE user_id = %s",
-                    (user_id,),
-                )
+                cursor.execute("SELECT alias FROM staff WHERE user_id = %s", (user_id,))
                 row = cursor.fetchone()
-                alias = row["alias"] if row and row.get("alias") else "Admin"
-                self._set_cached_value(cache_key, alias)
-                return alias
+                if row and row.get("alias"):
+                    alias = row["alias"]
+                    self._set_cached_value(cache_key, alias)
+                    return alias
+
+                cursor.execute("SELECT alias FROM admins WHERE user_id = %s", (user_id,))
+                row = cursor.fetchone()
+                if row and row.get("alias"):
+                    alias = row["alias"]
+                    self._set_cached_value(cache_key, alias)
+                    return alias
+
+                return "Staff"
         except Exception as exc:
-            logger.error("Erreur extraction alias admin %s : %s", user_id, exc)
-            return "Admin"
+            logger.error("Erreur extraction alias staff %s : %s", user_id, exc)
+            return "Staff"
 
-    def set_admin_alias(self, user_id: int, new_alias: str) -> bool:
+    get_admin_alias = get_staff_alias
+
+    def set_staff_alias(self, user_id: int, new_alias: str) -> bool:
         clean_alias = new_alias.strip()
-
-        if self.config.is_owner(user_id):
-            ok = self.set_config_value("owner_alias", clean_alias)
+        if self.is_owner(user_id):
+            ok = self.set_owner_alias(clean_alias)
             if ok:
                 self.clear_cache(f"alias_{user_id}")
             return ok
 
         try:
             with self.transaction() as cursor:
-                cursor.execute(
-                    "UPDATE admins SET alias = %s WHERE user_id = %s",
-                    (clean_alias, user_id),
-                )
+                cursor.execute("UPDATE staff SET alias = %s WHERE user_id = %s", (clean_alias, user_id))
+                cursor.execute("UPDATE admins SET alias = %s WHERE user_id = %s", (clean_alias, user_id))
             self.clear_cache(f"alias_{user_id}")
             return True
         except Exception as exc:
-            logger.error("Erreur mise à jour alias admin %s : %s", user_id, exc)
+            logger.error("Erreur mise à jour alias %s : %s", user_id, exc)
             return False
 
-    def can_admin_edit_alias(self, user_id: int) -> bool:
-        if self.config.is_owner(user_id):
+    set_admin_alias = set_staff_alias
+
+    def can_staff_edit_alias(self, user_id: int) -> bool:
+        if self.is_owner(user_id):
             return True
         try:
             with self.get_cursor() as cursor:
-                cursor.execute("SELECT alias_locked FROM admins WHERE user_id = %s", (user_id,))
+                cursor.execute("SELECT alias_locked FROM staff WHERE user_id = %s", (user_id,))
                 row = cursor.fetchone()
                 return not bool(row.get("alias_locked")) if row else False
         except Exception as exc:
             logger.error("Erreur vérification verrou alias pour %s : %s", user_id, exc)
             return False
 
-    def lock_admin_alias(self, user_id: int):
+    can_admin_edit_alias = can_staff_edit_alias
+
+    def lock_staff_alias(self, user_id: int):
         try:
             with self.transaction() as cursor:
-                cursor.execute("UPDATE admins SET alias_locked = TRUE WHERE user_id = %s", (user_id,))
+                cursor.execute("UPDATE staff SET alias_locked = TRUE WHERE user_id = %s", (user_id,))
             self.clear_cache(f"alias_{user_id}")
         except Exception as exc:
             logger.error("Erreur verrouillage alias %s : %s", user_id, exc)
 
-    # ==================== MODE PAUSE ADMINISTRATEUR ====================
+    lock_admin_alias = lock_staff_alias
 
-    def is_admin_paused(self, user_id: int) -> bool:
-        cache_key = f"admin_paused_{user_id}"
+    # ==================== MODE PAUSE STAFF ====================
+
+    def is_staff_paused(self, user_id: int) -> bool:
+        cache_key = f"staff_paused_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
             return cached
 
         try:
             with self.get_cursor() as cursor:
-                cursor.execute("SELECT is_paused FROM admins WHERE user_id = %s", (int(user_id),))
+                cursor.execute("SELECT is_paused FROM staff WHERE user_id = %s", (int(user_id),))
                 row = cursor.fetchone()
                 val = bool(row.get("is_paused")) if row else False
                 self._set_cached_value(cache_key, val)
                 return val
         except Exception as exc:
-            logger.error("Erreur vérification mode pause pour %s : %s", user_id, exc)
+            logger.error("Erreur vérification pause staff %s : %s", user_id, exc)
             return False
 
-    def set_admin_pause_status(self, user_id: int, paused: bool) -> bool:
+    is_admin_paused = is_staff_paused
+
+    def set_staff_pause_status(self, user_id: int, paused: bool) -> bool:
         try:
             with self.transaction() as cursor:
-                cursor.execute(
-                    "UPDATE admins SET is_paused = %s WHERE user_id = %s",
-                    (paused, int(user_id))
-                )
-            self.clear_cache(f"admin_paused_{user_id}")
+                cursor.execute("UPDATE staff SET is_paused = %s WHERE user_id = %s", (paused, int(user_id)))
+            self.clear_cache(f"staff_paused_{user_id}")
             return True
         except Exception as exc:
-            logger.error("Erreur modification mode pause pour %s : %s", user_id, exc)
+            logger.error("Erreur modification pause staff %s : %s", user_id, exc)
             return False
 
-    def get_admin_active_demandes(self, admin_id: int) -> List[Dict[str, Any]]:
+    set_admin_pause_status = set_staff_pause_status
+
+    def get_staff_active_demandes(self, staff_id: int) -> List[Dict[str, Any]]:
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -655,16 +813,18 @@ class DatabaseManager:
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
                     WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours')
                     """,
-                    (int(admin_id),)
+                    (int(staff_id),)
                 )
                 return cursor.fetchall()
         except Exception as exc:
-            logger.error("Erreur récupération demandes actives admin %s : %s", admin_id, exc)
+            logger.error("Erreur récupération demandes actives staff %s : %s", staff_id, exc)
             return []
 
-    def abandon_admin_demandes_for_pause(self, admin_id: int) -> List[Dict[str, Any]]:
-        alias = self.get_admin_alias(admin_id)
-        reason = f"Piégeur ({alias}) actuellement à l'arrêt / en pause."
+    get_admin_active_demandes = get_staff_active_demandes
+
+    def abandon_staff_demandes_for_pause(self, staff_id: int) -> List[Dict[str, Any]]:
+        alias = self.get_staff_alias(staff_id)
+        reason = f"Opérateur ({alias}) actuellement en pause."
 
         try:
             with self.transaction() as cursor:
@@ -675,7 +835,7 @@ class DatabaseManager:
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
                     WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours')
                     """,
-                    (int(admin_id),)
+                    (int(staff_id),)
                 )
                 rows = cursor.fetchall()
 
@@ -701,13 +861,14 @@ class DatabaseManager:
 
             return rows
         except Exception as exc:
-            logger.error("Erreur abandon des demandes suite pause admin %s : %s", admin_id, exc)
+            logger.error("Erreur abandon des demandes suite pause staff %s : %s", staff_id, exc)
             return []
 
-    # ==================== GESTION DES STATUTS ET OPTIONS ====================
+    abandon_admin_demandes_for_pause = abandon_staff_demandes_for_pause
+
+    # ==================== STATUTS ET LIVRAISON ====================
 
     def toggle_demande_difficile(self, demande_id: int) -> bool:
-        """Bascule l'interrupteur 'is_difficile' et renvoie le nouvel état."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -719,10 +880,7 @@ class DatabaseManager:
                     """,
                     (int(demande_id),)
                 )
-                cursor.execute(
-                    "SELECT is_difficile FROM demandes WHERE id = %s",
-                    (int(demande_id),)
-                )
+                cursor.execute("SELECT is_difficile FROM demandes WHERE id = %s", (int(demande_id),))
                 row = cursor.fetchone()
                 return bool(row["is_difficile"]) if row else False
         except Exception as exc:
@@ -730,7 +888,6 @@ class DatabaseManager:
             return False
 
     def update_demande_statut(self, demande_id: int, nouveau_statut: str, reussie_substatus: Optional[str] = None) -> bool:
-        """Met à jour le statut principal et ajuste les options associées."""
         try:
             with self.transaction() as cursor:
                 if nouveau_statut == "✅ Réussie":
@@ -775,7 +932,6 @@ class DatabaseManager:
             return False
 
     def mark_content_delivered(self, demande_id: int):
-        """Marque le contenu comme livré et initialise la date pour le décompte d'archivage."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -792,7 +948,6 @@ class DatabaseManager:
             logger.error("Erreur marquage livraison demande %s : %s", demande_id, exc)
 
     def archiver_demande_reussie(self, demande_id: int) -> bool:
-        """Déplace une demande réussie et terminée vers les archives et libère le quota du demandeur."""
         try:
             with self.transaction() as cursor:
                 cursor.execute("SELECT * FROM demandes WHERE id = %s", (int(demande_id),))
@@ -841,7 +996,6 @@ class DatabaseManager:
             return False
 
     def get_expired_delivered_demandes(self, hours: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Récupère les demandes terminées avec contenu livré depuis plus de X heures pour auto-archivage."""
         effective_hours = hours if hours is not None else self.get_auto_archive_hours()
         try:
             with self.get_cursor() as cursor:
@@ -863,7 +1017,6 @@ class DatabaseManager:
             return []
 
     def get_undelivered_terminee_demandes_for_reminder(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Récupère les demandes terminées non livrées nécessitant un rappel (délai paramétrable)."""
         effective_days = days if days is not None else self.get_delivery_reminder_days()
         try:
             with self.get_cursor() as cursor:
@@ -888,19 +1041,14 @@ class DatabaseManager:
             return []
 
     def mark_delivery_reminder_sent(self, demande_id: int):
-        """Met à jour la date du dernier rappel de livraison envoyé à l'administrateur."""
         try:
             with self.transaction() as cursor:
-                cursor.execute(
-                    "UPDATE demandes SET last_delivery_reminder = NOW() WHERE id = %s",
-                    (int(demande_id),)
-                )
+                cursor.execute("UPDATE demandes SET last_delivery_reminder = NOW() WHERE id = %s", (int(demande_id),))
         except Exception as exc:
-            logger.error("Erreur mise à jour last_delivery_reminder sur demande %s : %s", demande_id, exc)
+            logger.error("Erreur mise à jour last_delivery_reminder demande %s : %s", demande_id, exc)
 
     @staticmethod
     def format_statut_display(statut: str, is_difficile: bool = False, reussie_substatus: Optional[str] = None) -> str:
-        """Formate le libellé complet du statut avec ses options pour l'affichage."""
         clean_statut = str(statut or "").strip()
         if clean_statut in ("⏳ En attente", "🔄 En cours"):
             if is_difficile:
@@ -914,10 +1062,10 @@ class DatabaseManager:
 
         return clean_statut
 
-    # ==================== GESTION DES PERMISSIONS ADMIN ====================
+    # ==================== PERMISSIONS OPÉRATIONNELLES (STAFF) ====================
 
-    def get_admin_permissions(self, user_id: int) -> Dict[str, str]:
-        if self.config.is_owner(user_id):
+    def get_staff_permissions(self, user_id: int) -> Dict[str, str]:
+        if self.is_owner(user_id):
             return {"perm_reseaux": "all", "perm_type": "all"}
 
         cache_key = f"perm_{user_id}"
@@ -928,10 +1076,7 @@ class DatabaseManager:
         default_perms = {"perm_reseaux": "all", "perm_type": "all"}
         try:
             with self.get_cursor() as cursor:
-                cursor.execute(
-                    "SELECT perm_reseaux, perm_type FROM admins WHERE user_id = %s",
-                    (user_id,)
-                )
+                cursor.execute("SELECT perm_reseaux, perm_type FROM staff WHERE user_id = %s", (user_id,))
                 row = cursor.fetchone()
                 if row:
                     default_perms["perm_reseaux"] = row.get("perm_reseaux") or "all"
@@ -939,23 +1084,24 @@ class DatabaseManager:
             self._set_cached_value(cache_key, default_perms)
             return default_perms
         except Exception as exc:
-            logger.error("Erreur lecture permissions admin %s : %s", user_id, exc)
+            logger.error("Erreur lecture permissions staff %s : %s", user_id, exc)
             return default_perms
 
-    def update_admin_permission(self, user_id: int, perm_key: str, perm_value: str) -> bool:
+    get_admin_permissions = get_staff_permissions
+
+    def update_staff_permission(self, user_id: int, perm_key: str, perm_value: str) -> bool:
         if perm_key not in ("perm_reseaux", "perm_type"):
             return False
         try:
             with self.transaction() as cursor:
-                cursor.execute(
-                    f"UPDATE admins SET {perm_key} = %s WHERE user_id = %s",
-                    (perm_value, user_id)
-                )
+                cursor.execute(f"UPDATE staff SET {perm_key} = %s WHERE user_id = %s", (perm_value, user_id))
             self.clear_cache(f"perm_{user_id}")
             return True
         except Exception as exc:
-            logger.error("Erreur mise à jour permission %s pour admin %s : %s", perm_key, user_id, exc)
+            logger.error("Erreur mise à jour permission %s pour staff %s : %s", perm_key, user_id, exc)
             return False
+
+    update_admin_permission = update_staff_permission
 
     # ==================== PRÉFÉRENCES NOTIFICATIONS & RAPPELS ====================
 
@@ -995,7 +1141,7 @@ class DatabaseManager:
             self._set_cached_value(cache_key, default_prefs)
             return default_prefs
         except Exception as exc:
-            logger.error("Erreur récupération préférences admin %s : %s", user_id, exc)
+            logger.error("Erreur récupération préférences %s : %s", user_id, exc)
             return default_prefs
 
     def update_admin_preference(self, user_id: int, key: str, value: Any) -> bool:
@@ -1004,7 +1150,6 @@ class DatabaseManager:
             "rappel_jour_semaine", "rappel_jour_mois", "last_rappel_date"
         }
         if key not in allowed_keys:
-            logger.warning("Clé de préférence admin non autorisée : %s", key)
             return False
 
         try:
@@ -1020,20 +1165,13 @@ class DatabaseManager:
             self.clear_cache(f"admin_prefs_{user_id}")
             return True
         except Exception as exc:
-            logger.error("Erreur mise à jour préférence %s pour admin %s : %s", key, user_id, exc)
+            logger.error("Erreur mise à jour préférence %s pour %s : %s", key, user_id, exc)
             return False
 
     def mark_admin_reminder_sent(self, user_id: int):
         try:
             with self.transaction() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE admin_preferences
-                    SET last_rappel_date = CURRENT_DATE()
-                    WHERE user_id = %s
-                    """,
-                    (user_id,)
-                )
+                cursor.execute("UPDATE admin_preferences SET last_rappel_date = CURRENT_DATE() WHERE user_id = %s", (user_id,))
             self.clear_cache(f"admin_prefs_{user_id}")
         except Exception as exc:
             logger.error("Erreur mise à jour last_rappel_date pour %s : %s", user_id, exc)
@@ -1044,10 +1182,10 @@ class DatabaseManager:
                 cursor.execute("SELECT * FROM admin_preferences WHERE rappel_mode != 'off'")
                 return cursor.fetchall()
         except Exception as exc:
-            logger.error("Erreur lecture globale des préférences admins : %s", exc)
+            logger.error("Erreur lecture globale préférences : %s", exc)
             return []
 
-    # ==================== GESTION CLIENTS VIP & STARS ====================
+    # ==================== GESTION CLIENTS VIP ====================
 
     def is_user_vip(self, user_id: int) -> bool:
         cache_key = f"vip_{user_id}"
@@ -1094,15 +1232,9 @@ class DatabaseManager:
                             (duration_days, int(user_id))
                         )
                     else:
-                        cursor.execute(
-                            "UPDATE users SET is_vip = TRUE, vip_until = NULL WHERE user_id = %s",
-                            (int(user_id),)
-                        )
+                        cursor.execute("UPDATE users SET is_vip = TRUE, vip_until = NULL WHERE user_id = %s", (int(user_id),))
                 else:
-                    cursor.execute(
-                        "UPDATE users SET is_vip = FALSE, vip_until = NULL WHERE user_id = %s",
-                        (int(user_id),)
-                    )
+                    cursor.execute("UPDATE users SET is_vip = FALSE, vip_until = NULL WHERE user_id = %s", (int(user_id),))
 
             self.clear_cache(f"vip_{user_id}")
             return True
@@ -1127,11 +1259,12 @@ class DatabaseManager:
             return []
 
     def get_available_admins_for_selection(self) -> List[Dict[str, Any]]:
+        """Retourne les membres opérationnels disponibles pour la sélection de référent par les VIPs."""
         equipe = []
         try:
             owner_id = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
             owner_alias = self.get_owner_alias()
-            owner_paused = self.is_admin_paused(owner_id)
+            owner_paused = self.is_staff_paused(owner_id)
 
             if owner_id and not owner_paused:
                 equipe.append({"user_id": owner_id, "alias": owner_alias, "role": "Owner"})
@@ -1139,14 +1272,14 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT user_id, alias FROM admins
+                    SELECT user_id, alias FROM staff
                     WHERE (is_paused IS FALSE OR is_paused IS NULL)
                     ORDER BY alias ASC
                     """
                 )
                 for r in cursor.fetchall():
                     if r["user_id"] != owner_id:
-                        equipe.append({"user_id": r["user_id"], "alias": r["alias"], "role": "Admin"})
+                        equipe.append({"user_id": r["user_id"], "alias": r["alias"], "role": "Staff"})
             return equipe
         except Exception as exc:
             logger.error("Erreur extraction équipe VIP : %s", exc)
@@ -1157,10 +1290,7 @@ class DatabaseManager:
     def can_send_demande_reminder(self, demande_id: int) -> Tuple[bool, Optional[str]]:
         try:
             with self.get_cursor() as cursor:
-                cursor.execute(
-                    "SELECT last_vip_reminder, admin_en_charge FROM demandes WHERE id = %s",
-                    (int(demande_id),)
-                )
+                cursor.execute("SELECT last_vip_reminder, admin_en_charge FROM demandes WHERE id = %s", (int(demande_id),))
                 row = cursor.fetchone()
                 if not row:
                     return False, "Demande introuvable."
@@ -1185,10 +1315,7 @@ class DatabaseManager:
     def record_demande_reminder_sent(self, demande_id: int):
         try:
             with self.transaction() as cursor:
-                cursor.execute(
-                    "UPDATE demandes SET last_vip_reminder = NOW() WHERE id = %s",
-                    (int(demande_id),)
-                )
+                cursor.execute("UPDATE demandes SET last_vip_reminder = NOW() WHERE id = %s", (int(demande_id),))
         except Exception as exc:
             logger.error("Erreur enregistrement rappel demande %s : %s", demande_id, exc)
 
@@ -1200,10 +1327,10 @@ class DatabaseManager:
         except (ValueError, TypeError):
             pass
 
-        is_owner = self.config.is_owner(admin_id)
+        is_owner = self.is_owner(admin_id)
         stats = {
             "user_id": admin_id,
-            "alias": self.get_admin_alias(admin_id),
+            "alias": self.get_staff_alias(admin_id),
             "date_added": None,
             "perm_reseaux": "all",
             "perm_type": "all",
@@ -1224,15 +1351,15 @@ class DatabaseManager:
                     stats["perm_type"] = "all"
                 else:
                     cursor.execute(
-                        "SELECT alias, date_added, perm_reseaux, perm_type FROM admins WHERE user_id = %s",
+                        "SELECT alias, date_added, perm_reseaux, perm_type FROM staff WHERE user_id = %s",
                         (admin_id,)
                     )
-                    admin_row = cursor.fetchone()
-                    if admin_row:
-                        stats["alias"] = admin_row.get("alias") or stats["alias"]
-                        stats["date_added"] = admin_row.get("date_added")
-                        stats["perm_reseaux"] = admin_row.get("perm_reseaux") or "all"
-                        stats["perm_type"] = admin_row.get("perm_type") or "all"
+                    staff_row = cursor.fetchone()
+                    if staff_row:
+                        stats["alias"] = staff_row.get("alias") or stats["alias"]
+                        stats["date_added"] = staff_row.get("date_added")
+                        stats["perm_reseaux"] = staff_row.get("perm_reseaux") or "all"
+                        stats["perm_type"] = staff_row.get("perm_type") or "all"
 
                 cursor.execute(
                     """
@@ -1273,7 +1400,7 @@ class DatabaseManager:
 
             return stats
         except Exception as exc:
-            logger.error("Erreur calcul statistiques admin %s : %s", admin_id, exc, exc_info=True)
+            logger.error("Erreur calcul statistiques staff %s : %s", admin_id, exc, exc_info=True)
             return stats
 
     def get_user_stats(self, user_id: int, demande_id: Optional[int] = None) -> Dict[str, Any]:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point d'entrée principal de l'application Telegram avec gestion des VIP, Telegram Stars, mode pause, auto-archivage et rappels de livraison."""
+"""Point d'entrée principal de l'application Telegram avec architecture RBAC (Client, Staff, Admin, Owner)."""
 
 from datetime import datetime
 import html
@@ -36,7 +36,7 @@ from telegram.ext import (
 from config import Config
 from database import DatabaseManager
 from handlers.admin_handlers import AdminHandlers
-from handlers.owner_handlers import OwnerHandlers
+from handlers.staff_handlers import StaffHandlers
 from handlers.user_handlers import UserHandlers
 
 # Logs console et fichier local
@@ -70,11 +70,8 @@ def check_log_permissions() -> bool:
 
 
 async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Vérifie chaque heure si des administrateurs doivent recevoir un rappel de leurs suivis."""
-    db_manager = getattr(context, "job", None) and context.job.data.get("db_manager")
-    if not db_manager and hasattr(context, "application"):
-        db_manager = context.application.bot_data.get("db_manager")
-
+    """Vérifie chaque heure si des opérateurs doivent recevoir un rappel de leurs suivis."""
+    db_manager = context.application.bot_data.get("db_manager")
     if not db_manager:
         logger.warning("Vérification des rappels abandonnée : db_manager introuvable.")
         return
@@ -90,8 +87,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
     for pref in admin_prefs_list:
         user_id = pref["user_id"]
 
-        # Ne pas envoyer de rappel périodique si l'admin est en pause
-        if db_manager.is_admin_paused(user_id):
+        if db_manager.is_staff_paused(user_id):
             continue
 
         rappel_mode = pref.get("rappel_mode", "sound")
@@ -128,7 +124,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
                 )
                 active_demandes = cursor.fetchall()
         except Exception as db_err:
-            logger.error("Erreur lecture suivis pour rappel admin %s : %s", user_id, db_err)
+            logger.error("Erreur lecture suivis pour rappel staff %s : %s", user_id, db_err)
             continue
 
         if not active_demandes:
@@ -163,17 +159,14 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
                 disable_notification=is_silent,
             )
             db_manager.mark_admin_reminder_sent(user_id)
-            logger.info("Rappel automatique envoyé à l'admin %s (mode : %s)", user_id, rappel_mode)
+            logger.info("Rappel automatique envoyé au staff %s (mode : %s)", user_id, rappel_mode)
         except Exception as err:
-            logger.warning("Erreur envoi rappel programmé à l'admin %s : %s", user_id, err)
+            logger.warning("Erreur envoi rappel programmé au staff %s : %s", user_id, err)
 
 
 async def check_and_auto_archive_demandes(context: ContextTypes.DEFAULT_TYPE):
-    """Archive automatiquement les demandes terminées et livrées selon le délai configuré (72h par défaut)."""
-    db_manager = getattr(context, "job", None) and context.job.data.get("db_manager")
-    if not db_manager and hasattr(context, "application"):
-        db_manager = context.application.bot_data.get("db_manager")
-
+    """Archive automatiquement les demandes terminées et livrées selon le délai configuré."""
+    db_manager = context.application.bot_data.get("db_manager")
     if not db_manager:
         return
 
@@ -190,11 +183,8 @@ async def check_and_auto_archive_demandes(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def check_and_send_delivery_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Envoie un rappel aux administrateurs pour les demandes terminées sans livraison selon le délai configuré (7j par défaut)."""
-    db_manager = getattr(context, "job", None) and context.job.data.get("db_manager")
-    if not db_manager and hasattr(context, "application"):
-        db_manager = context.application.bot_data.get("db_manager")
-
+    """Envoie un rappel aux opérateurs pour les demandes terminées sans livraison selon le délai configuré."""
+    db_manager = context.application.bot_data.get("db_manager")
     if not db_manager:
         return
 
@@ -226,7 +216,7 @@ async def check_and_send_delivery_reminders(context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=kb,
                 )
                 db_manager.mark_delivery_reminder_sent(dem_id)
-                logger.info("Rappel de livraison (%sj) envoyé à l'admin %s pour la demande #%s", days, admin_id, req_num)
+                logger.info("Rappel de livraison (%sj) envoyé au staff %s pour la demande #%s", days, admin_id, req_num)
             except Exception as notif_err:
                 logger.warning("Impossible d'envoyer le rappel de livraison à %s : %s", admin_id, notif_err)
 
@@ -248,7 +238,7 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Active le VIP 30 jours ou envoie le rappel payé dès confirmation Stars."""
+    """Active le VIP 30 jours ou valide le rappel payé dès confirmation Stars."""
     payment = update.message.successful_payment
     payload = payment.invoice_payload
     user_id = update.effective_user.id
@@ -268,7 +258,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
             "Vos privilèges exclusifs sont disponibles immédiatement :\n"
             "• 🚀 <b>Demandes illimitées</b> sans aucune restriction de quota\n"
             "• 🎯 <b>Choix de votre référent</b> parmi l'équipe lors de la création\n"
-            "• 💬 <b>Ligne directe</b> avec l'administrateur en charge de vos demandes\n"
+            "• 💬 <b>Ligne directe</b> avec l'opérateur en charge de vos demandes\n"
             "• 🔔 <b>Relance prioritaire hebdomadaire gratuite</b> sur chacune de vos fiches\n\n"
             "Merci pour votre confiance !"
         )
@@ -299,8 +289,8 @@ class TelegramBot:
         self.config = config
         self.request = request
         self.user_handlers = UserHandlers(self.config, db_manager)
+        self.staff_handlers = StaffHandlers(self.config, db_manager)
         self.admin_handlers = AdminHandlers(self.config, db_manager)
-        self.owner_handlers = OwnerHandlers(self.config, db_manager)
 
     async def setup_bot_commands(self, app: Application):
         """Configure les commandes visibles selon les rôles."""
@@ -310,20 +300,30 @@ class TelegramBot:
             BotCommand("demandes", "📋 Mes demandes"),
             BotCommand("stop", "❌ Annuler l'opération"),
         ]
-        admin_commands = user_commands + [
+        staff_commands = user_commands + [
             BotCommand("gestion", "🔧 Gérer les demandes"),
             BotCommand("archives", "📦 Archives"),
             BotCommand("alias", "🏷️ Modifier son alias"),
+        ]
+        admin_commands = staff_commands + [
             BotCommand("power", "🔄 Activer/Désactiver"),
             BotCommand("maintenance", "🛠️ Maintenance"),
         ]
 
         await app.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
 
+        # Commandes pour le staff
+        for staff_id in self.config.get_all_staff():
+            try:
+                await app.bot.set_my_commands(staff_commands, scope=BotCommandScopeChat(chat_id=int(staff_id)))
+            except Exception:
+                pass
+
+        # Commandes pour les admins et owners
         for admin_id in self.config.get_all_admins():
             try:
                 await app.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=int(admin_id)))
-                logger.info("Commandes admin configurées pour %s", admin_id)
+                logger.info("Commandes admin/owner configurées pour %s", admin_id)
             except Exception as exc:
                 logger.warning("Impossible de configurer les commandes pour admin %s : %s", admin_id, exc)
 
@@ -331,164 +331,212 @@ class TelegramBot:
         """Crée les ConversationHandlers du bot."""
         demande_handler = self.user_handlers.formulaire.get_conversation_handler()
 
-        # Modification d'alias
+        # Modification d'alias (géré côté staff)
         modify_alias_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
-                    self.admin_handlers.alias.modifier_alias,
-                    pattern=r"^(modifier_alias|owner_edit_alias_\d+)$",
+                    self.staff_handlers.alias.modifier_alias,
+                    pattern=r"^modifier_alias$",
                 )
             ],
             states={
-                self.admin_handlers.alias.WAITING_ALIAS: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.alias.traiter_nouveau_alias)
+                self.staff_handlers.alias.WAITING_ALIAS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.staff_handlers.alias.traiter_nouveau_alias)
                 ]
             },
             fallbacks=[
-                CallbackQueryHandler(self.admin_handlers.alias.cancel_alias_change, pattern="^cancel_alias_change$"),
-                CommandHandler("stop", self.admin_handlers.alias.cancel_alias_change),
+                CallbackQueryHandler(self.staff_handlers.alias.cancel_alias_change, pattern="^cancel_alias_change$"),
+                CommandHandler("stop", self.staff_handlers.alias.cancel_alias_change),
             ],
             allow_reentry=True,
             per_user=True,
         )
 
-        # Contact Admin -> Propriétaire
+        # Contact Opérateur -> Direction
         contact_owner_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
-                    self.admin_handlers.contact.start_contact_owner,
+                    self.staff_handlers.contact.start_contact_owner,
                     pattern="^contacter_owner$",
                 )
             ],
             states={
-                self.admin_handlers.contact.WAITING_ADMIN_MSG: [
+                self.staff_handlers.contact.WAITING_ADMIN_MSG: [
                     MessageHandler(
                         (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND,
-                        self.admin_handlers.contact.send_to_owner
+                        self.staff_handlers.contact.send_to_owner
                     )
                 ]
             },
             fallbacks=[
-                CallbackQueryHandler(self.admin_handlers.contact.cancel_contact_owner, pattern="^cancel_contact_owner$"),
-                CommandHandler("stop", self.admin_handlers.contact.cancel_contact_owner),
+                CallbackQueryHandler(self.staff_handlers.contact.cancel_contact_owner, pattern="^cancel_contact_owner$"),
+                CommandHandler("stop", self.staff_handlers.contact.cancel_contact_owner),
             ],
             allow_reentry=True,
             per_user=True,
         )
 
-        # Réponse Propriétaire -> Admin
+        # Réponse Direction -> Opérateur
         owner_reply_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
-                    self.admin_handlers.contact.start_owner_reply,
+                    self.staff_handlers.contact.start_owner_reply,
                     pattern=r"^owner_reply_to_\d+$",
                 )
             ],
             states={
-                self.admin_handlers.contact.WAITING_OWNER_REPLY: [
+                self.staff_handlers.contact.WAITING_OWNER_REPLY: [
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND,
-                        self.admin_handlers.contact.send_owner_reply
+                        self.staff_handlers.contact.send_owner_reply
                     )
                 ]
             },
             fallbacks=[
-                CallbackQueryHandler(self.admin_handlers.contact.cancel_owner_reply, pattern="^cancel_owner_reply$"),
-                CommandHandler("stop", self.admin_handlers.contact.cancel_owner_reply),
+                CallbackQueryHandler(self.staff_handlers.contact.cancel_owner_reply, pattern="^cancel_owner_reply$"),
+                CommandHandler("stop", self.staff_handlers.contact.cancel_owner_reply),
             ],
             allow_reentry=True,
             per_user=True,
         )
 
-        # Ajout d'admin par l'Owner
+        # 1. Recrutement Staff (par Admin/Owner)
+        add_staff_conv = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    self.admin_handlers.staff_ajouter,
+                    pattern="^staff_ajouter$",
+                )
+            ],
+            states={
+                self.admin_handlers.WAITING_STAFF_ID: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.traiter_staff_ajouter)
+                ]
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.admin_handlers.cancel_staff_add, pattern="^cancel_staff_add$"),
+                CommandHandler("stop", self.admin_handlers.cancel_staff_add),
+            ],
+            allow_reentry=True,
+            per_user=True,
+        )
+
+        # 2. Révocation Staff (par Admin/Owner)
+        remove_staff_conv = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    self.admin_handlers.staff_supprimer,
+                    pattern="^staff_supprimer$",
+                )
+            ],
+            states={
+                self.admin_handlers.WAITING_STAFF_REMOVE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.traiter_staff_supprimer)
+                ],
+                self.admin_handlers.WAITING_STAFF_CONFIRMATION: [
+                    CallbackQueryHandler(
+                        self.admin_handlers.confirmer_staff_suppression,
+                        pattern="^confirm_staff_remove$",
+                    )
+                ],
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.admin_handlers.cancel_staff_remove, pattern="^cancel_staff_remove$"),
+                CommandHandler("stop", self.admin_handlers.cancel_staff_remove),
+            ],
+            allow_reentry=True,
+            per_user=True,
+        )
+
+        # 3. Nomination Admin/Manager (Owner only)
         add_admin_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
-                    self.owner_handlers.admin_ajouter,
+                    self.admin_handlers.admin_ajouter,
                     pattern="^admin_ajouter$",
                 )
             ],
             states={
-                self.owner_handlers.WAITING_ADMIN_ID: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.owner_handlers.traiter_admin_ajouter)
+                self.admin_handlers.WAITING_ADMIN_ID: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.traiter_admin_ajouter)
                 ]
             },
             fallbacks=[
-                CallbackQueryHandler(self.owner_handlers.cancel_admin_add, pattern="^cancel_admin_add$"),
-                CommandHandler("stop", self.owner_handlers.cancel_admin_add),
+                CallbackQueryHandler(self.admin_handlers.cancel_admin_add, pattern="^cancel_admin_add$"),
+                CommandHandler("stop", self.admin_handlers.cancel_admin_add),
             ],
             allow_reentry=True,
             per_user=True,
         )
 
-        # Révocation d'admin par l'Owner
+        # 4. Révocation Admin (Owner only)
         remove_admin_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
-                    self.owner_handlers.admin_supprimer,
+                    self.admin_handlers.admin_supprimer,
                     pattern="^admin_supprimer$",
                 )
             ],
             states={
-                self.owner_handlers.WAITING_ADMIN_REMOVE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.owner_handlers.traiter_admin_supprimer)
+                self.admin_handlers.WAITING_ADMIN_REMOVE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.traiter_admin_supprimer)
                 ],
-                self.owner_handlers.WAITING_CONFIRMATION: [
+                self.admin_handlers.WAITING_ADMIN_CONFIRMATION: [
                     CallbackQueryHandler(
-                        self.owner_handlers.confirmer_admin_suppression,
+                        self.admin_handlers.confirmer_admin_suppression,
                         pattern="^confirm_admin_remove$",
                     )
                 ],
             },
             fallbacks=[
-                CallbackQueryHandler(self.owner_handlers.cancel_admin_remove, pattern="^cancel_admin_remove$"),
-                CommandHandler("stop", self.owner_handlers.cancel_admin_remove),
+                CallbackQueryHandler(self.admin_handlers.cancel_admin_remove, pattern="^cancel_admin_remove$"),
+                CommandHandler("stop", self.admin_handlers.cancel_admin_remove),
             ],
             allow_reentry=True,
             per_user=True,
         )
 
-        # Promotion VIP par l'Owner
+        # 5. Promotion VIP
         add_vip_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
-                    self.owner_handlers.start_add_vip,
+                    self.admin_handlers.start_add_vip,
                     pattern="^owner_add_vip$",
                 )
             ],
             states={
-                self.owner_handlers.WAITING_VIP_USER: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.owner_handlers.process_vip_target_user)
+                self.admin_handlers.WAITING_VIP_USER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.process_vip_target_user)
                 ],
-                self.owner_handlers.WAITING_VIP_DURATION: [
-                    CallbackQueryHandler(self.owner_handlers.process_vip_duration_choice, pattern=r"^vip_dur_.*$"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.owner_handlers.process_vip_duration_choice),
+                self.admin_handlers.WAITING_VIP_DURATION: [
+                    CallbackQueryHandler(self.admin_handlers.process_vip_duration_choice, pattern=r"^vip_dur_.*$"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.process_vip_duration_choice),
                 ],
             },
             fallbacks=[
-                CallbackQueryHandler(self.owner_handlers.cancel_vip_action, pattern="^cancel_vip_action$"),
-                CommandHandler("stop", self.owner_handlers.cancel_vip_action),
+                CallbackQueryHandler(self.admin_handlers.cancel_vip_action, pattern="^cancel_vip_action$"),
+                CommandHandler("stop", self.admin_handlers.cancel_vip_action),
             ],
             allow_reentry=True,
             per_user=True,
         )
 
-        # Révocation VIP par l'Owner
+        # 6. Révocation VIP
         remove_vip_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
-                    self.owner_handlers.start_remove_vip,
+                    self.admin_handlers.start_remove_vip,
                     pattern="^owner_remove_vip$",
                 )
             ],
             states={
-                self.owner_handlers.WAITING_VIP_REMOVE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.owner_handlers.process_vip_remove_choice)
+                self.admin_handlers.WAITING_VIP_REMOVE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.process_vip_remove_choice)
                 ]
             },
             fallbacks=[
-                CallbackQueryHandler(self.owner_handlers.cancel_vip_action, pattern="^cancel_vip_action$"),
-                CommandHandler("stop", self.owner_handlers.cancel_vip_action),
+                CallbackQueryHandler(self.admin_handlers.cancel_vip_action, pattern="^cancel_vip_action$"),
+                CommandHandler("stop", self.admin_handlers.cancel_vip_action),
             ],
             allow_reentry=True,
             per_user=True,
@@ -499,6 +547,8 @@ class TelegramBot:
             modify_alias_conv,
             contact_owner_conv,
             owner_reply_conv,
+            add_staff_conv,
+            remove_staff_conv,
             add_admin_conv,
             remove_admin_conv,
             add_vip_conv,
@@ -522,55 +572,57 @@ class TelegramBot:
         app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
+        # Commandes textuelles
         app.add_handler(CommandHandler("start", self.user_handlers.start))
         app.add_handler(CommandHandler("demandes", self.user_handlers.voir_demandes))
-        app.add_handler(CommandHandler("toggle_demandes", self.owner_handlers.toggle_demandes))
-        app.add_handler(CommandHandler("maintenance", self.owner_handlers.run_maintenance))
+        app.add_handler(CommandHandler("toggle_demandes", self.admin_handlers.toggle_demandes))
+        app.add_handler(CommandHandler("maintenance", self.admin_handlers.run_maintenance))
 
-        # Aiguillage des actions spécifiques au propriétaire (avec support des délais & archivage)
-        app.add_handler(CallbackQueryHandler(
-            self.owner_handlers.handle_owner_callbacks,
-            pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*)$",
-        ))
-
-        # Aiguillage de toutes les actions d'administration et de gestion des statuts
+        # Aiguillage Gouvernance & Administration (Admin/Owner)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips|gerer_staff|gerer_admins|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*)$",
+        ))
+
+        # Aiguillage Traitement opérationnel des dossiers (Staff)
+        app.add_handler(CallbackQueryHandler(
+            self.staff_handlers.handle_staff_callbacks,
             pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
         ))
 
+        # Menus d'interface et navigation
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_interface_callbacks,
-            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_bot|menu_limits|limit_.*)$",
+            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_limits|limit_.*)$",
         ))
 
+        # Callbacks utilisateurs / clients
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
             pattern=r"^(nav_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*)$",
         ))
 
+        # Réception des messages & médias (formulaires + batch envoi staff)
         app.add_handler(MessageHandler(
             (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & ~filters.COMMAND,
-            self.user_handlers.handle_text_messages,
+            self.handle_incoming_messages,
         ))
 
         # Tâches périodiques en arrière-plan
         if app.job_queue:
-            # 1. Rappels administratifs périodiques
+            # 1. Rappels opérationnels périodiques
             app.job_queue.run_repeating(
                 check_and_send_admin_reminders,
                 interval=3600,
                 first=15,
-                data={"db_manager": self.db_manager},
             )
-            logger.info("⏰ JobQueue activée : vérification des rappels admins toutes les 3600s.")
+            logger.info("⏰ JobQueue activée : vérification des rappels staff toutes les 3600s.")
 
             # 2. Auto-archivage des demandes livrées (délai paramétrable)
             app.job_queue.run_repeating(
                 check_and_auto_archive_demandes,
                 interval=3600,
                 first=30,
-                data={"db_manager": self.db_manager},
             )
             logger.info("📦 JobQueue activée : auto-archivage des demandes livrées toutes les 3600s.")
 
@@ -579,7 +631,6 @@ class TelegramBot:
                 check_and_send_delivery_reminders,
                 interval=21600,
                 first=45,
-                data={"db_manager": self.db_manager},
             )
             logger.info("⏰ JobQueue activée : vérification des rappels de livraison toutes les 6h.")
 
@@ -588,6 +639,15 @@ class TelegramBot:
 
         app.post_init = post_init
         return app
+
+    async def handle_incoming_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Aiguille les messages entrants : priorité à la collecte de médias staff, sinon traitement client."""
+        if context.user_data.get("contact_session"):
+            handled = await self.staff_handlers.handle_collect_admin_media(update, context)
+            if handled:
+                return
+
+        await self.user_handlers.handle_text_messages(update, context)
 
     def run(self):
         """Démarre le bot en mode polling local."""
@@ -606,12 +666,14 @@ if __name__ == "__main__":
         db_manager.create_tables()
         logger.info("✅ Base de données initialisée")
 
-        logger.info("2. Configuration avec cache intelligent...")
+        logger.info("2. Configuration avec cache intelligent multi-rôles...")
         config.set_db_manager(db_manager)
-        logger.info("Admins chargés au démarrage : %s", config.admin_ids)
-
-        if not config.admin_ids:
-            logger.warning("⚠️ Aucun admin trouvé au démarrage !")
+        logger.info(
+            "Rôles chargés : %d owners, %d admins, %d staff",
+            len(config.owner_ids),
+            len(config.admin_ids),
+            len(config.staff_ids),
+        )
 
         logger.info("3. Démarrage de l'application...")
         bot = TelegramBot(config, db_manager)

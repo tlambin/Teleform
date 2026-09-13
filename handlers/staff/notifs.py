@@ -1,4 +1,4 @@
-"""Module de gestion des préférences de notifications, rappels admins et notifications utilisateurs."""
+"""Module de gestion des préférences de notifications, rappels staff et notifications utilisateurs."""
 
 import html
 import logging
@@ -21,8 +21,8 @@ def get_statut_explication(statut: str, is_difficile: bool = False, reussie_subs
 
     if clean == "⏳ En attente":
         if is_difficile:
-            return "Un admin a pris en charge la demande et attend un contact. La cible n'a toujours pas répondu (délai > 1 mois)."
-        return "Un admin a pris en charge la demande. Il attend d'établir un premier contact."
+            return "Un opérateur a pris en charge la demande et attend un contact. La cible n'a toujours pas répondu (délai > 1 mois)."
+        return "Un opérateur a pris en charge la demande. Il attend d'établir un premier contact."
 
     if clean == "🔄 En cours":
         if is_difficile:
@@ -41,12 +41,12 @@ def get_statut_explication(statut: str, is_difficile: bool = False, reussie_subs
 
 
 class NotifsManager:
-    """Gestionnaire des préférences d'alertes admins et des notifications envoyées aux utilisateurs."""
+    """Gestionnaire des préférences d'alertes staff et des notifications envoyées aux utilisateurs."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("NotifsManager initialisé")
+        logger.info("NotifsManager initialisé avec support Staff/Admin")
 
     # ==================== NOTIFICATIONS UTILISATEURS ====================
 
@@ -113,7 +113,7 @@ class NotifsManager:
             logger.error("Erreur inattendue envoi notification à %s : %s", user_id, exc, exc_info=True)
             return False
 
-    # ==================== PRÉFÉRENCES ADMINISTRATEURS ====================
+    # ==================== PRÉFÉRENCES STAFF ====================
 
     async def _render_clean_menu(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
         """Met à jour le message ou supprime la photo existante pour envoyer le menu texte."""
@@ -152,7 +152,7 @@ class NotifsManager:
         """Affiche le panneau principal de réglage des notifications."""
         query = update.callback_query
         user = update.effective_user
-        if not user or not self.config.is_admin(user.id):
+        if not user or not self.config.is_staff(user.id):
             if query:
                 await query.answer("❌ Accès non autorisé.", show_alert=True)
             return
@@ -169,7 +169,7 @@ class NotifsManager:
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
     def _build_menu_content(self, user_id: int, prefs: dict):
-        raw_alias = self.db_manager.get_admin_alias(user_id) or f"Admin_{user_id}"
+        raw_alias = self.db_manager.get_staff_alias(user_id) or f"Staff_{user_id}"
         alias_esc = html.escape(str(raw_alias))
 
         # 1. Alertes nouvelles demandes

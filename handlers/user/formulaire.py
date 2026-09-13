@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class FormulaireManager:
     """Gestionnaire du formulaire guidé de création de demande."""
 
-    ACTIVE_STATUSES = ("📨 Reçue", "⏳ En attente", "🔄 En cours", "⚠️ Difficile")
+    ACTIVE_STATUSES = ("📥 Reçue", "⏳ En attente", "🔄 En cours")
 
     def __init__(self, db_manager, config, account_manager):
         self.db_manager = db_manager
@@ -60,7 +60,7 @@ class FormulaireManager:
         }
 
         self.navigation = NavigationManager(self)
-        logger.info("FormulaireManager initialisé")
+        logger.info("FormulaireManager initialisé avec support Staff/RBAC")
 
     def get_conversation_handler(self):
         """Retourne le ConversationHandler complet du formulaire."""
@@ -617,21 +617,20 @@ class FormulaireManager:
             return self.MONTANT
 
     async def prompt_admin_selection_or_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Si l'utilisateur est VIP, lui propose de choisir son admin référent. Sinon, enregistre."""
+        """Si l'utilisateur est VIP, propose le choix d'un référent Staff. Sinon, enregistre directement."""
         user = update.effective_user
         if not user:
             return ConversationHandler.END
 
         if self.db_manager.is_user_vip(user.id):
-            equipe = self.db_manager.get_available_admins_for_selection()
+            equipe = self.db_manager.get_available_staff()
             kb_rows = []
 
             for member in equipe:
-                role_icon = "👑" if member.get("role") == "Owner" else "🦈"
-                alias = member.get("alias", f"Admin_{member['user_id']}")
+                alias = member.get("alias", f"Staff_{member['user_id']}")
                 kb_rows.append([
                     InlineKeyboardButton(
-                        f"{role_icon} {alias}",
+                        f"🦈 {alias}",
                         callback_data=f"vip_assign_admin_{member['user_id']}"
                     )
                 ])
@@ -651,7 +650,7 @@ class FormulaireManager:
         return ConversationHandler.END
 
     async def handle_vip_admin_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Intercepte le choix de l'administrateur référent par le membre VIP."""
+        """Intercepte le choix de l'opérateur référent par le membre VIP."""
         query = update.callback_query
         if not query or not query.data:
             return self.CHOIX_ADMIN
@@ -682,7 +681,7 @@ class FormulaireManager:
             return
 
         target_admin_id = demande.get("target_admin_id")
-        statut_initial = "🔄 En cours" if target_admin_id else "📨 Reçue"
+        statut_initial = "⏳ En attente" if target_admin_id else "📥 Reçue"
 
         try:
             with self.db_manager.transaction() as cursor:
@@ -698,8 +697,8 @@ class FormulaireManager:
                     INSERT INTO demandes (
                         user_id, prenom, nom, age, localisation, photo_id,
                         instagram, snapchat, details, prioritaire, montant, statut,
-                        admin_en_charge, request_number
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        admin_en_charge, request_number, date_creation, date_modification
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                     """,
                     (
                         int(user_id),
@@ -723,23 +722,26 @@ class FormulaireManager:
                 if target_admin_id:
                     cursor.execute(
                         """
-                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, statut_suivi)
-                        VALUES (%s, %s, NOW(), 'active')
-                        ON DUPLICATE KEY UPDATE statut_suivi = 'active'
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                        VALUES (%s, %s, NOW(), NOW(), 'active')
+                        ON DUPLICATE KEY UPDATE 
+                            admin_id = VALUES(admin_id),
+                            derniere_action = NOW(),
+                            statut_suivi = 'active'
                         """,
                         (demande_id, target_admin_id)
                     )
 
             context.user_data.pop("demande", None)
-            logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s (Assigné : %s)", next_num, demande_id, user_id, target_admin_id)
+            logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s (Assigné: %s)", next_num, demande_id, user_id, target_admin_id)
 
             type_txt = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
             montant_txt = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
 
             referent_txt = ""
             if target_admin_id:
-                alias = self.db_manager.get_admin_alias(target_admin_id)
-                referent_txt = f"\n👨‍💼 <b>Référent assigné :</b> {html.escape(alias or 'Admin')}"
+                alias = self.db_manager.get_staff_alias(target_admin_id)
+                referent_txt = f"\n👨‍💼 <b>Référent assigné :</b> {html.escape(alias or 'Opérateur')}"
 
             prenom_esc = html.escape(demande.get("prenom") or "")
             nom_esc = html.escape(demande.get("nom") or "")
@@ -770,7 +772,7 @@ class FormulaireManager:
     async def _send_targeted_admin_alert(
         self, context: ContextTypes.DEFAULT_TYPE, admin_id: int, demande_id: int, req_num: int, nom_complet: str, demande: dict
     ):
-        """Envoie une alerte directe à l'administrateur choisi par le client VIP."""
+        """Envoie une alerte directe à l'opérateur choisi par le client VIP."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -807,12 +809,12 @@ class FormulaireManager:
                     reply_markup=alert_kb
                 )
         except Exception as err:
-            logger.warning("Impossible de notifier l'admin assigné %s : %s", admin_id, err)
+            logger.warning("Impossible de notifier l'opérateur assigné %s : %s", admin_id, err)
 
     async def _broadcast_new_demande_alert(
         self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict
     ):
-        """Avertit l'équipe selon les préférences de notification."""
+        """Avertit l'équipe Staff selon les préférences de notification."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -829,13 +831,16 @@ class FormulaireManager:
             [InlineKeyboardButton("📮 Voir les disponibles", callback_data="demandes_disponibles")]
         ])
 
-        for admin_id in self.config.get_all_admins():
+        # Envoi à l'ensemble du Staff opérationnel (et co-gérants)
+        staff_destinataires = self.config.get_all_staff() or self.config.get_all_admins()
+
+        for staff_id in staff_destinataires:
             try:
-                aid = int(admin_id)
-                if self.db_manager.is_admin_paused(aid):
+                sid = int(staff_id)
+                if self.db_manager.is_staff_paused(sid):
                     continue
 
-                prefs = self.db_manager.get_admin_preferences(aid)
+                prefs = self.db_manager.get_admin_preferences(sid)
                 notif_mode = prefs.get("notif_new_mode", "sound")
 
                 if notif_mode == "off":
@@ -845,7 +850,7 @@ class FormulaireManager:
                 photo_id = demande.get("photo_id")
                 if photo_id:
                     await context.bot.send_photo(
-                        chat_id=aid,
+                        chat_id=sid,
                         photo=photo_id,
                         caption=alert_text,
                         parse_mode="HTML",
@@ -854,11 +859,11 @@ class FormulaireManager:
                     )
                 else:
                     await context.bot.send_message(
-                        chat_id=aid,
+                        chat_id=sid,
                         text=alert_text,
                         parse_mode="HTML",
                         reply_markup=alert_kb,
                         disable_notification=is_silent
                     )
             except Exception as e:
-                logger.warning("Impossible d'envoyer l'alerte nouvelle demande à %s : %s", admin_id, e)
+                logger.warning("Impossible d'envoyer l'alerte nouvelle demande à %s : %s", staff_id, e)

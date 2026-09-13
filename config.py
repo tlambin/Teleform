@@ -1,4 +1,4 @@
-"""Configuration centralisée avec synchronisation base de données et cache."""
+"""Configuration centralisée avec synchronisation base de données et cache multi-rôles (Multi-Owner supporté)."""
 
 import logging
 import os
@@ -48,11 +48,13 @@ class Config:
         self.TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 
     def _setup_cache_system(self):
-        """Initialise les structures de cache en mémoire."""
+        """Initialise les structures de cache en mémoire pour owners, admins et staff."""
+        self.owner_ids = {self.OWNER_ID}  # Contient au minimum le propriétaire racine (.env)
         self.admin_ids = set()
-        self._admin_cache_loaded = False
+        self.staff_ids = set()
+        self._cache_loaded = False
         self._db_manager = None
-        self._admin_cache_lock = threading.Lock()
+        self._cache_lock = threading.Lock()
 
     def _setup_database_config(self):
         """Configuration de connexion pour DatabaseManager."""
@@ -76,9 +78,9 @@ class Config:
         os.makedirs(self.LOG_DIR, exist_ok=True)
 
     def set_db_manager(self, db_manager):
-        """Associe le gestionnaire de base de données et précharge le cache."""
+        """Associe le gestionnaire de base de données et précharge les caches."""
         self._db_manager = db_manager
-        self.load_admins(db_manager)
+        self.load_roles(db_manager)
         self._load_owner_alias_if_needed()
 
     def _load_owner_alias_if_needed(self):
@@ -94,103 +96,189 @@ class Config:
         except Exception as e:
             logger.error("Erreur chargement owner alias : %s", e)
 
-    def load_admins(self, db_manager=None):
-        """Charge la liste des administrateurs depuis MySQL."""
+    def load_roles(self, db_manager=None):
+        """Charge simultanément les owners, admins et le staff depuis MySQL."""
         mgr = db_manager or self._db_manager
         if not mgr:
             return
 
-        with self._admin_cache_lock:
+        with self._cache_lock:
             try:
                 with mgr.get_cursor() as cursor:
-                    cursor.execute("SELECT user_id FROM admins")
-                    rows = cursor.fetchall()
-
+                    # 1. Chargement des admins et détection des co-gérants (owners)
+                    cursor.execute("SELECT user_id, is_owner FROM admins")
+                    admin_rows = cursor.fetchall()
+                    
                     new_admins = set()
-                    for row in rows:
+                    new_owners = {self.OWNER_ID}  # On inclut toujours le propriétaire racine
+                    
+                    for row in admin_rows:
                         try:
-                            new_admins.add(int(row["user_id"]))
+                            uid = int(row["user_id"])
+                            new_admins.add(uid)
+                            if row.get("is_owner"):
+                                new_owners.add(uid)
+                        except (ValueError, TypeError):
+                            continue
+
+                    # 2. Chargement du staff
+                    cursor.execute("SELECT user_id FROM staff")
+                    staff_rows = cursor.fetchall()
+                    new_staff = set()
+                    for row in staff_rows:
+                        try:
+                            new_staff.add(int(row["user_id"]))
                         except (ValueError, TypeError):
                             continue
 
                     self.admin_ids = new_admins
-                    self._admin_cache_loaded = True
-                    logger.info("Cache admin rechargé : %d administrateurs", len(self.admin_ids))
+                    self.owner_ids = new_owners
+                    self.staff_ids = new_staff
+                    self._cache_loaded = True
+                    logger.info(
+                        "Cache rôles chargé : %d owners, %d admins (managers) et %d staff (opérateurs)",
+                        len(self.owner_ids),
+                        len(self.admin_ids),
+                        len(self.staff_ids),
+                    )
 
             except Exception as e:
-                logger.error("Erreur critique load_admins : %s", e)
+                logger.error("Erreur critique load_roles : %s", e)
                 self.admin_ids = set()
-                self._admin_cache_loaded = False
+                self.owner_ids = {self.OWNER_ID}
+                self.staff_ids = set()
+                self._cache_loaded = False
 
-    def reload_admins(self):
-        """Recharge les administrateurs à chaud."""
-        self.load_admins(self._db_manager)
+    # Alias rétrocompatible
+    load_admins = load_roles
 
-    def is_owner(self, user_id):
-        """Vérifie si l'utilisateur est le propriétaire."""
+    def reload_roles(self):
+        """Recharge les rôles à chaud."""
+        self.load_roles(self._db_manager)
+
+    reload_admins = reload_roles
+
+    # ==================== VÉRIFICATIONS DES RÔLES ====================
+
+    def is_owner(self, user_id) -> bool:
+        """Vérifie si l'utilisateur est le Super-Admin suprême (Owner racine ou co-gérant)."""
         try:
-            return int(user_id) == self.OWNER_ID
+            uid = int(user_id)
+            if uid == self.OWNER_ID:
+                return True
+            return uid in self.owner_ids
         except (ValueError, TypeError):
             return False
 
-    def is_admin(self, user_id, secure_mode=False):
-        """Vérifie si l'utilisateur possède les privilèges d'administration."""
+    def is_admin(self, user_id, secure_mode=False) -> bool:
+        """Vérifie si l'utilisateur est administrateur (Manager ou Owner)."""
         try:
-            user_id_int = int(user_id)
+            uid = int(user_id)
         except (ValueError, TypeError):
             return False
 
-        if self.is_owner(user_id_int):
+        if self.is_owner(uid):
             return True
 
-        if not self._admin_cache_loaded and self._db_manager:
-            self.load_admins(self._db_manager)
+        if not self._cache_loaded and self._db_manager:
+            self.load_roles(self._db_manager)
 
         if secure_mode or len(self.admin_ids) == 0:
-            return self._verify_admin_hybrid(user_id_int)
+            if uid in self.admin_ids:
+                return True
+            if self._db_manager:
+                try:
+                    with self._db_manager.get_cursor() as cursor:
+                        cursor.execute("SELECT user_id FROM admins WHERE user_id = %s", (uid,))
+                        if cursor.fetchone() is not None:
+                            self.load_roles(self._db_manager)
+                            return True
+                except Exception as e:
+                    logger.error("Erreur vérification admin DB : %s", e)
+            return False
 
-        return user_id_int in self.admin_ids
+        return uid in self.admin_ids
 
-    def _verify_admin_hybrid(self, user_id_int: int):
-        """Contrôle en cache puis fallback direct en base."""
-        if user_id_int in self.admin_ids:
+    def is_staff(self, user_id, secure_mode=False) -> bool:
+        """Vérifie si l'utilisateur peut traiter des demandes (Staff, Admin ou Owner)."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        # Les admins et les owners ont automatiquement accès aux prérogatives du staff
+        if self.is_admin(uid, secure_mode=secure_mode):
             return True
 
-        if self._db_manager:
-            try:
-                with self._db_manager.get_cursor() as cursor:
-                    cursor.execute("SELECT user_id FROM admins WHERE user_id = %s", (user_id_int,))
-                    if cursor.fetchone() is not None:
-                        self.load_admins(self._db_manager)
-                        return True
-            except Exception as e:
-                logger.error("Erreur vérification admin DB : %s", e)
+        if not self._cache_loaded and self._db_manager:
+            self.load_roles(self._db_manager)
 
-        return False
+        if secure_mode or len(self.staff_ids) == 0:
+            if uid in self.staff_ids:
+                return True
+            if self._db_manager:
+                try:
+                    with self._db_manager.get_cursor() as cursor:
+                        cursor.execute("SELECT user_id FROM staff WHERE user_id = %s", (uid,))
+                        if cursor.fetchone() is not None:
+                            self.load_roles(self._db_manager)
+                            return True
+                except Exception as e:
+                    logger.error("Erreur vérification staff DB : %s", e)
+            return False
+
+        return uid in self.staff_ids
+
+    # ==================== LISTES D'IDENTIFIANTS ====================
 
     def get_all_admins(self):
-        """Retourne l'ensemble des IDs autorisés (Owner + Admins)."""
-        all_admins = {self.OWNER_ID}
+        """Retourne l'ensemble des IDs administrateurs (Owners + Managers)."""
+        all_admins = set(self.owner_ids)
         all_admins.update(self.admin_ids)
         return all_admins
 
+    def get_all_staff(self):
+        """Retourne l'ensemble des membres habilités à traiter les demandes."""
+        all_staff = set(self.owner_ids)
+        all_staff.update(self.admin_ids)
+        all_staff.update(self.staff_ids)
+        return all_staff
+
+    # ==================== MUTATEURS DE CACHE ====================
+
     def add_admin(self, user_id):
-        """Ajoute un admin au cache local."""
-        with self._admin_cache_lock:
+        """Ajoute un administrateur au cache local."""
+        with self._cache_lock:
             try:
                 self.admin_ids.add(int(user_id))
             except (ValueError, TypeError):
                 pass
 
     def remove_admin(self, user_id):
-        """Retire un admin du cache local."""
-        with self._admin_cache_lock:
+        """Retire un administrateur du cache local."""
+        with self._cache_lock:
             try:
                 self.admin_ids.discard(int(user_id))
             except (ValueError, TypeError):
                 pass
 
-    # ========== CONTRÔLE DES DEMANDES (Clé unique "bot_active") ==========
+    def add_staff(self, user_id):
+        """Ajoute un employé au cache local."""
+        with self._cache_lock:
+            try:
+                self.staff_ids.add(int(user_id))
+            except (ValueError, TypeError):
+                pass
+
+    def remove_staff(self, user_id):
+        """Retire un employé du cache local."""
+        with self._cache_lock:
+            try:
+                self.staff_ids.discard(int(user_id))
+            except (ValueError, TypeError):
+                pass
+
+    # ==================== CONTRÔLE DU SERVICE ====================
 
     def enable_demandes(self):
         """Active l'acceptation des demandes en base."""
@@ -218,7 +306,7 @@ class Config:
             return val in ("true", "1", "yes")
         return True
 
-    # ========== GESTION DES LIMITES & QUOTAS ==========
+    # ==================== GESTION DES LIMITES & QUOTAS ====================
 
     def get_max_total_demandes(self) -> int:
         """Retourne le plafond global (0 = illimité)."""

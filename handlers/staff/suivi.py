@@ -1,4 +1,4 @@
-"""Module de gestion, filtrage et tri dynamique des demandes suivies par les administrateurs."""
+"""Module de gestion, filtrage et tri dynamique des demandes suivies par les opérateurs (Staff)."""
 
 from datetime import datetime
 import html
@@ -20,7 +20,7 @@ class SuiviManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("SuiviManager initialisé")
+        logger.info("SuiviManager initialisé avec support Staff/Admin")
 
     def _get_sort_settings(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les réglages de tri et filtre de suivi."""
@@ -33,28 +33,29 @@ class SuiviManager:
         return context.user_data["suivi_settings"]
 
     def _format_archive_countdown(self, demande: dict) -> str:
-        """Calcule et renvoie la mention visuelle du compte à rebours d'archivage."""
+        """Calcule et renvoie la mention visuelle du compte à rebours d'archivage dynamique."""
         if demande.get("statut") != "✅ Réussie" or demande.get("reussie_substatus") != "terminee":
             return ""
 
         if not demande.get("has_delivered_content"):
             return "⏳ <b>Clôture :</b> <i>En attente de transmission du contenu</i>"
 
+        hours_setting = self.db_manager.get_auto_archive_hours()
         date_liv = demande.get("date_livraison")
         if not date_liv:
-            return "📦 <b>Auto-archivage :</b> <i>programmé sous 72h</i>"
+            return f"📦 <b>Auto-archivage :</b> <i>programmé sous {hours_setting}h</i>"
 
         try:
             if isinstance(date_liv, str):
                 date_liv = datetime.strptime(date_liv[:19], "%Y-%m-%d %H:%M:%S")
             diff_hours = (datetime.now() - date_liv).total_seconds() / 3600.0
-            hours_left = max(0, int(72 - diff_hours))
+            hours_left = max(0, int(hours_setting - diff_hours))
 
             if hours_left > 0:
                 return f"📦 <b>Auto-archivage :</b> dans ~{hours_left}h (Contenu livré)"
             return "📦 <b>Auto-archivage :</b> <i>imminent...</i>"
         except Exception:
-            return "📦 <b>Auto-archivage :</b> <i>programmé sous 72h</i>"
+            return f"📦 <b>Auto-archivage :</b> <i>programmé sous {hours_setting}h</i>"
 
     async def show_demandes_suivies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Point d'entrée principal."""
@@ -429,7 +430,7 @@ class SuiviManager:
             motif = html.escape(str(demande["raison_abandon"]))
             lines.append(
                 f"\n⚠️ <b>HISTORIQUE - TENTATIVE PRÉCÉDENTE :</b>\n"
-                f"• Ancien admin : <b>{anc_alias}</b>\n"
+                f"• Ancien opérateur : <b>{anc_alias}</b>\n"
                 f"• Motif d'abandon : <i>« {motif} »</i>"
             )
 
@@ -488,18 +489,16 @@ class SuiviManager:
             ]
         ]
 
-        # Bouton d'action d'archivage conditionnel sur le suivi
         if is_reussie and sub_status == "terminee":
             if has_delivered:
                 buttons.insert(1, [
-                    InlineKeyboardButton("📦 Archiver le dossier (ou auto 72h)", callback_data=f"status_archive_now_{demande_id}")
+                    InlineKeyboardButton("📦 Archiver le dossier", callback_data=f"status_archive_now_{demande_id}")
                 ])
             else:
                 buttons.insert(1, [
                     InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
                 ])
 
-        # Pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"suivi_prev_{page}"))

@@ -1,16 +1,13 @@
-# handlers/admin/__init__.py
-"""Module administration"""
+"""Package des gestionnaires d'administration et de gouvernance."""
 
-from .suivi import SuiviManager
-from .statuts import StatutsManager
-from .photos import PhotosManager
-from .dispo import DispoManager
-from .alias import AliasManager
+from .bot import BotManager
+from .config import ConfigManager
+from .staff import StaffManager
+from .stats import StatsManager
 
 __all__ = [
-    'SuiviManager',
-    'StatutsManager',
-    'PhotosManager',
-    'DispoManager',
-    'AliasManager'
+    "BotManager",
+    "ConfigManager",
+    "StaffManager",
+    "StatsManager",
 ]

@@ -1,4 +1,4 @@
-"""Module de gestion et de mise à jour des statuts des demandes par les administrateurs."""
+"""Module de gestion et de mise à jour des statuts des demandes par les opérateurs (Staff)."""
 
 import html
 import logging
@@ -16,7 +16,7 @@ class StatutsManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("StatutsManager initialisé")
+        logger.info("StatutsManager initialisé avec support Staff/Admin")
 
     async def show_status_change_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Affiche le panneau principal de paramétrage du statut avec interrupteurs et sous-options."""
@@ -24,8 +24,8 @@ class StatutsManager:
         if not query or not update.effective_user:
             return
 
-        if not self.config.is_admin(update.effective_user.id):
-            await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
+        if not self.config.is_staff(update.effective_user.id):
+            await query.answer("❌ Action réservée aux membres de l'équipe (Staff).", show_alert=True)
             return
 
         try:
@@ -134,9 +134,9 @@ class StatutsManager:
         if not query or not query.data or not update.effective_user:
             return
 
-        admin_id = update.effective_user.id
-        if not self.config.is_admin(admin_id):
-            await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
+        staff_id = update.effective_user.id
+        if not self.config.is_staff(staff_id):
+            await query.answer("❌ Action réservée aux membres de l'équipe (Staff).", show_alert=True)
             return
 
         data = query.data
@@ -144,7 +144,7 @@ class StatutsManager:
             # 1. Demande d'abandon
             if data.startswith("status_prompt_abandon_"):
                 demande_id = int(data.replace("status_prompt_abandon_", ""))
-                await self._initiate_abandon_flow(query, context, demande_id, admin_id)
+                await self._initiate_abandon_flow(query, context, demande_id, staff_id)
                 return
 
             # 2. Sous-options Réussie
@@ -161,7 +161,7 @@ class StatutsManager:
                 await self._apply_status_change(query, context, demande_id, "✅ Réussie", reussie_substatus=sub_type)
                 return
 
-            # 4. Archivage immédiat validé par l'admin
+            # 4. Archivage immédiat validé par le staff
             if data.startswith("status_archive_now_"):
                 demande_id = int(data.replace("status_archive_now_", ""))
                 await self._archive_demande_now(query, context, demande_id)
@@ -174,7 +174,6 @@ class StatutsManager:
                 state_label = "activée ⚠️" if new_diff_state else "désactivée 🟢"
                 await query.answer(f"Option Difficile {state_label} !", show_alert=False)
 
-                # Récupération et notification de la mise à jour de difficulté
                 with self.db_manager.get_cursor() as cursor:
                     cursor.execute(
                         "SELECT id, request_number, user_id, prenom, statut, is_difficile, reussie_substatus FROM demandes WHERE id = %s",
@@ -183,7 +182,7 @@ class StatutsManager:
                     demande = cursor.fetchone()
 
                 if demande:
-                    admin_alias = self.db_manager.get_admin_alias(admin_id)
+                    staff_alias = self.db_manager.get_staff_alias(staff_id)
                     current_status = demande["statut"]
                     await self.notifs_manager.send_status_update_notification(
                         context=context,
@@ -195,7 +194,7 @@ class StatutsManager:
                         new_status=current_status,
                         is_difficile=new_diff_state,
                         reussie_substatus=demande.get("reussie_substatus"),
-                        admin_alias=admin_alias,
+                        admin_alias=staff_alias,
                     )
 
                 await self.show_status_change_menu(update, context, demande_id)
@@ -227,9 +226,9 @@ class StatutsManager:
         nouveau_statut: str,
         reussie_substatus: str = None
     ):
-        """Met à jour le statut, actualise les suivis, alerte le demandeur et informe l'admin."""
-        admin_id = query.from_user.id
-        admin_alias = self.db_manager.get_admin_alias(admin_id)
+        """Met à jour le statut, actualise les suivis, alerte le demandeur et informe le membre."""
+        staff_id = query.from_user.id
+        staff_alias = self.db_manager.get_staff_alias(staff_id)
 
         with self.db_manager.get_cursor() as cursor:
             cursor.execute(
@@ -267,7 +266,7 @@ class StatutsManager:
                         derniere_action = NOW(),
                         statut_suivi = 'active'
                     """,
-                    (demande_id, admin_id)
+                    (demande_id, staff_id)
                 )
 
         # Notification explicative au demandeur
@@ -282,10 +281,9 @@ class StatutsManager:
             new_status=nouveau_statut,
             is_difficile=new_diff,
             reussie_substatus=reussie_substatus,
-            admin_alias=admin_alias,
+            admin_alias=staff_alias,
         )
 
-        # Rechargement des données fraîches pour l'affichage fiche
         with self.db_manager.get_cursor() as cursor:
             cursor.execute("SELECT * FROM demandes WHERE id = %s", (demande_id,))
             demande_fresh = cursor.fetchone()
@@ -296,7 +294,6 @@ class StatutsManager:
         else:
             await self._update_existing_text_message(query, demande_fresh)
 
-        # Alertes et rappels de livraison pour l'administrateur
         req_num = html.escape(str(demande.get("request_number", demande_id)))
         prenom_esc = html.escape(str(demande.get("prenom") or "la cible"))
         has_delivered = bool(demande_fresh.get("has_delivered_content", False))
@@ -310,7 +307,7 @@ class StatutsManager:
             remind_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💬 Transmettre le contenu obtenu", callback_data=f"contacter_{demande_id}")]
             ])
-            await context.bot.send_message(chat_id=admin_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
+            await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
 
         elif nouveau_statut == "✅ Réussie" and reussie_substatus == "terminee":
             if not has_delivered:
@@ -323,7 +320,7 @@ class StatutsManager:
                 remind_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("💬 Transmettre le contenu maintenant", callback_data=f"contacter_{demande_id}")]
                 ])
-                await context.bot.send_message(chat_id=admin_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
+                await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
             else:
                 remind_text = (
                     f"📦 <b>Dossier #{req_num} prêt pour l'archivage</b>\n\n"
@@ -333,7 +330,7 @@ class StatutsManager:
                 remind_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("📦 Archiver le dossier maintenant", callback_data=f"status_archive_now_{demande_id}")]
                 ])
-                await context.bot.send_message(chat_id=admin_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
+                await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
 
     async def _archive_demande_now(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Archive immédiatement une demande terminée ayant livré son contenu."""
@@ -372,7 +369,7 @@ class StatutsManager:
             await query.answer("❌ Erreur lors de l'archivage.", show_alert=True)
 
     async def _initiate_abandon_flow(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int, admin_id: int):
-        """Initialise la demande du motif d'abandon auprès de l'administrateur."""
+        """Initialise la demande du motif d'abandon auprès de l'opérateur."""
         context.user_data["waiting_abandon_reason"] = {"demande_id": demande_id}
 
         with self.db_manager.get_cursor() as cursor:
@@ -384,7 +381,7 @@ class StatutsManager:
             f"⚠️ <b>Abandon de la demande #{req_num}</b>\n\n"
             "Veuillez taper au clavier la <b>raison de l'abandon</b>.\n\n"
             "<i>Ce message sera transmis au demandeur pour qu'il comprenne la situation "
-            "et choisisse soit de remettre la demande en disponible (pour un autre admin), "
+            "et choisisse soit de remettre la demande en disponible (pour un autre membre), "
             "soit de l'abandonner définitivement (ce qui libère son quota).</i>"
         )
         cancel_kb = InlineKeyboardMarkup([[
@@ -408,9 +405,9 @@ class StatutsManager:
 
         demande_id = abandon_data["demande_id"]
         raison = update.message.text.strip()
-        admin_id = update.effective_user.id
-        admin_alias = self.db_manager.get_admin_alias(admin_id)
-        admin_alias_esc = html.escape(str(admin_alias))
+        staff_id = update.effective_user.id
+        staff_alias = self.db_manager.get_staff_alias(staff_id)
+        staff_alias_esc = html.escape(str(staff_alias))
         raison_esc = html.escape(raison)
 
         try:
@@ -432,11 +429,11 @@ class StatutsManager:
                 prev_raison = demande.get("raison_abandon")
 
                 if prev_alias and prev_raison:
-                    nouvel_alias_str = f"{prev_alias}, {admin_alias}"
-                    nouvelle_raison_str = f"{prev_raison}\n• <b>{admin_alias_esc} :</b> « <i>{raison_esc}</i> »"
+                    nouvel_alias_str = f"{prev_alias}, {staff_alias}"
+                    nouvelle_raison_str = f"{prev_raison}\n• <b>{staff_alias_esc} :</b> « <i>{raison_esc}</i> »"
                 else:
-                    nouvel_alias_str = admin_alias
-                    nouvelle_raison_str = f"• <b>{admin_alias_esc} :</b> « <i>{raison_esc}</i> »"
+                    nouvel_alias_str = staff_alias
+                    nouvelle_raison_str = f"• <b>{staff_alias_esc} :</b> « <i>{raison_esc}</i> »"
 
                 cursor.execute(
                     """
@@ -450,7 +447,7 @@ class StatutsManager:
                         date_modification = NOW() 
                     WHERE id = %s
                     """,
-                    (admin_id, nouvel_alias_str, nouvelle_raison_str, demande_id)
+                    (staff_id, nouvel_alias_str, nouvelle_raison_str, demande_id)
                 )
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
 
@@ -464,11 +461,11 @@ class StatutsManager:
 
             msg_demandeur = (
                 f"⚠️ <b>Information sur votre demande #{req_num}</b>\n\n"
-                f"L'administrateur <b>{admin_alias_esc}</b> n'est plus en mesure de traiter votre demande.\n\n"
+                f"L'opérateur <b>{staff_alias_esc}</b> n'est plus en mesure de traiter votre demande.\n\n"
                 f"📝 <b>Motif communiqué :</b>\n"
                 f"« <i>{raison_esc}</i> »\n\n"
                 "Que souhaitez-vous faire ?\n"
-                "• <b>Remettre en disponible :</b> un autre administrateur pourra la prendre en charge.\n"
+                "• <b>Remettre en disponible :</b> un autre membre pourra la prendre en charge.\n"
                 "• <b>Laisser tomber :</b> la demande sera archivée et votre quota sera libéré immédiatement."
             )
 
@@ -513,7 +510,6 @@ class StatutsManager:
             ]
         ]
 
-        # Insertion du bouton d'archivage ou rappel si la demande est terminée
         if is_reussie and sub_status == "terminee":
             if has_delivered:
                 keyboard.insert(1, [

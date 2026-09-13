@@ -25,15 +25,15 @@ class UserHandlers:
         self.formulaire = FormulaireManager(db_manager, config, self.compte)
         self.demande = DemandeManager(db_manager, config, self.compte)
         self.edition = EditionManager(db_manager, config)
-        self._admin_handlers = None
+        self._staff_handlers = None
 
     @property
-    def admin_handlers(self):
-        """Lazy-loading du gestionnaire admin pour éviter les instanciations circulaires."""
-        if self._admin_handlers is None:
-            from handlers.admin_handlers import AdminHandlers
-            self._admin_handlers = AdminHandlers(self.config, self.db_manager)
-        return self._admin_handlers
+    def staff_handlers(self):
+        """Lazy-loading du gestionnaire opérationnel Staff pour éviter les cycles d'importation."""
+        if self._staff_handlers is None:
+            from handlers.staff_handlers import StaffHandlers
+            self._staff_handlers = StaffHandlers(self.config, self.db_manager)
+        return self._staff_handlers
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Point d'entrée commande /start."""
@@ -148,8 +148,8 @@ class UserHandlers:
                     row = cursor.fetchone()
 
                 admin_id = row.get("admin_en_charge") if row else None
-                if admin_id and self.db_manager.is_admin_paused(admin_id):
-                    raw_alias = self.db_manager.get_admin_alias(admin_id)
+                if admin_id and self.db_manager.is_staff_paused(admin_id):
+                    raw_alias = self.db_manager.get_staff_alias(admin_id)
                     await query.answer(
                         f"⏸️ Votre référent ({raw_alias}) est actuellement en pause. Relance impossible pour le moment.",
                         show_alert=True
@@ -172,8 +172,8 @@ class UserHandlers:
                     row = cursor.fetchone()
 
                 admin_id = row.get("admin_en_charge") if row else None
-                if admin_id and self.db_manager.is_admin_paused(admin_id):
-                    raw_alias = self.db_manager.get_admin_alias(admin_id)
+                if admin_id and self.db_manager.is_staff_paused(admin_id):
+                    raw_alias = self.db_manager.get_staff_alias(admin_id)
                     await query.answer(
                         f"⏸️ Votre référent ({raw_alias}) est actuellement en pause. Relance impossible pour le moment.",
                         show_alert=True
@@ -208,10 +208,10 @@ class UserHandlers:
 
                 admin_id = d_row["admin_en_charge"]
 
-                if self.db_manager.is_admin_paused(admin_id):
-                    raw_alias = self.db_manager.get_admin_alias(admin_id)
+                if self.db_manager.is_staff_paused(admin_id):
+                    raw_alias = self.db_manager.get_staff_alias(admin_id)
                     await query.answer(
-                        f"⏸️ Votre référent ({raw_alias}) est actuellement en pause / indisponible. Réessayez ultérieurement.",
+                        f"⏸️ Votre référent ({raw_alias}) est actuellement en pause. Réessayez ultérieurement.",
                         show_alert=True
                     )
                     return
@@ -243,7 +243,7 @@ class UserHandlers:
                         cursor.execute(
                             """
                             UPDATE demandes
-                            SET statut = '📨 Reçue', admin_en_charge = NULL, date_modification = NOW()
+                            SET statut = '📥 Reçue', admin_en_charge = NULL, date_modification = NOW()
                             WHERE id = %s AND user_id = %s
                             """,
                             (demande_id, user_id)
@@ -251,7 +251,7 @@ class UserHandlers:
 
                     await query.edit_message_text(
                         "🔄 <b>Votre demande a été remise en file d'attente !</b>\n\n"
-                        "Elle est de nouveau disponible et visible par toute l'équipe dans les demandes disponibles.",
+                        "Elle est de nouveau disponible et visible par toute l'équipe opérationnelle.",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[
                             InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes")
@@ -360,7 +360,7 @@ class UserHandlers:
     async def _dispatch_admin_reminder(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int, is_paid_boost: bool = False
     ):
-        """Transmet la notification de rappel à l'administrateur en charge."""
+        """Transmet la notification de rappel à l'opérateur en charge."""
         with self.db_manager.get_cursor() as cursor:
             cursor.execute(
                 "SELECT request_number, prenom, user_id, admin_en_charge FROM demandes WHERE id = %s",
@@ -422,19 +422,20 @@ class UserHandlers:
 
         owner_actions = {
             "gerer_admins", "admin_ajouter", "admin_supprimer",
+            "gerer_staff", "staff_ajouter", "staff_supprimer",
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance",
             "menu_limits", "gerer_vips", "owner_add_vip", "owner_remove_vip"
         }
-        if (data in owner_actions or data.startswith("limit_")) and not self.config.is_owner(user_id):
-            await query.answer("❌ Accès réservé au propriétaire.", show_alert=True)
+        if (data in owner_actions or data.startswith("limit_")) and not self.config.is_admin(user_id):
+            await query.answer("❌ Accès réservé aux administrateurs.", show_alert=True)
             return
 
-        admin_actions = {
+        staff_actions = {
             "gerer_demandes", "demandes_disponibles", "demandes_suivies",
-            "parametres", "modifier_alias"
+            "parametres", "modifier_alias", "menu_notifs"
         }
-        if data in admin_actions and not self.config.is_admin(user_id):
-            await query.answer("❌ Accès administrateur requis.", show_alert=True)
+        if data in staff_actions and not self.config.is_staff(user_id):
+            await query.answer("❌ Accès réservé à l'équipe opérationnelle.", show_alert=True)
             return
 
         if data == "voir_demandes":
@@ -450,7 +451,7 @@ class UserHandlers:
                 await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
             return
 
-        # Gestion synchrone des boutons de quotas (RAM + MySQL)
+        # Gestion synchrone des quotas (RAM + MySQL)
         if data.startswith("limit_"):
             tot = self.config.get_max_total_demandes()
             usr = self.config.get_max_demandes_per_user()
@@ -555,27 +556,27 @@ class UserHandlers:
                     await update.message.reply_text("❌ Veuillez saisir un nombre entier positif (ex : 0, 5, 10).")
                     return
 
-        # Saisie de la raison d'abandon par un admin
+        # Saisie de la raison d'abandon par un opérateur
         if update.message.text and context.user_data and context.user_data.get("waiting_abandon_reason"):
-            await self.admin_handlers.statuts.process_abandon_reason(update, context)
+            await self.staff_handlers.statuts.process_abandon_reason(update, context)
             return
 
         # Recherche dynamique dans les demandes disponibles
         if update.message.text and context.user_data and context.user_data.get("waiting_dispo_search"):
-            await self.admin_handlers.dispo.handle_search_text_input(update, context)
+            await self.staff_handlers.dispo.handle_search_text_input(update, context)
             return
 
         # Recherche dynamique dans les demandes suivies
         if update.message.text and context.user_data and context.user_data.get("waiting_suivi_search"):
-            await self.admin_handlers.suivi.handle_search_text_input(update, context)
+            await self.staff_handlers.suivi.handle_search_text_input(update, context)
             return
 
-        # Collecte des fichiers/messages de l'Admin en cours d'envoi
+        # Collecte des fichiers/messages de l'opérateur en cours d'envoi
         if context.user_data and context.user_data.get("contact_session"):
-            if await self.admin_handlers.handle_collect_admin_media(update, context):
+            if await self.staff_handlers.handle_collect_admin_media(update, context):
                 return
 
-        # Réponse du Demandeur vers l'Admin
+        # Réponse du Demandeur vers l'opérateur
         if context.user_data and context.user_data.get("replying_to_admin"):
             await self._handle_user_reply_relay(update, context)
             return
@@ -589,7 +590,7 @@ class UserHandlers:
         await self.compte.handle_text_messages(update, context)
 
     async def _handle_user_reply_relay(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Transmet la réponse de l'utilisateur vers l'admin référent."""
+        """Transmet la réponse de l'utilisateur vers l'opérateur référent."""
         reply_info = context.user_data.pop("replying_to_admin", None)
         if not reply_info:
             return
@@ -647,7 +648,7 @@ class UserHandlers:
             )
 
         except Exception as exc:
-            logger.error("Erreur renvoi réponse utilisateur vers admin %s : %s", admin_id, exc)
+            logger.error("Erreur renvoi réponse utilisateur vers staff %s : %s", admin_id, exc)
             await msg.reply_text("❌ Une erreur est survenue lors de la transmission de votre message.")
 
     async def voir_demandes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -1,4 +1,4 @@
-"""Module de gestion et de contrôle opérationnel du bot par le propriétaire."""
+"""Module de gestion et de contrôle opérationnel du bot (Direction / Super-Admins)."""
 
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -8,13 +8,13 @@ logger = logging.getLogger(__name__)
 
 
 class BotManager:
-    """Gestionnaire d'état opérationnel (actif, suspendu, maintenance)."""
+    """Gestionnaire d'état opérationnel (actif, suspendu, maintenance) avec support Multi-Owner."""
 
     def __init__(self, db_manager, config, interface_manager=None):
         self.db_manager = db_manager
         self.config = config
         self.interface = interface_manager
-        logger.info("BotManager initialisé")
+        logger.info("BotManager initialisé avec support Multi-Owner")
 
     def set_interface_manager(self, interface_manager):
         """Injecte l'InterfaceManager si nécessaire."""
@@ -57,15 +57,14 @@ class BotManager:
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
+            if query:
+                await query.answer("❌ Action réservée à la direction.", show_alert=True)
             return
 
         await query.answer()
 
         try:
             self.config.enable_demandes()
-            self.db_manager.set_config_value("bot_active", "true")
-            self.db_manager.set_config_value("demandes_enabled", "true")
-            self.db_manager.set_config_value("maintenance_mode", "false")
             logger.info("Bot activé par le propriétaire %s", user.id)
 
             msg = (
@@ -76,7 +75,7 @@ class BotManager:
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔴 Suspendre", callback_data="bot_off")],
                 [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
+                [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
             ])
 
             await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
@@ -91,25 +90,25 @@ class BotManager:
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
+            if query:
+                await query.answer("❌ Action réservée à la direction.", show_alert=True)
             return
 
         await query.answer()
 
         try:
             self.config.disable_demandes()
-            self.db_manager.set_config_value("bot_active", "false")
-            self.db_manager.set_config_value("demandes_enabled", "false")
             logger.info("Demandes suspendues par le propriétaire %s", user.id)
 
             msg = (
                 "🔴 <b>Demandes suspendues</b>\n\n"
                 "⏸️ Le service de création de demandes est désormais désactivé.\n"
-                "🔒 Les administrateurs conservent leurs accès pour traiter les demandes en cours."
+                "🔒 L'équipe conserve ses accès pour traiter et clôturer les dossiers en cours."
             )
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🟢 Réactiver", callback_data="bot_on")],
                 [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
+                [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
             ])
 
             await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
@@ -124,25 +123,25 @@ class BotManager:
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
+            if query:
+                await query.answer("❌ Action réservée à la direction.", show_alert=True)
             return
 
         await query.answer()
 
         try:
             self.config.disable_demandes()
-            self.db_manager.set_config_value("bot_active", "false")
-            self.db_manager.set_config_value("demandes_enabled", "false")
             self.db_manager.set_config_value("maintenance_mode", "true")
-            logger.info("Mode maintenance enclenché par %s", user.id)
+            logger.info("Mode maintenance enclenché par le propriétaire %s", user.id)
 
             msg = (
                 "🛠️ <b>Mode maintenance actif</b>\n\n"
                 "⚙️ Le bot est verrouillé pour des interventions techniques.\n"
-                "Seul le compte propriétaire est habilité à exécuter des actions."
+                "Seuls les comptes de direction sont habilités à exécuter des actions."
             )
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🟢 Réactiver le service", callback_data="bot_on")],
-                [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
+                [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
             ])
 
             await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
@@ -155,16 +154,16 @@ class BotManager:
     async def get_bot_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche l'état courant du service et des paramètres."""
         user = update.effective_user
-        if not user or not self.config.is_owner(user.id):
+        if not user or not self.config.is_admin(user.id):
             return
 
         try:
             is_active = self.config.are_demandes_enabled()
-            is_maint = self.db_manager.get_config_value("maintenance_mode", "false") == "true"
+            is_maint = str(self.db_manager.get_config_value("maintenance_mode", "false")).lower() in ("true", "1")
 
             if is_maint:
                 badge = "🛠️ <b>Maintenance</b>"
-                detail = "Accès restreint au propriétaire."
+                detail = "Accès restreint à la direction."
             elif is_active:
                 badge = "🟢 <b>Actif</b>"
                 detail = "Toutes les fonctions sont opérationnelles pour les utilisateurs."
@@ -173,7 +172,7 @@ class BotManager:
                 detail = "Les utilisateurs ne peuvent plus soumettre de formulaires."
 
             text = (
-                "📊 <b>Statut Opérationnel du Bot</b>\n\n"
+                "📊 <b>Statut Opérationnel du Service</b>\n\n"
                 f"• <b>État :</b> {badge}\n"
                 f"• <b>Détails :</b> {detail}"
             )
@@ -184,7 +183,7 @@ class BotManager:
                     InlineKeyboardButton("🔴 Couper", callback_data="bot_off")
                 ],
                 [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
+                [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
             ])
 
             if update.callback_query:

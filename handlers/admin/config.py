@@ -19,12 +19,14 @@ class ConfigManager:
         "allow_priority_requests": "true",
         "admin_notifications": "true",
         "max_request_age_days": "30",
+        "auto_archive_hours": "72",
+        "delivery_reminder_days": "7",
     }
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("ConfigManager initialisé")
+        logger.info("ConfigManager initialisé avec support RBAC")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou supprime la photo existante pour émettre du texte."""
@@ -61,9 +63,9 @@ class ConfigManager:
     async def show_config_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche le menu récapitulatif des configurations courantes."""
         user = update.effective_user
-        if not user or not self.config.is_owner(user.id):
+        if not user or not self.config.is_admin(user.id):
             if update.callback_query:
-                await update.callback_query.answer("❌ Accès réservé au propriétaire.", show_alert=True)
+                await update.callback_query.answer("❌ Accès non autorisé.", show_alert=True)
             elif update.message:
                 await update.message.reply_text("❌ Accès non autorisé.")
             return
@@ -90,6 +92,8 @@ class ConfigManager:
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
+            if query:
+                await query.answer("❌ Action réservée à la direction.", show_alert=True)
             return
 
         await query.answer()
@@ -113,7 +117,7 @@ class ConfigManager:
 
             text = (
                 f"🛠️ <b>Mode maintenance {status_str}</b>\n\n"
-                f"Le service est désormais {'restreint au propriétaire' if new_val else 'disponible selon les paramètres standards'}."
+                f"Le service est désormais {'restreint à la direction' if new_val else 'disponible selon les paramètres standards'}."
             )
             keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 Retour Configuration", callback_data="gerer_bot")
@@ -130,6 +134,8 @@ class ConfigManager:
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self.config.is_owner(user.id):
+            if query:
+                await query.answer("❌ Action réservée à la direction.", show_alert=True)
             return
 
         await query.answer()
@@ -153,6 +159,91 @@ class ConfigManager:
         except Exception as exc:
             logger.error("Erreur bascule demandes prioritaires : %s", exc)
             await self._send_error_message(update, context, "❌ Erreur lors du réglage des demandes prioritaires.")
+
+    # ==================== GESTION DES DÉLAIS PARAMÉTRABLES ====================
+
+    async def show_delais_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche le menu de paramétrage des délais automatiques."""
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+
+        hours = self.db_manager.get_auto_archive_hours()
+        days = self.db_manager.get_delivery_reminder_days()
+
+        text = (
+            "⚙️ <b>Gestion des Délais Automatiques</b>\n\n"
+            f"• 📦 <b>Auto-archivage après livraison :</b> <code>{hours}h</code>\n"
+            f"• ⚠️ <b>Rappel opérateur sans livraison :</b> <code>{days} jours</code>\n\n"
+            "<i>Cliquez sur une option pour modifier la fréquence :</i>"
+        )
+        keyboard = [
+            [InlineKeyboardButton(f"📦 Auto-archivage ({hours}h)", callback_data="cfg_sub_archive_hours")],
+            [InlineKeyboardButton(f"⚠️ Relance sans livraison ({days}j)", callback_data="cfg_sub_reminder_days")],
+            [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
+        ]
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def show_archive_hours_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Sous-menu pour choisir l'intervalle d'auto-archivage."""
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+
+        current = self.db_manager.get_auto_archive_hours()
+
+        def b_lbl(name: str, val: int) -> str:
+            return f"✅ {name}" if current == val else name
+
+        keyboard = [
+            [
+                InlineKeyboardButton(b_lbl("24h (1j)", 24), callback_data="set_arch_hours_24"),
+                InlineKeyboardButton(b_lbl("48h (2j)", 48), callback_data="set_arch_hours_48"),
+            ],
+            [
+                InlineKeyboardButton(b_lbl("72h (3j)", 72), callback_data="set_arch_hours_72"),
+                InlineKeyboardButton(b_lbl("168h (7j)", 168), callback_data="set_arch_hours_168"),
+            ],
+            [InlineKeyboardButton("🔙 Retour", callback_data="menu_delais")]
+        ]
+        text = (
+            "📦 <b>Délai d'auto-archivage</b>\n\n"
+            f"Actuel : <b>{current} heures</b> post-livraison avant archivage automatique."
+        )
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def show_reminder_days_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Sous-menu pour choisir le délai de relance de livraison."""
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+
+        current = self.db_manager.get_delivery_reminder_days()
+
+        def b_lbl(name: str, val: int) -> str:
+            return f"✅ {name}" if current == val else name
+
+        keyboard = [
+            [
+                InlineKeyboardButton(b_lbl("3 jours", 3), callback_data="set_rem_days_3"),
+                InlineKeyboardButton(b_lbl("5 jours", 5), callback_data="set_rem_days_5"),
+            ],
+            [
+                InlineKeyboardButton(b_lbl("7 jours", 7), callback_data="set_rem_days_7"),
+                InlineKeyboardButton(b_lbl("14 jours", 14), callback_data="set_rem_days_14"),
+            ],
+            [InlineKeyboardButton("🔙 Retour", callback_data="menu_delais")]
+        ]
+        text = (
+            "⚠️ <b>Délai de relance pour contenu non livré</b>\n\n"
+            f"Actuel : <b>{current} jours</b>."
+        )
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    # ==================== ACCESSEURS DE CONFIGURATION ====================
 
     def get_setting(self, key: str, default=None):
         """Récupère une valeur de configuration depuis la table config."""
@@ -188,7 +279,7 @@ class ConfigManager:
         return cfg
 
     def _format_config_message(self, cfg: dict) -> str:
-        """Formate le récapitulatif des réglages pour l'Owner."""
+        """Formate le récapitulatif des réglages pour l'administrateur."""
         is_maint = str(cfg.get("maintenance_mode", "false")).lower() == "true"
         is_prio = str(cfg.get("allow_priority_requests", "true")).lower() == "true"
         is_active = self.config.are_demandes_enabled()
@@ -201,6 +292,8 @@ class ConfigManager:
         max_tot = str(cfg.get("max_total_demandes", "0"))
         tot_str = "Illimité" if max_tot == "0" else html.escape(max_tot)
         retention = html.escape(str(cfg.get("max_request_age_days", "30")))
+        auto_arch = html.escape(str(cfg.get("auto_archive_hours", "72")))
+        deliv_rem = html.escape(str(cfg.get("delivery_reminder_days", "7")))
 
         return (
             "⚙️ <b>Paramètres Généraux du Système</b>\n\n"
@@ -209,6 +302,8 @@ class ConfigManager:
             f"• <b>Demandes prioritaires :</b> {prio_badge}\n"
             f"• <b>Plafond global :</b> <code>{tot_str}</code>\n"
             f"• <b>Plafond par utilisateur :</b> <code>{max_user}</code>\n"
+            f"• <b>Auto-archivage :</b> {auto_arch}h post-livraison\n"
+            f"• <b>Relance livraison :</b> {deliv_rem} jours\n"
             f"• <b>Rétention archives :</b> {retention} jours\n\n"
             "Sélectionnez un paramètre pour modifier son état :"
         )
@@ -221,10 +316,11 @@ class ConfigManager:
                 InlineKeyboardButton("💎 Prioritaires", callback_data="config_toggle_priority"),
             ],
             [
-                InlineKeyboardButton("⚙️ Quotas & Limites", callback_data="menu_limits")
+                InlineKeyboardButton("⚙️ Quotas & Limites", callback_data="menu_limits"),
+                InlineKeyboardButton("⏱️ Délais & Relances", callback_data="menu_delais"),
             ],
             [
-                InlineKeyboardButton("🔙 Menu Owner", callback_data="gerer_bot")
+                InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -232,7 +328,7 @@ class ConfigManager:
     async def _send_error_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         """Envoie un message d'erreur avec retour sécurisé."""
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 Menu Owner", callback_data="gerer_bot")
+            InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")
         ]])
         if update.callback_query:
             await self._safe_edit_or_send(update.callback_query, context, text, reply_markup=kb)

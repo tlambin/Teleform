@@ -14,7 +14,7 @@ class PhotosManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("PhotosManager initialisé")
+        logger.info("PhotosManager initialisé avec support Staff")
 
     async def voir_photo_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche ou met à jour la fiche avec sa photo native sans bouton de bascule texte."""
@@ -22,7 +22,7 @@ class PhotosManager:
         if not query or not update.effective_user:
             return
 
-        if not self.config.is_admin(update.effective_user.id):
+        if not self.config.is_staff(update.effective_user.id):
             return
 
         try:
@@ -138,7 +138,7 @@ class PhotosManager:
         if not query or not update.effective_user:
             return
 
-        if not self.config.is_admin(update.effective_user.id):
+        if not self.config.is_staff(update.effective_user.id):
             return
 
         try:

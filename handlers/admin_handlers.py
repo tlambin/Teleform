@@ -1,530 +1,747 @@
-"""Routeur principal des actions et callbacks d'administration avec relais groupé."""
+"""Module de gestion des fonctions d'administration et de gouvernance (Admin & Owner)."""
 
 import html
 import logging
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputMediaDocument,
-    InputMediaPhoto,
-    InputMediaVideo,
-    Update,
-)
-from telegram.ext import ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import ContextTypes, ConversationHandler
 from utils.interface_manager import InterfaceManager
-
-from .admin.alias import AliasManager
-from .admin.contact import ContactManager
-from .admin.dispo import DispoManager
-from .admin.notifs import NotifsManager
-from .admin.photos import PhotosManager
-from .admin.profils import ProfilsManager
-from .admin.statuts import StatutsManager
-from .admin.suivi import SuiviManager
+from utils.maintenance import check_storage_usage, daily_maintenance
+from .staff.alias import AliasManager
+from .admin.config import ConfigManager
+from .admin.stats import StatsManager
+from .admin.bot import BotManager
+from .admin.staff import StaffManager
 
 logger = logging.getLogger(__name__)
 
 
 class AdminHandlers:
-    """Gestionnaire central des fonctionnalités administrateur et propriétaire."""
+    """Gestionnaire des opérations système, de la gouvernance (Admins/Staff), des stats et des VIPs."""
+
+    # États pour l'ajout/suppression Staff
+    WAITING_STAFF_ID = 1
+    WAITING_STAFF_REMOVE = 2
+    WAITING_STAFF_CONFIRMATION = 3
+
+    # États pour l'ajout/suppression Admin (Owner only)
+    WAITING_ADMIN_ID = 4
+    WAITING_ADMIN_REMOVE = 5
+    WAITING_ADMIN_CONFIRMATION = 6
+
+    # États pour la gestion VIP
+    WAITING_VIP_USER = 10
+    WAITING_VIP_DURATION = 11
+    WAITING_VIP_REMOVE = 12
 
     def __init__(self, config, db_manager):
         self.config = config
         self.db_manager = db_manager
         self.interface = InterfaceManager(config, db_manager)
+        self.alias_manager = AliasManager(db_manager, config)
 
-        self.suivi = SuiviManager(db_manager, config)
-        self.statuts = StatutsManager(db_manager, config)
-        self.photos = PhotosManager(db_manager, config)
-        self.dispo = DispoManager(db_manager, config)
-        self.alias = AliasManager(db_manager, config)
-        self.notifs = NotifsManager(db_manager, config)
-        self.contact = ContactManager(db_manager, config)
-        self.profils = ProfilsManager(db_manager, config)
+        # Sous-gestionnaires dédiés
+        self.config_manager = ConfigManager(db_manager, config)
+        self.stats_manager = StatsManager(db_manager, config)
+        self.bot_manager = BotManager(db_manager, config, self.interface)
+        self.staff_manager = StaffManager(db_manager, config, self.interface)
 
-    async def _safe_edit_or_reply(self, query, text: str, reply_markup=None, parse_mode="HTML"):
-        """Met à jour le message texte ou envoie une nouvelle bulle si le message cible contient une photo."""
+        logger.info("AdminHandlers initialisé avec architecture RBAC.")
+
+    async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
+        """Met à jour le message ou envoie un message texte propre."""
         if query.message and query.message.photo:
+            chat_id = query.message.chat_id
             try:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
         else:
             try:
-                await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
             except Exception:
                 if query.message:
-                    await query.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                        disable_web_page_preview=True
+                    )
+
+    # ==================== MAINTENANCE ET SERVICE ====================
+
+    async def run_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Déclenche la routine de purge et d'optimisation (Owner only)."""
+        user = update.effective_user
+        if not user or not self.config.is_owner(user.id):
+            if update.callback_query:
+                await update.callback_query.answer("❌ Accès réservé aux propriétaires.", show_alert=True)
+            elif update.message:
+                await update.message.reply_text("❌ Accès non autorisé.")
+            return
+
+        if update.callback_query:
+            await update.callback_query.answer()
+            await self._safe_edit_or_send(update.callback_query, context, "🔧 <b>Maintenance en cours...</b>")
+        else:
+            await update.message.reply_text("🔧 <b>Maintenance en cours...</b>", parse_mode="HTML")
+
+        try:
+            storage_before = check_storage_usage()
+            daily_maintenance(self.db_manager)
+            storage_after = check_storage_usage()
+
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) AS count FROM demandes")
+                demandes_count = cursor.fetchone()["count"]
+
+                cursor.execute("SELECT COUNT(*) AS count FROM archives")
+                archives_count = cursor.fetchone()["count"]
+
+            economie = max(0.0, storage_before - storage_after)
+            message = (
+                "✅ <b>Maintenance terminée avec succès</b>\n\n"
+                "💾 <b>Stockage local :</b>\n"
+                f"• Avant : {storage_before:.1f} Mo\n"
+                f"• Après : {storage_after:.1f} Mo\n"
+                f"• Gain : {economie:.1f} Mo\n\n"
+                "📊 <b>Base de données :</b>\n"
+                f"• Demandes actives : {demandes_count}\n"
+                f"• Demandes archivées : {archives_count}\n\n"
+                "🧹 Cache mémoire purgé et index optimisés."
+            )
+
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")
+            ]])
+
+            if update.callback_query:
+                await self._safe_edit_or_send(update.callback_query, context, message, reply_markup=keyboard)
+            else:
+                await update.message.reply_text(message, parse_mode="HTML", reply_markup=keyboard)
+
+        except Exception as exc:
+            logger.error("Erreur maintenance manuelle : %s", exc, exc_info=True)
+            if update.callback_query:
+                await self._safe_edit_or_send(update.callback_query, context, "❌ Échec lors de la maintenance.")
+            else:
+                await update.message.reply_text("❌ Échec lors de la maintenance.")
+
+    async def bot_on(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Active l'acceptation globale des demandes."""
+        await self.bot_manager.bot_on(update, context)
+
+    async def bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Demande confirmation avant suspension du service."""
+        query = update.callback_query
+        if not query or not self.config.is_owner(update.effective_user.id):
+            return
+
+        await query.answer()
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⚠️ Confirmer la suspension", callback_data="confirm_bot_off"),
+                InlineKeyboardButton("❌ Annuler", callback_data="cancel_bot_off")
+            ]
+        ])
+        text = (
+            "⚠️ <b>Suspension des nouvelles demandes</b>\n\n"
+            "Les utilisateurs ne pourront plus créer de demandes jusqu'à la réactivation.\n"
+            "Confirmez-vous cette action ?"
+        )
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
+
+    async def confirmer_bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Enregistre la suspension."""
+        await self.bot_manager.bot_off(update, context)
+
+    async def cancel_bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+        message, keyboard = self.interface.get_gerer_bot_menu()
+        await self._safe_edit_or_send(query, context, message, reply_markup=keyboard)
+
+    async def toggle_demandes(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Commande rapide /toggle_demandes."""
+        if not update.message or not update.effective_user:
+            return
+
+        if not self.config.is_owner(update.effective_user.id):
+            await update.message.reply_text("❌ Commande réservée aux propriétaires.")
+            return
+
+        if self.config.are_demandes_enabled():
+            self.config.disable_demandes()
+            await update.message.reply_text("🚫 <b>Service suspendu :</b> Création bloquée.", parse_mode="HTML")
+        else:
+            self.config.enable_demandes()
+            await update.message.reply_text("✅ <b>Service actif :</b> Création autorisée.", parse_mode="HTML")
+
+    # ==================== ROUTAGE CALLBACKS ADMIN & OWNER ====================
 
     async def handle_admin_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Aiguillage sécurisé des callbacks administrateurs et propriétaire."""
-        query = update.callback_query
-        if not query or not update.effective_user:
-            return
-
-        # Réponse immédiate pour couper net tout chargement infini Telegram
-        try:
-            await query.answer()
-        except Exception:
-            pass
-
-        user_id = update.effective_user.id
-        data = query.data or ""
-
-        # Contrôle des droits
-        if not (self.config.is_owner(user_id) or self.config.is_admin(user_id)):
-            logger.warning("Tentative d'accès administrateur refusée pour l'utilisateur %s", user_id)
-            return
-
-        try:
-            # 1. Demandes disponibles et filtres
-            if data == "demandes_disponibles":
-                await self.dispo.show_demandes_disponibles(update, context)
-
-            elif data.startswith("dispo_"):
-                await self.dispo.handle_callback_routing(update, context, data)
-
-            # 2. Prise en charge d'une demande disponible -> statut "En attente" + notification
-            elif data.startswith("suivre_demande_"):
-                demande_id = int(data.replace("suivre_demande_", ""))
-                await self.dispo.assign_demande_to_admin(update, context, demande_id)
-
-            # 3. Demandes suivies
-            elif data == "demandes_suivies":
-                await self.suivi.show_demandes_suivies(update, context)
-
-            elif data.startswith("suivi_"):
-                await self.suivi.handle_callback_routing(update, context, data)
-
-            # 4. Préférences de notifications et rappels
-            elif data == "menu_notifs":
-                await self.notifs.show_notifs_menu(update, context)
-
-            elif data.startswith("pref_"):
-                await self.notifs.handle_callback_routing(update, context, data)
-
-            # 5. Photos et affichage texte
-            elif data.startswith("voir_photo_"):
-                await self.photos.voir_photo_demande(update, context)
-
-            elif data.startswith("retour_texte_"):
-                await self.photos.retour_texte_demande(update, context)
-
-            # 6. Gestion dynamique des statuts et archivage
-            elif data.startswith("change_status_") or data.startswith("mark_treated_menu_"):
-                demande_id = int(data.split("_")[-1])
-                await self.statuts.show_status_change_menu(update, context, demande_id)
-
-            elif data.startswith("status_"):
-                await self.statuts.handle_status_callback(update, context)
-
-            # 7. Profils
-            elif data.startswith("profil_admin_"):
-                target_admin_id = int(data.replace("profil_admin_", ""))
-                await self.profils.show_admin_profile(update, context, target_admin_id)
-
-            elif data.startswith("profil_demande_"):
-                demande_id = int(data.replace("profil_demande_", ""))
-                await self.profils.show_user_profile_by_demande(update, context, demande_id)
-
-            # 8. Mode pause
-            elif data in ("admin_pause_prompt", "admin_pause_keep", "admin_pause_release", "admin_resume"):
-                await self._handle_admin_pause(update, context, data)
-
-            # 9. Contact du demandeur
-            elif data.startswith("contacter_") and not data.startswith("contacter_owner"):
-                demande_id = int(data.replace("contacter_", ""))
-                await self._prompt_contact_user(update, context, demande_id)
-
-            elif data.startswith("contact_mode_"):
-                parts = data.split("_")
-                demande_id = int(parts[2])
-                allow_reply = (parts[3] == "yes")
-                await self._start_contact_input(update, context, demande_id, allow_reply)
-
-            elif data.startswith("send_batch_"):
-                demande_id = int(data.replace("send_batch_", ""))
-                await self._dispatch_media_batch(update, context, demande_id)
-
-            elif data.startswith("cancel_contact_") and not data.startswith("cancel_contact_owner"):
-                demande_id = int(data.replace("cancel_contact_", ""))
-                context.user_data.pop("contact_session", None)
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Retour à la demande", callback_data=f"retour_texte_{demande_id}")
-                ]])
-                await self._safe_edit_or_reply(query, "❌ Envoi annulé. Aucun fichier n'a été transmis.", reply_markup=kb)
-
-            else:
-                logger.warning("Callback admin non intercepté : %s", data)
-
-        except Exception as exc:
-            logger.error("Erreur callback admin '%s' : %s", data, exc, exc_info=True)
-            await self._handle_callback_error(query)
-
-    async def _handle_admin_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        """Gère les transitions du mode pause administrateur."""
-        query = update.callback_query
-        admin_id = update.effective_user.id
-
-        if data == "admin_pause_prompt":
-            active_demandes = self.db_manager.get_admin_active_demandes(admin_id)
-            nb = len(active_demandes)
-
-            if nb == 0:
-                self.db_manager.set_admin_pause_status(admin_id, paused=True)
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")
-                ]])
-                await self._safe_edit_or_reply(
-                    query,
-                    "⏸️ <b>Mode pause activé</b>\n\n"
-                    "• Vous ne recevrez plus aucune notification de nouvelle demande.\n"
-                    "• Vous n'apparaissez plus dans la liste de sélection VIP.\n"
-                    "• Vous n'avez aucun dossier actif en attente.",
-                    reply_markup=kb
-                )
-                return
-
-            text = (
-                f"⏸️ <b>Passage en mode pause</b>\n\n"
-                f"Vous avez actuellement <b>{nb}</b> demande(s) en cours de traitement.\n"
-                "Que souhaitez-vous faire de vos dossiers ?"
-            )
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📁 Conserver mes dossiers en cours", callback_data="admin_pause_keep")],
-                [InlineKeyboardButton("❌ Libérer et abandonner mes dossiers", callback_data="admin_pause_release")],
-                [InlineKeyboardButton("🔙 Annuler", callback_data="parametres")]
-            ])
-            await self._safe_edit_or_reply(query, text, reply_markup=kb)
-            return
-
-        elif data == "admin_pause_keep":
-            self.db_manager.set_admin_pause_status(admin_id, paused=True)
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")
-            ]])
-            await self._safe_edit_or_reply(
-                query,
-                "⏸️ <b>Mode pause activé (dossiers conservés)</b>\n\n"
-                "• Vos demandes en cours restent assignées à votre compte.\n"
-                "• Aucune nouvelle demande ne vous sera attribuée ni notifiée.\n"
-                "• Vous pouvez continuer à traiter vos suivis à votre rythme.",
-                reply_markup=kb
-            )
-            return
-
-        elif data == "admin_pause_release":
-            abandoned = self.db_manager.abandon_admin_demandes_for_pause(admin_id)
-            self.db_manager.set_admin_pause_status(admin_id, paused=True)
-            alias = self.db_manager.get_admin_alias(admin_id)
-            alias_esc = html.escape(str(alias or f"Admin_{admin_id}"))
-
-            for dem in abandoned:
-                try:
-                    c_id = dem["user_id"]
-                    req_num = html.escape(str(dem.get("request_number") or dem["id"]))
-                    msg_client = (
-                        f"⚠️ <b>Demande #{req_num} — Référent indisponible</b>\n\n"
-                        f"Votre référent (<b>{alias_esc}</b>) est actuellement en pause.\n"
-                        "Sa prise en charge sur votre dossier a donc été interrompue.\n\n"
-                        "Vous pouvez remettre votre demande dans la file d'attente ou la classer sans suite :"
-                    )
-                    kb_client = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Reprendre ma demande", callback_data=f"reprendre_demande_{dem['id']}")],
-                        [InlineKeyboardButton("🗑️ Archiver la demande", callback_data=f"archiver_demande_{dem['id']}")]
-                    ])
-                    await context.bot.send_message(chat_id=c_id, text=msg_client, parse_mode="HTML", reply_markup=kb_client)
-                except Exception as err:
-                    logger.warning("Notification abandon pause impossible pour user %s : %s", dem.get("user_id"), err)
-
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")
-            ]])
-            await self._safe_edit_or_reply(
-                query,
-                f"⏸️ <b>Mode pause activé</b>\n\n"
-                f"• {len(abandoned)} dossier(s) libéré(s) et notifiés aux demandeurs.\n"
-                "• Vous êtes désormais retiré du service jusqu'à votre reprise.",
-                reply_markup=kb
-            )
-            return
-
-        elif data == "admin_resume":
-            self.db_manager.set_admin_pause_status(admin_id, paused=False)
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")
-            ]])
-            await self._safe_edit_or_reply(
-                query,
-                "🟢 <b>Bon retour ! Vous êtes à nouveau en service.</b>\n\n"
-                "• Vous recevrez à nouveau les alertes et notifications.\n"
-                "• Vous êtes à nouveau sélectionnable par les clients VIP.",
-                reply_markup=kb
-            )
-            return
-
-    async def _prompt_contact_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Demande d'abord si l'utilisateur doit pouvoir répondre."""
-        query = update.callback_query
-        if not query or not update.effective_user:
-            return
-
-        try:
-            with self.db_manager.get_cursor() as cursor:
-                cursor.execute(
-                    "SELECT id, request_number, user_id, prenom FROM demandes WHERE id = %s",
-                    (demande_id,)
-                )
-                row = cursor.fetchone()
-
-            if not row:
-                return
-
-            req_num = html.escape(str(row.get("request_number", row["id"])))
-            prenom_esc = html.escape(str(row.get("prenom") or ""))
-
-            text = (
-                f"💬 <b>Contacter {prenom_esc}</b> (Demande #{req_num})\n\n"
-                "Souhaitez-vous autoriser le demandeur à répondre à cet envoi ?"
-            )
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("💬 Oui (avec bouton réponse)", callback_data=f"contact_mode_{demande_id}_yes"),
-                    InlineKeyboardButton("🔒 Non (informatif / clôture)", callback_data=f"contact_mode_{demande_id}_no")
-                ],
-                [InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")]
-            ])
-
-            await self._safe_edit_or_reply(query, text, reply_markup=keyboard)
-
-        except Exception as exc:
-            logger.error("Erreur prompt contact utilisateur : %s", exc)
-
-    async def _start_contact_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int, allow_reply: bool):
-        """Initialise la session de collecte de messages et fichiers."""
+        """Aiguille toutes les actions d'administration (Owner et Managers)."""
         query = update.callback_query
         if not query:
             return
 
-        with self.db_manager.get_cursor() as cursor:
-            cursor.execute("SELECT id, request_number, user_id, prenom FROM demandes WHERE id = %s", (demande_id,))
-            row = cursor.fetchone()
-
-        if not row:
+        user_id = update.effective_user.id
+        if not self.config.is_admin(user_id):
+            await query.answer("❌ Accès non autorisé.", show_alert=True)
             return
 
-        req_num = html.escape(str(row.get("request_number", row["id"])))
-        prenom_esc = html.escape(str(row.get("prenom") or ""))
+        data = query.data or ""
+        privs = self.db_manager.get_admin_privileges(user_id)
+        is_owner = privs.get("is_owner", False) or self.config.is_owner(user_id)
 
-        context.user_data["contact_session"] = {
-            "demande_id": demande_id,
-            "target_user_id": row["user_id"],
-            "prenom": row["prenom"],
-            "req_num": row.get("request_number", row["id"]),
-            "allow_reply": allow_reply,
-            "visual_media": [],
-            "doc_media": [],
-            "text_notes": [],
-        }
+        # Actions Service (Owner only)
+        if data == "bot_on" and is_owner:
+            await self.bot_on(update, context)
+        elif data == "bot_off" and is_owner:
+            await self.bot_off(update, context)
+        elif data == "confirm_bot_off" and is_owner:
+            await self.confirmer_bot_off(update, context)
+        elif data == "cancel_bot_off" and is_owner:
+            await self.cancel_bot_off(update, context)
+        elif data == "maintenance" and is_owner:
+            await self.run_maintenance(update, context)
 
-        mode_str = "💬 Réponse autorisée (1 fois)" if allow_reply else "🔒 Message informatif (réponse bloquée)"
-        text = (
-            f"📦 <b>Session d'envoi vers {prenom_esc} (Demande #{req_num})</b>\n"
-            f"Mode : <b>{mode_str}</b>\n\n"
-            "Envoyez vos photos, vidéos, documents ou messages texte (en un seul envoi ou plusieurs).\n\n"
-            "<i>Tous vos éléments seront conservés et transmis en groupe quand vous validerez.</i>"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚀 Valider et envoyer le lot (0 élément)", callback_data=f"send_batch_{demande_id}")],
-            [InlineKeyboardButton("❌ Annuler", callback_data=f"cancel_contact_{demande_id}")]
-        ])
+        # Statistiques
+        elif data == "bot_stats" and privs.get("can_view_stats", True):
+            await self.stats_manager.show_general_stats(update, context)
 
-        await self._safe_edit_or_reply(query, text, reply_markup=keyboard)
+        # VIPs
+        elif data == "gerer_vips" and privs.get("can_manage_vips", True):
+            await query.answer()
+            msg, kb = self.interface.get_gerer_vips_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
 
-    async def handle_collect_admin_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-        """Collecte les fichiers sans spammer la conversation, en mettant à jour un statut propre."""
-        msg = update.message
-        if not msg:
-            return False
+        # Gestion Staff
+        elif data == "gerer_staff" and privs.get("can_manage_staff", True):
+            await query.answer()
+            msg, kb = self.interface.get_gerer_staff_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
 
-        session = context.user_data.get("contact_session")
-        if not session:
-            return False
+        # Gestion Admins (Owner only)
+        elif data == "gerer_admins" and is_owner:
+            await query.answer()
+            msg, kb = self.interface.get_gerer_admins_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
 
-        demande_id = session["demande_id"]
-        caption = (msg.caption or "").strip()
-
-        if msg.photo:
-            file_id = msg.photo[-1].file_id
-            session["visual_media"].append({"type": "photo", "file_id": file_id, "caption": caption})
-        elif msg.video:
-            file_id = msg.video.file_id
-            session["visual_media"].append({"type": "video", "file_id": file_id, "caption": caption})
-        elif msg.document:
-            file_id = msg.document.file_id
-            session["doc_media"].append({"file_id": file_id, "caption": caption})
-        elif msg.text:
-            session["text_notes"].append(msg.text.strip())
-
-        total = len(session["visual_media"]) + len(session["doc_media"]) + len(session["text_notes"])
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"🚀 Envoyer tout le lot ({total} élément{'s' if total > 1 else ''})", callback_data=f"send_batch_{demande_id}")],
-            [InlineKeyboardButton("❌ Annuler tout", callback_data=f"cancel_contact_{demande_id}")]
-        ])
-
-        status_text = (
-            f"📥 <b>Panier d'envoi mis à jour : {total} élément{'s' if total > 1 else ''} prêt{'s' if total > 1 else ''}</b>\n\n"
-            "Vous pouvez encore déposer d'autres fichiers ou cliquer ci-dessous pour expédier l'ensemble :"
-        )
-
-        last_status_msg_id = session.get("last_status_msg_id")
-        if last_status_msg_id:
+        # Délais & Archivage
+        elif data == "menu_delais" and (is_owner or privs.get("can_manage_delais", False)):
+            await self.config_manager.show_delais_menu(update, context)
+        elif data == "cfg_sub_archive_hours" and (is_owner or privs.get("can_manage_delais", False)):
+            await self.config_manager.show_archive_hours_menu(update, context)
+        elif data == "cfg_sub_reminder_days" and (is_owner or privs.get("can_manage_delais", False)):
+            await self.config_manager.show_reminder_days_menu(update, context)
+        elif data.startswith("set_arch_hours_") and (is_owner or privs.get("can_manage_delais", False)):
             try:
-                await context.bot.edit_message_text(
-                    chat_id=msg.chat_id,
-                    message_id=last_status_msg_id,
-                    text=status_text,
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
-                return True
+                val = int(data.replace("set_arch_hours_", ""))
+                self.db_manager.set_auto_archive_hours(val)
+                await query.answer(f"✅ Auto-archivage fixé à {val}h !")
+                await self.config_manager.show_delais_menu(update, context)
+            except Exception:
+                await query.answer("❌ Erreur valeur.", show_alert=True)
+        elif data.startswith("set_rem_days_") and (is_owner or privs.get("can_manage_delais", False)):
+            try:
+                val = int(data.replace("set_rem_days_", ""))
+                self.db_manager.set_delivery_reminder_days(val)
+                await query.answer(f"✅ Relance fixée à {val} jours !")
+                await self.config_manager.show_delais_menu(update, context)
+            except Exception:
+                await query.answer("❌ Erreur valeur.", show_alert=True)
+
+        # Permissions Staff
+        elif data.startswith("perm_staff_") and privs.get("can_manage_staff", True):
+            try:
+                target_id = int(data.replace("perm_staff_", ""))
+                await self.show_staff_permissions_menu(update, context, target_id)
             except Exception:
                 pass
+        elif data.startswith("set_permstaff_") and privs.get("can_manage_staff", True):
+            await self.handle_set_staff_permission(update, context, data)
 
-        sent_msg = await msg.reply_text(
-            status_text,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-        session["last_status_msg_id"] = sent_msg.message_id
-        return True
+        # Permissions Admin (Owner only)
+        elif data.startswith("perm_admin_") and is_owner:
+            try:
+                target_id = int(data.replace("perm_admin_", ""))
+                await self.show_admin_permissions_menu(update, context, target_id)
+            except Exception:
+                pass
+        elif data.startswith("set_permadmin_") and is_owner:
+            await self.handle_set_admin_permission(update, context, data)
 
-    async def _dispatch_media_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Envoie l'ensemble du lot au demandeur et valide la livraison dans la base de données."""
+    # ==================== PERMISSIONS STAFF (OPÉRATEURS) ====================
+
+    async def show_staff_permissions_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, staff_id: int):
         query = update.callback_query
-        session = context.user_data.pop("contact_session", None)
-
-        if not session or session.get("demande_id") != demande_id:
+        if not query:
             return
+        await query.answer()
 
-        admin_id = update.effective_user.id
-        target_user_id = session["target_user_id"]
-        req_num = html.escape(str(session["req_num"]))
-        allow_reply = session["allow_reply"]
-        raw_alias = self.db_manager.get_admin_alias(admin_id) or f"Admin_{admin_id}"
-        alias_esc = html.escape(str(raw_alias))
+        alias = html.escape(str(self.db_manager.get_staff_alias(staff_id)))
+        perms = self.db_manager.get_staff_permissions(staff_id)
+        reseau = perms.get("perm_reseaux", "all")
+        typ = perms.get("perm_type", "all")
 
-        visuals = session["visual_media"]
-        docs = session["doc_media"]
-        texts = session["text_notes"]
+        b_res_all = "✅ Tous réseaux" if reseau == "all" else "Tous réseaux"
+        b_res_insta = "✅ Insta seul" if reseau == "insta" else "Insta seul"
+        b_res_snap = "✅ Snap seul" if reseau == "snap" else "Snap seul"
 
-        if not visuals and not docs and not texts:
-            context.user_data["contact_session"] = session
-            return
+        b_typ_all = "✅ Tout type" if typ == "all" else "Tout type"
+        b_typ_prio = "✅ 💎 Payantes" if typ == "prio_only" else "💎 Payantes"
+        b_typ_std = "✅ 📝 Gratuites" if typ == "standard_only" else "📝 Gratuites"
 
-        if query:
-            await self._safe_edit_or_reply(query, "⏳ Transmission du lot en cours...")
+        keyboard = [
+            [
+                InlineKeyboardButton(b_res_all, callback_data=f"set_permstaff_{staff_id}_reseaux_all"),
+                InlineKeyboardButton(b_res_insta, callback_data=f"set_permstaff_{staff_id}_reseaux_insta"),
+                InlineKeyboardButton(b_res_snap, callback_data=f"set_permstaff_{staff_id}_reseaux_snap"),
+            ],
+            [
+                InlineKeyboardButton(b_typ_all, callback_data=f"set_permstaff_{staff_id}_type_all"),
+                InlineKeyboardButton(b_typ_prio, callback_data=f"set_permstaff_{staff_id}_type_prio_only"),
+                InlineKeyboardButton(b_typ_std, callback_data=f"set_permstaff_{staff_id}_type_standard_only"),
+            ],
+            [InlineKeyboardButton("🔙 Équipe Staff", callback_data="gerer_staff")]
+        ]
 
-        combined_text = "\n".join([html.escape(t) for t in texts])
-        corps = f"\n\n« {combined_text} »" if combined_text else ""
-        footer = "\n\n<i>Vous pouvez répondre une seule fois ci-dessous.</i>" if allow_reply else ""
-
-        header_text = (
-            f"💬 <b>Message de l'équipe (Demande #{req_num})</b>\n"
-            f"De : <b>{alias_esc}</b>"
-            f"{corps}"
-            f"{footer}"
+        text = (
+            f"🛡️ <b>Permissions Opérateur : {alias}</b>\n"
+            f"🆔 ID : <code>{staff_id}</code>\n\n"
+            "Ajustez les dossiers auxquels ce membre a accès :"
         )
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-        user_keyboard = None
-        if allow_reply:
-            user_keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("💬 Répondre", callback_data=f"reply_to_admin_{demande_id}_{admin_id}")
-            ]])
+    async def handle_set_staff_permission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+        query = update.callback_query
+        if not query:
+            return
 
         try:
-            if visuals:
-                for i in range(0, len(visuals), 10):
-                    batch = visuals[i:i + 10]
-                    media_group = []
-                    for idx, item in enumerate(batch):
-                        item_caption = header_text if (i == 0 and idx == 0) else (html.escape(item["caption"]) if item.get("caption") else None)
-                        if item["type"] == "photo":
-                            media_group.append(InputMediaPhoto(media=item["file_id"], caption=item_caption, parse_mode="HTML" if item_caption else None))
-                        elif item["type"] == "video":
-                            media_group.append(InputMediaVideo(media=item["file_id"], caption=item_caption, parse_mode="HTML" if item_caption else None))
+            parts = data.split("_")
+            staff_id = int(parts[2])
+            cle = f"perm_{parts[3]}"
+            valeur = "_".join(parts[4:])
 
-                    if len(media_group) == 1:
-                        single = media_group[0]
-                        if isinstance(single, InputMediaPhoto):
-                            await context.bot.send_photo(chat_id=target_user_id, photo=single.media, caption=single.caption, parse_mode="HTML")
-                        else:
-                            await context.bot.send_video(chat_id=target_user_id, video=single.media, caption=single.caption, parse_mode="HTML")
-                    else:
-                        await context.bot.send_media_group(chat_id=target_user_id, media=media_group)
+            self.db_manager.update_staff_permission(staff_id, cle, valeur)
+            await query.answer("✅ Droits staff mis à jour")
+            await self.show_staff_permissions_menu(update, context, staff_id)
+        except Exception as exc:
+            logger.error("Erreur mise à jour permission staff : %s", exc)
+            await query.answer("❌ Erreur.", show_alert=True)
 
-            if docs:
-                for i in range(0, len(docs), 10):
-                    batch = docs[i:i + 10]
-                    doc_group = []
-                    for idx, item in enumerate(batch):
-                        item_caption = header_text if (not visuals and i == 0 and idx == 0) else (html.escape(item["caption"]) if item.get("caption") else None)
-                        doc_group.append(InputMediaDocument(media=item["file_id"], caption=item_caption, parse_mode="HTML" if item_caption else None))
+    # ==================== PERMISSIONS ADMIN (MANAGERS & CO-OWNERS) ====================
 
-                    if len(doc_group) == 1:
-                        await context.bot.send_document(chat_id=target_user_id, document=doc_group[0].media, caption=doc_group[0].caption, parse_mode="HTML")
-                    else:
-                        await context.bot.send_media_group(chat_id=target_user_id, media=doc_group)
+    async def show_admin_permissions_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
+        """Affiche et gère les droits managériaux ou la co-gérance (Owner only)."""
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
 
-            if not visuals and not docs and texts:
-                await context.bot.send_message(
-                    chat_id=target_user_id,
-                    text=header_text,
-                    parse_mode="HTML",
-                    reply_markup=user_keyboard
+        alias = html.escape(str(self.db_manager.get_staff_alias(admin_id)))
+        privs = self.db_manager.get_admin_privileges(admin_id)
+
+        st_staff = "✅ OUI" if privs.get("can_manage_staff") else "❌ NON"
+        st_vips = "✅ OUI" if privs.get("can_manage_vips") else "❌ NON"
+        st_stats = "✅ OUI" if privs.get("can_view_stats") else "❌ NON"
+        st_delais = "✅ OUI" if privs.get("can_manage_delais") else "❌ NON"
+        st_owner = "👑 CO-GÉRANT" if privs.get("is_owner") else "🛡️ MANAGER"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(f"Gérer Staff : {st_staff}", callback_data=f"set_permadmin_{admin_id}_can_manage_staff"),
+                InlineKeyboardButton(f"Gérer VIPs : {st_vips}", callback_data=f"set_permadmin_{admin_id}_can_manage_vips"),
+            ],
+            [
+                InlineKeyboardButton(f"Voir Stats : {st_stats}", callback_data=f"set_permadmin_{admin_id}_can_view_stats"),
+                InlineKeyboardButton(f"Régler Délais : {st_delais}", callback_data=f"set_permadmin_{admin_id}_can_manage_delais"),
+            ],
+            [
+                InlineKeyboardButton(f"Rôle Suprême : {st_owner}", callback_data=f"set_permadmin_{admin_id}_is_owner"),
+            ],
+            [InlineKeyboardButton("🔙 Liste Managers", callback_data="gerer_admins")]
+        ]
+
+        text = (
+            f"⚙️ <b>Droits Administrateur : {alias}</b>\n"
+            f"🆔 ID : <code>{admin_id}</code>\n\n"
+            "Activez ou désactivez les responsabilités de ce compte :"
+        )
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def handle_set_admin_permission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+        """Bascule un droit en base et rafraîchit le cache multi-owner."""
+        query = update.callback_query
+        if not query or not self.config.is_owner(update.effective_user.id):
+            return
+
+        try:
+            parts = data.split("_")
+            admin_id = int(parts[2])
+            flag = "_".join(parts[3:])
+
+            with self.db_manager.transaction() as cursor:
+                cursor.execute(f"UPDATE admins SET {flag} = NOT {flag} WHERE user_id = %s", (admin_id,))
+
+            self.config.reload_roles()
+            await query.answer("✅ Permission admin mise à jour !")
+            await self.show_admin_permissions_menu(update, context, admin_id)
+        except Exception as exc:
+            logger.error("Erreur bascule droit admin : %s", exc)
+            await query.answer("❌ Erreur SQL.", show_alert=True)
+
+    # ==================== RECRUTEMENT / RÉVOCATION STAFF ====================
+
+    async def staff_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.staff_manager.staff_ajouter(update, context)
+
+    async def traiter_staff_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.staff_manager.traiter_staff_ajouter(update, context)
+
+    async def cancel_staff_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.staff_manager.cancel_staff_add(update, context)
+
+    async def staff_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.staff_manager.staff_supprimer(update, context)
+
+    async def traiter_staff_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.staff_manager.traiter_staff_supprimer(update, context)
+
+    async def confirmer_staff_suppression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.staff_manager.confirmer_staff_suppression(update, context)
+
+    async def cancel_staff_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return await self.staff_manager.cancel_staff_remove(update, context)
+
+    # ==================== NOMINATION / RÉVOCATION ADMINS (OWNER ONLY) ====================
+
+    async def admin_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if not query or not self.config.is_owner(update.effective_user.id):
+            return ConversationHandler.END
+        await query.answer()
+
+        text = (
+            "🛡️ <b>Nomination d'un Administrateur (Manager)</b>\n\n"
+            "Envoyez l'<b>ID Telegram numérique</b> ou le nom d'utilisateur de la personne :"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_add")]])
+        await self._safe_edit_or_send(query, context, text, reply_markup=kb)
+        return self.WAITING_ADMIN_ID
+
+    async def traiter_admin_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message or not update.message.text:
+            return self.WAITING_ADMIN_ID
+
+        user_id = update.effective_user.id
+        if not self.config.is_owner(user_id):
+            return ConversationHandler.END
+
+        saisie = update.message.text.strip().replace("@", "")
+        try:
+            with self.db_manager.get_cursor() as cursor:
+                if saisie.isdigit():
+                    cursor.execute("SELECT * FROM users WHERE user_id = %s", (int(saisie),))
+                else:
+                    cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(%s)", (saisie,))
+                u_data = cursor.fetchone()
+
+            if not u_data:
+                await update.message.reply_text("❌ Utilisateur introuvable (/start obligatoire).")
+                return self.WAITING_ADMIN_ID
+
+            target_id = int(u_data["user_id"])
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT alias FROM admins WHERE user_id = %s", (target_id,))
+                if cursor.fetchone():
+                    await update.message.reply_text("⚠️ Cet utilisateur est déjà Administrateur.")
+                    return self.WAITING_ADMIN_ID
+
+            base_alias = u_data.get("first_name") or u_data.get("username") or f"Admin{target_id}"
+            alias = str(base_alias)[:20]
+
+            with self.db_manager.transaction() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO admins (user_id, alias, is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, added_by, date_added)
+                    VALUES (%s, %s, FALSE, TRUE, TRUE, TRUE, FALSE, %s, NOW())
+                    """,
+                    (target_id, alias, user_id)
                 )
-            elif user_keyboard:
-                await context.bot.send_message(
-                    chat_id=target_user_id,
-                    text="💬 <i>Vous pouvez répondre à cet envoi en cliquant ci-dessous :</i>",
-                    parse_mode="HTML",
-                    reply_markup=user_keyboard
-                )
 
-            # ⚡ Marquer le contenu comme livré dans la base et horodater date_livraison
-            self.db_manager.mark_content_delivered(demande_id)
+            self.config.add_admin(target_id)
+            alias_esc = html.escape(alias)
 
-            total_items = len(visuals) + len(docs) + len(texts)
-            done_text = (
-                f"✅ <b>Lot de {total_items} élément{'s' if total_items > 1 else ''} envoyé avec succès !</b>\n"
-                f"Les fichiers ont été transmis sous votre alias officiel : <code>{alias_esc}</code>\n\n"
-                "📦 <i>Le contenu est marqué comme livré. Si la demande est terminée, le dossier pourra être archivé (ou le sera sous 72h).</i>"
-            )
-            back_keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("↩️ Retour à la demande", callback_data=f"retour_texte_{demande_id}")
-            ]])
-
-            if query and query.message:
-                await query.message.reply_text(done_text, parse_mode="HTML", reply_markup=back_keyboard)
-            else:
-                await context.bot.send_message(chat_id=admin_id, text=done_text, parse_mode="HTML", reply_markup=back_keyboard)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ Régler ses privilèges", callback_data=f"perm_admin_{target_id}")],
+                [InlineKeyboardButton("🛡️ Liste Managers", callback_data="gerer_admins")]
+            ])
+            await update.message.reply_text(f"✅ <b>Manager nommé :</b> <code>{alias_esc}</code> ({target_id})", parse_mode="HTML", reply_markup=kb)
+            return ConversationHandler.END
 
         except Exception as exc:
-            logger.error("Échec dispatch batch vers %s : %s", target_user_id, exc, exc_info=True)
-            if query and query.message:
-                await query.message.reply_text("❌ Une erreur est survenue lors de l'envoi du lot.")
+            logger.error("Erreur ajout admin : %s", exc)
+            await update.message.reply_text("❌ Erreur technique.")
+            return ConversationHandler.END
 
-    async def _handle_callback_error(self, query):
+    async def cancel_admin_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if query:
+            await query.answer()
+            msg, kb = self.interface.get_gerer_admins_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+        return ConversationHandler.END
+
+    async def admin_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if not query or not self.config.is_owner(update.effective_user.id):
+            return ConversationHandler.END
+        await query.answer()
+
         try:
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Menu Admin", callback_data="gerer_demandes")
-            ]])
-            await self._safe_edit_or_reply(
-                query,
-                "❌ <b>Erreur technique</b> lors du traitement de l'action admin.",
-                reply_markup=kb
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT user_id, alias, is_owner FROM admins WHERE user_id != %s", (update.effective_user.id,))
+                admins = cursor.fetchall()
+
+            if not admins:
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")]])
+                await self._safe_edit_or_send(query, context, "📭 Aucun administrateur révocable.", reply_markup=kb)
+                return ConversationHandler.END
+
+            lines = ["🛡️ <b>Révocation d'un Administrateur</b>\n"]
+            for idx, adm in enumerate(admins, 1):
+                badge = "👑 [Co-Owner]" if adm.get("is_owner") else "🛡️ [Manager]"
+                alias_esc = html.escape(str(adm.get("alias") or adm['user_id']))
+                lines.append(f"{idx}. {badge} <b>{alias_esc}</b> (<code>{adm['user_id']}</code>)")
+
+            lines.append("\nEnvoyez le <b>numéro</b> de l'administrateur à révoquer :")
+            context.user_data["admin_remove_list"] = admins
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_remove")]])
+            await self._safe_edit_or_send(query, context, "\n".join(lines), reply_markup=kb)
+            return self.WAITING_ADMIN_REMOVE
+        except Exception as exc:
+            logger.error("Erreur suppression admin : %s", exc)
+            return ConversationHandler.END
+
+    async def traiter_admin_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message or not update.message.text:
+            return self.WAITING_ADMIN_REMOVE
+
+        choix = update.message.text.strip()
+        admins = context.user_data.get("admin_remove_list", [])
+
+        if not choix.isdigit() or int(choix) < 1 or int(choix) > len(admins):
+            await update.message.reply_text(f"❌ Numéro hors plage (1 à {len(admins)}) :")
+            return self.WAITING_ADMIN_REMOVE
+
+        selected = admins[int(choix) - 1]
+        context.user_data["target_admin_to_remove"] = selected
+
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⚠️ Confirmer", callback_data="confirm_admin_remove"),
+                InlineKeyboardButton("❌ Annuler", callback_data="cancel_admin_remove")
+            ]
+        ])
+        alias_esc = html.escape(str(selected.get("alias") or selected['user_id']))
+        await update.message.reply_text(f"⚠️ Retirer les droits administrateur à <b>{alias_esc}</b> ?", parse_mode="HTML", reply_markup=kb)
+        return self.WAITING_ADMIN_CONFIRMATION
+
+    async def confirmer_admin_suppression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if not query:
+            return ConversationHandler.END
+        await query.answer()
+
+        selected = context.user_data.pop("target_admin_to_remove", None)
+        context.user_data.pop("admin_remove_list", None)
+        if not selected:
+            return ConversationHandler.END
+
+        target_id = selected["user_id"]
+        try:
+            with self.db_manager.transaction() as cursor:
+                cursor.execute("DELETE FROM admins WHERE user_id = %s", (target_id,))
+
+            self.config.reload_roles()
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛡️ Liste Managers", callback_data="gerer_admins")]])
+            await self._safe_edit_or_send(query, context, "✅ <b>Administrateur révoqué.</b>", reply_markup=kb)
+            return ConversationHandler.END
+        except Exception as exc:
+            logger.error("Erreur révocation admin : %s", exc)
+            return ConversationHandler.END
+
+    async def cancel_admin_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        context.user_data.pop("target_admin_to_remove", None)
+        context.user_data.pop("admin_remove_list", None)
+        if query:
+            await query.answer()
+            msg, kb = self.interface.get_gerer_admins_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+        return ConversationHandler.END
+
+    # ==================== GESTION DES MEMBRES VIP ====================
+
+    async def start_add_vip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if not query:
+            return ConversationHandler.END
+        await query.answer()
+
+        text = "⭐ <b>Promouvoir un Membre VIP</b>\n\nEnvoyez l'<b>ID numérique</b> ou le <b>@username</b> du compte :"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]])
+        await self._safe_edit_or_send(query, context, text, reply_markup=kb)
+        return self.WAITING_VIP_USER
+
+    async def process_vip_target_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message or not update.message.text:
+            return self.WAITING_VIP_USER
+
+        saisie = update.message.text.strip().replace("@", "")
+        try:
+            with self.db_manager.get_cursor() as cursor:
+                if saisie.isdigit():
+                    cursor.execute("SELECT * FROM users WHERE user_id = %s", (int(saisie),))
+                else:
+                    cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(%s)", (saisie,))
+                u_data = cursor.fetchone()
+
+            if not u_data:
+                await update.message.reply_text("❌ Utilisateur introuvable (/start obligatoire).")
+                return self.WAITING_VIP_USER
+
+            context.user_data["target_vip_user"] = u_data
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⭐ 1 Mois (30 jours)", callback_data="vip_dur_30")],
+                [InlineKeyboardButton("⭐ 3 Mois (90 jours)", callback_data="vip_dur_90")],
+                [InlineKeyboardButton("👑 À Vie (Illimité)", callback_data="vip_dur_lifetime")],
+                [InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]
+            ])
+            nom = html.escape(str(u_data.get("first_name") or u_data.get("username") or u_data["user_id"]))
+            await update.message.reply_text(f"👤 Cible : <b>{nom}</b>\n\nChoisissez la durée ou tapez le nombre de jours :", parse_mode="HTML", reply_markup=kb)
+            return self.WAITING_VIP_DURATION
+        except Exception as exc:
+            logger.error("Erreur cible VIP : %s", exc)
+            return ConversationHandler.END
+
+    async def process_vip_duration_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        target_user = context.user_data.pop("target_vip_user", None)
+        if not target_user:
+            return ConversationHandler.END
+
+        target_id = target_user["user_id"]
+        duration_days = None
+
+        if update.callback_query:
+            query = update.callback_query
+            await query.answer()
+            data = query.data
+            if data == "vip_dur_30":
+                duration_days = 30
+            elif data == "vip_dur_90":
+                duration_days = 90
+            elif data == "vip_dur_lifetime":
+                duration_days = None
+        elif update.message and update.message.text:
+            text = update.message.text.strip()
+            if text.isdigit() and int(text) > 0:
+                duration_days = int(text)
+            else:
+                await update.message.reply_text("❌ Entrez un nombre de jours valide ou utilisez les boutons :")
+                context.user_data["target_vip_user"] = target_user
+                return self.WAITING_VIP_DURATION
+
+        self.db_manager.set_user_vip(target_id, is_vip=True, duration_days=duration_days)
+
+        try:
+            type_str = f"pendant {duration_days} jours" if duration_days else "à vie"
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"🎉 <b>Félicitations ! Votre accès VIP ({type_str}) est activé !</b>",
+                parse_mode="HTML"
             )
-        except Exception as fallback_exc:
-            logger.error("Échec notification erreur admin : %s", fallback_exc)
+        except Exception:
+            pass
+
+        dur_txt = f"{duration_days} jours" if duration_days else "À vie"
+        succes_msg = f"✅ Statut VIP activé pour {target_user.get('first_name', target_id)} ({dur_txt}) !"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Gestion VIPs", callback_data="gerer_vips")]])
+
+        if update.callback_query:
+            await self._safe_edit_or_send(update.callback_query, context, succes_msg, reply_markup=kb)
+        elif update.message:
+            await update.message.reply_text(succes_msg, parse_mode="HTML", reply_markup=kb)
+
+        return ConversationHandler.END
+
+    async def start_remove_vip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if not query:
+            return ConversationHandler.END
+        await query.answer()
+
+        vips = self.db_manager.get_vip_users_list()
+        if not vips:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_vips")]])
+            await self._safe_edit_or_send(query, context, "📭 Aucun membre VIP actif.", reply_markup=kb)
+            return ConversationHandler.END
+
+        lines = ["⭐ <b>Révocation Membre VIP</b>\n"]
+        for idx, v in enumerate(vips, 1):
+            nom = html.escape(str(v.get("first_name") or "Utilisateur"))
+            lines.append(f"{idx}. <b>{nom}</b> (<code>{v['user_id']}</code>)")
+
+        lines.append("\nEnvoyez le <b>numéro</b> de la personne à révoquer :")
+        context.user_data["vip_remove_list"] = vips
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_vip_action")]])
+        await self._safe_edit_or_send(query, context, "\n".join(lines), reply_markup=kb)
+        return self.WAITING_VIP_REMOVE
+
+    async def process_vip_remove_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message or not update.message.text:
+            return self.WAITING_VIP_REMOVE
+
+        choix = update.message.text.strip()
+        vips = context.user_data.pop("vip_remove_list", [])
+
+        if not choix.isdigit() or int(choix) < 1 or int(choix) > len(vips):
+            await update.message.reply_text(f"❌ Numéro invalide (1 à {len(vips)}) :")
+            context.user_data["vip_remove_list"] = vips
+            return self.WAITING_VIP_REMOVE
+
+        selected = vips[int(choix) - 1]
+        self.db_manager.set_user_vip(selected["user_id"], is_vip=False)
+
+        await update.message.reply_text(
+            f"✅ <b>Statut VIP révoqué pour {selected.get('first_name', selected['user_id'])}.</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Gestion VIPs", callback_data="gerer_vips")]])
+        )
+        return ConversationHandler.END
+
+    async def cancel_vip_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        context.user_data.pop("target_vip_user", None)
+        context.user_data.pop("vip_remove_list", None)
+        query = update.callback_query
+        if query:
+            await query.answer()
+            msg, kb = self.interface.get_gerer_vips_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+        return ConversationHandler.END

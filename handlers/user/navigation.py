@@ -18,7 +18,7 @@ class NavigationManager:
             "skip_text": "⏭️ Passer",
             "cancel_text": "❌ Annuler",
         }
-        logger.info("NavigationManager initialisé")
+        logger.info("NavigationManager initialisé avec support Staff")
 
     def create_navigation_keyboard(self, current_state, include_skip=False):
         """Construit le clavier dynamique adapté à l'étape courante."""
@@ -76,16 +76,15 @@ class NavigationManager:
         return InlineKeyboardMarkup(keyboard)
 
     def create_vip_admin_choice_keyboard(self):
-        """Génère la liste dynamique des référents pour le membre VIP."""
-        equipe = self.form.db_manager.get_available_admins_for_selection()
+        """Génère la liste dynamique des référents Staff pour le membre VIP."""
+        equipe = self.form.db_manager.get_available_staff()
         kb_rows = []
 
         for member in equipe:
-            role_icon = "👑" if member.get("role") == "Owner" else "🦈"
-            raw_alias = member.get("alias") or f"Admin_{member['user_id']}"
+            raw_alias = member.get("alias") or f"Staff_{member['user_id']}"
             kb_rows.append([
                 InlineKeyboardButton(
-                    f"{role_icon} {raw_alias}",
+                    f"🦈 {raw_alias}",
                     callback_data=f"vip_assign_admin_{member['user_id']}"
                 )
             ])

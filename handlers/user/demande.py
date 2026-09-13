@@ -11,13 +11,13 @@ logger = logging.getLogger(__name__)
 class DemandeManager:
     """Gestionnaire d'affichage, de navigation et de vérification des quotas."""
 
-    ACTIVE_STATUSES = ("📨 Reçue", "⏳ En attente", "🔄 En cours", "⚠️ Difficile")
+    ACTIVE_STATUSES = ("📥 Reçue", "⏳ En attente", "🔄 En cours")
 
     def __init__(self, db_manager, config, account_manager):
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
-        logger.info("DemandeManager initialisé")
+        logger.info("DemandeManager initialisé avec support Staff/RBAC")
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
         """Contrôle les plafonds global et individuel avant création (contourné pour VIP)."""
@@ -118,7 +118,8 @@ class DemandeManager:
                 cursor.execute(
                     """
                     SELECT id, request_number, prenom, nom, age, localisation,
-                           photo_id, statut, prioritaire, montant, date_creation,
+                           photo_id, statut, is_difficile, reussie_substatus,
+                           prioritaire, montant, date_creation,
                            date_modification, instagram, snapchat, details,
                            admin_en_charge, last_vip_reminder
                     FROM demandes
@@ -139,18 +140,15 @@ class DemandeManager:
             photo_id = demande.get("photo_id")
             chat_id = update.effective_chat.id if update.effective_chat else None
 
-            # Navigation via callback query
             if edit_message and update.callback_query and update.callback_query.message:
                 query = update.callback_query
 
-                # Si le message affiché est déjà une photo, remplacement média direct
                 if query.message.photo:
                     await query.edit_message_media(
                         media=InputMediaPhoto(media=photo_id, caption=caption_text, parse_mode="HTML"),
                         reply_markup=keyboard,
                     )
                 else:
-                    # Si le message d'origine était du texte (ex. menu texte), suppression et envoi photo
                     try:
                         await query.message.delete()
                     except Exception:
@@ -164,7 +162,6 @@ class DemandeManager:
                             reply_markup=keyboard,
                         )
             else:
-                # Appel via commande directe (/demandes)
                 if chat_id:
                     await context.bot.send_photo(
                         chat_id=chat_id,
@@ -189,7 +186,13 @@ class DemandeManager:
         nom_esc = html.escape(demande.get("nom") or "")
         nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Non renseigné"
         loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-        statut_esc = html.escape(str(demande.get("statut", "En cours")))
+
+        statut_label = self.db_manager.format_statut_display(
+            demande.get("statut", "📥 Reçue"),
+            demande.get("is_difficile", False),
+            demande.get("reussie_substatus")
+        )
+        statut_esc = html.escape(statut_label)
         age_str = demande.get("age") if demande.get("age") is not None else "?"
 
         lignes = [
@@ -202,8 +205,8 @@ class DemandeManager:
 
         admin_id = demande.get("admin_en_charge")
         if admin_id:
-            alias = self.db_manager.get_admin_alias(admin_id)
-            lignes.append(f"👨‍💼 <b>Référent :</b> {html.escape(alias or 'Attitré')}")
+            alias = self.db_manager.get_staff_alias(admin_id)
+            lignes.append(f"👨‍💼 <b>Référent :</b> {html.escape(alias or 'Opérateur en charge')}")
 
         reseaux = []
         if demande.get("instagram"):
@@ -213,7 +216,8 @@ class DemandeManager:
             snap = html.escape(str(demande["snapchat"]))
             reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
         if reseaux:
-            lignes.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
+            lines_str = " | ".join(reseaux)
+            lignes.append(f"🌐 <b>Réseaux :</b> {lines_str}")
 
         if demande.get("details"):
             det = str(demande["details"])
@@ -234,7 +238,7 @@ class DemandeManager:
         is_prio = bool(demande.get("prioritaire"))
         is_vip = self.db_manager.is_user_vip(user_id)
 
-        if statut in ["📨 Reçue", "⏳ En attente"]:
+        if statut in ["📥 Reçue", "⏳ En attente"]:
             buttons.append([
                 InlineKeyboardButton("✏️ Modifier", callback_data=f"modify_{demande_id}"),
                 InlineKeyboardButton("🗑️ Supprimer", callback_data=f"delete_{demande_id}")

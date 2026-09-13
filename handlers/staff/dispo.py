@@ -22,7 +22,7 @@ class DispoManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("DispoManager initialisé")
+        logger.info("DispoManager initialisé avec support Staff")
 
     def _get_active_filters(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les filtres de la session utilisateur."""
@@ -129,15 +129,14 @@ class DispoManager:
     async def assign_demande_to_admin(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Prend en charge la demande : bascule à '⏳ En attente' et avertit le demandeur."""
         query = update.callback_query
-        admin_id = update.effective_user.id
+        staff_id = update.effective_user.id
 
-        if not self.config.is_admin(admin_id):
-            await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
+        if not self.config.is_staff(staff_id):
+            await query.answer("❌ Action réservée aux membres de l'équipe (Staff).", show_alert=True)
             return
 
         try:
             with self.db_manager.transaction() as cursor:
-                # Vérifier si la demande est encore libre
                 cursor.execute(
                     """
                     SELECT id, user_id, request_number, prenom, statut, admin_en_charge
@@ -152,11 +151,10 @@ class DispoManager:
                     return
 
                 if demande.get("admin_en_charge"):
-                    await query.answer("⚠️ Cette demande est déjà prise en charge par un autre admin.", show_alert=True)
+                    await query.answer("⚠️ Cette demande est déjà prise en charge par un autre opérateur.", show_alert=True)
                     await self.show_demandes_disponibles_page(update, context, page=0)
                     return
 
-                # Bascule du statut vers ⏳ En attente
                 nouveau_statut = "⏳ En attente"
                 cursor.execute(
                     """
@@ -168,7 +166,7 @@ class DispoManager:
                         date_modification = NOW()
                     WHERE id = %s
                     """,
-                    (nouveau_statut, admin_id, demande_id)
+                    (nouveau_statut, staff_id, demande_id)
                 )
 
                 cursor.execute(
@@ -180,13 +178,12 @@ class DispoManager:
                         derniere_action = NOW(),
                         statut_suivi = 'active'
                     """,
-                    (demande_id, admin_id)
+                    (demande_id, staff_id)
                 )
 
-            admin_alias = self.db_manager.get_admin_alias(admin_id)
+            staff_alias = self.db_manager.get_staff_alias(staff_id)
             req_num = demande.get("request_number", demande_id)
 
-            # Notification au demandeur
             await self.notifs_manager.send_status_update_notification(
                 context=context,
                 user_id=demande["user_id"],
@@ -197,12 +194,11 @@ class DispoManager:
                 new_status=nouveau_statut,
                 is_difficile=False,
                 reussie_substatus=None,
-                admin_alias=admin_alias,
+                admin_alias=staff_alias,
             )
 
             await query.answer(f"✅ Demande #{req_num} prise en charge !", show_alert=False)
 
-            # Redirection vers les demandes suivies
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Aller à mes demandes suivies", callback_data="demandes_suivies")],
                 [InlineKeyboardButton("📮 Continuer dans disponibles", callback_data="demandes_disponibles")]
@@ -210,7 +206,7 @@ class DispoManager:
             success_msg = (
                 f"🎉 <b>Prise en charge validée !</b>\n\n"
                 f"La demande <b>#{req_num}</b> est passée en statut <b>⏳ En attente</b>.\n"
-                f"Le demandeur a été notifié avec l'explication du statut."
+                f"Le demandeur a été notifié de votre attribution."
             )
             await self._render_clean_text(query, context, success_msg, keyboard)
 
@@ -219,7 +215,7 @@ class DispoManager:
             await query.answer("❌ Erreur lors de la prise en charge.", show_alert=True)
 
     async def handle_search_text_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Récupère le texte de recherche saisi par l'admin."""
+        """Récupère le texte de recherche saisi par le membre."""
         if not update.message or not update.message.text:
             return
 
@@ -336,7 +332,7 @@ class DispoManager:
         await self._render_clean_text(query, context, text, InlineKeyboardMarkup(keyboard))
 
     def _fetch_filtered_demandes(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> list:
-        """Exécute la requête SQL dynamique selon les permissions de l'admin et les filtres choisis."""
+        """Exécute la requête SQL dynamique selon les permissions du staff et les filtres choisis."""
         filters = self._get_active_filters(context)
 
         join_params = [int(user_id)]
@@ -347,8 +343,8 @@ class DispoManager:
         ]
         where_params = []
 
-        # 1. Permissions admin
-        perms = self.db_manager.get_admin_permissions(user_id)
+        # Permissions staff
+        perms = self.db_manager.get_staff_permissions(user_id)
         p_reseau = perms.get("perm_reseaux", "all")
         p_type = perms.get("perm_type", "all")
 
@@ -362,7 +358,7 @@ class DispoManager:
         elif p_type == "standard_only":
             sql_where.append("d.prioritaire = 0")
 
-        # 2. Filtres session
+        # Filtres session
         if filters["reseau"] == "insta":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
         elif filters["reseau"] == "snap":

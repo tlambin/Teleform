@@ -49,7 +49,7 @@ class EditionManager:
             await self._update_view(query, "❌ Demande introuvable.")
             return
 
-        if demande.get("statut") != "📨 Reçue":
+        if demande.get("statut") not in ("📥 Reçue", "📨 Reçue"):
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("📋 Retour à mes demandes", callback_data="voir_demandes")
             ]])
@@ -114,7 +114,7 @@ class EditionManager:
             await self._update_view(query, "❌ Demande introuvable.")
             return
 
-        if demande.get("statut") != "📨 Reçue":
+        if demande.get("statut") not in ("📥 Reçue", "📨 Reçue"):
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("📋 Mes demandes", callback_data="voir_demandes")
             ]])

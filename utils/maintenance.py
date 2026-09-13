@@ -58,17 +58,28 @@ def cleanup_temp_files():
 def archive_old_requests(db_manager):
     """Archive les demandes anciennes avec transaction atomique sécurisée et purge des suivis."""
     try:
+        hours_setting = db_manager.get_auto_archive_hours() if hasattr(db_manager, "get_auto_archive_hours") else 72
+
         with db_manager.transaction() as cursor:
+            # 1. Sélection des demandes terminées avec contenu livré et délai dépassé OU abandonnées depuis plus de 7 jours
             cursor.execute(
                 """
                 SELECT id FROM demandes
-                WHERE date_creation < DATE_SUB(NOW(), INTERVAL 7 DAY)
-                AND statut IN ('✅ Réussie', '❌ Abandonnée')
-                """
+                WHERE (
+                    statut = '✅ Réussie' 
+                    AND reussie_substatus = 'terminee' 
+                    AND has_delivered_content = TRUE 
+                    AND date_livraison <= DATE_SUB(NOW(), INTERVAL %s HOUR)
+                ) OR (
+                    statut = '❌ Abandonnée' 
+                    AND date_modification <= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                )
+                """,
+                (hours_setting,)
             )
             rows = cursor.fetchall()
             if not rows:
-                logger.info("📦 Aucune demande à archiver")
+                logger.info("📦 Aucune demande prête pour l'archivage automatique")
                 return
 
             ids = [r["id"] for r in rows]
@@ -129,7 +140,7 @@ def optimize_database(db_manager):
     try:
         tables = [
             "demandes", "demandes_suivi", "archives",
-            "users", "admins", "admin_preferences", "config"
+            "users", "admins", "staff", "admin_preferences", "config"
         ]
         with db_manager.get_cursor() as cursor:
             for tbl in tables:
@@ -208,6 +219,14 @@ def get_system_stats(db_manager) -> Dict:
             row = cursor.fetchone()
             stats["users_count"] = row["count"] if row else 0
 
+            cursor.execute("SELECT COUNT(*) AS count FROM staff")
+            row = cursor.fetchone()
+            stats["staff_count"] = row["count"] if row else 0
+
+            cursor.execute("SELECT COUNT(*) AS count FROM admins")
+            row = cursor.fetchone()
+            stats["admins_count"] = row["count"] if row else 0
+
         return stats
 
     except Exception as exc:
@@ -254,10 +273,12 @@ def daily_maintenance(db_manager):
         logger.info("📊 === Rapport de maintenance ===")
         logger.info("💾 Stockage : %.1f Mo (%.1f%%)", stats.get("storage_mb", 0.0), stats.get("storage_percent", 0.0))
         logger.info(
-            "📝 Demandes : %s | Archives : %s | Utilisateurs : %s",
+            "📝 Demandes : %s | Archives : %s | Utilisateurs : %s | Staff : %s | Admins : %s",
             stats.get("demandes_count", 0),
             stats.get("archives_count", 0),
-            stats.get("users_count", 0)
+            stats.get("users_count", 0),
+            stats.get("staff_count", 0),
+            stats.get("admins_count", 0)
         )
         logger.info("✅ === Maintenance terminée avec succès ===")
 

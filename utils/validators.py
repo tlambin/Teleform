@@ -185,7 +185,7 @@ class Validators:
 
     @staticmethod
     def validate_alias(alias: str) -> Tuple[bool, str]:
-        """Valide la structure syntaxique d'un pseudonyme admin."""
+        """Valide la structure syntaxique d'un pseudonyme admin ou staff."""
         if not alias or not str(alias).strip():
             return False, "L'alias ne peut pas être vide."
 
@@ -203,7 +203,7 @@ class Validators:
 
     @staticmethod
     def validate_alias_uniqueness(db_manager, alias: str, exclude_user_id: int = None) -> Tuple[bool, str]:
-        """Contrôle l'unicité de l'alias contre la table admins et la table config (owner)."""
+        """Contrôle l'unicité de l'alias contre les tables admins, staff et la configuration propriétaire."""
         try:
             clean_alias = str(alias).strip()
             owner_alias = db_manager.get_config_value("owner_alias", "Propriétaire") or "Propriétaire"
@@ -214,6 +214,7 @@ class Validators:
                     return False, "Cet alias est réservé au compte propriétaire."
 
             with db_manager.get_cursor() as cursor:
+                # 1. Vérification dans la table admins
                 if exclude_user_id:
                     cursor.execute(
                         "SELECT user_id FROM admins WHERE LOWER(alias) = LOWER(%s) AND user_id != %s",
@@ -226,7 +227,22 @@ class Validators:
                     )
 
                 if cursor.fetchone():
-                    return False, "Cet alias est déjà utilisé par un autre administrateur."
+                    return False, "Cet alias est déjà utilisé dans l'équipe d'administration."
+
+                # 2. Vérification dans la table staff
+                if exclude_user_id:
+                    cursor.execute(
+                        "SELECT user_id FROM staff WHERE LOWER(alias) = LOWER(%s) AND user_id != %s",
+                        (clean_alias, int(exclude_user_id)),
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT user_id FROM staff WHERE LOWER(alias) = LOWER(%s)",
+                        (clean_alias,),
+                    )
+
+                if cursor.fetchone():
+                    return False, "Cet alias est déjà utilisé par un opérateur de l'équipe Staff."
 
             return True, ""
         except Exception as exc:
@@ -246,7 +262,6 @@ class Validators:
         """Supprime les espaces superflus, les espaces insécables et les caractères de contrôle."""
         if not text:
             return ""
-        # Remplacement des espaces insécables et assimilés
         t = str(text).replace("\xa0", " ").replace("\u202f", " ").replace("\u200b", "").strip()
         return "".join(c for c in t if ord(c) >= 32 or c in "\n\t")
 

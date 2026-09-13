@@ -146,7 +146,13 @@ class UnifiedMaintenance:
             for cmd in emergency_commands:
                 subprocess.run(cmd, shell=True, capture_output=True)
 
-            log_files = ["/tmp/bot.log", "/tmp/bot_output.log", LOG_FILE]
+            log_files = [
+                os.path.join(BASE_DIR, "logs", "bot.log"),
+                "/tmp/bot.log",
+                "/tmp/bot_console.log",
+                "/tmp/bot_output.log",
+                LOG_FILE,
+            ]
             for lp in log_files:
                 _truncate_file(lp, keep_lines=100)
 
@@ -216,8 +222,14 @@ if __name__ == "__main__":
         logger.critical("Échec critique maintenance : %s", fatal_exc, exc_info=True)
         sys.exit(1)
     finally:
-        if db and hasattr(db, "close"):
-            try:
-                db.close()
-            except Exception:
-                pass
+        if db:
+            if hasattr(db, "close_all"):
+                try:
+                    db.close_all()
+                except Exception:
+                    pass
+            elif hasattr(db, "close"):
+                try:
+                    db.close()
+                except Exception:
+                    pass

@@ -10,12 +10,21 @@ logger = logging.getLogger(__name__)
 
 
 class StatsManager:
-    """Gestionnaire des métriques d'activité, des demandes et des utilisateurs."""
+    """Gestionnaire des métriques d'activité, des demandes et des utilisateurs avec support RBAC."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("StatsManager initialisé")
+        logger.info("StatsManager initialisé avec support RBAC")
+
+    def _has_stats_perm(self, user_id: int) -> bool:
+        """Vérifie si l'utilisateur a le droit de consulter les statistiques globales."""
+        if self.config.is_owner(user_id):
+            return True
+        if self.config.is_admin(user_id):
+            privs = self.db_manager.get_admin_privileges(user_id)
+            return privs.get("can_view_stats", True)
+        return False
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou supprime la photo existante pour émettre du texte."""
@@ -50,13 +59,13 @@ class StatsManager:
                     )
 
     async def show_general_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche le panneau complet des statistiques à destination de l'Owner."""
+        """Affiche le panneau complet des statistiques pour la direction et managers habilités."""
         user = update.effective_user
-        if not user or not self.config.is_owner(user.id):
+        if not user or not self._has_stats_perm(user.id):
             if update.callback_query:
-                await update.callback_query.answer("❌ Accès propriétaire requis.", show_alert=True)
+                await update.callback_query.answer("❌ Accès non autorisé aux statistiques.", show_alert=True)
             elif update.message:
-                await update.message.reply_text("❌ Action réservée au propriétaire.")
+                await update.message.reply_text("❌ Action non autorisée.")
             return
 
         if update.callback_query:
@@ -65,9 +74,11 @@ class StatsManager:
         try:
             stats = self._get_full_statistics()
             message = self._format_stats_message(stats)
+
+            retour_callback = "gerer_bot" if self.config.is_owner(user.id) else "parametres"
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Actualiser", callback_data="bot_stats")],
-                [InlineKeyboardButton("🔙 Menu Owner", callback_data="gerer_bot")]
+                [InlineKeyboardButton("🔙 Retour", callback_data=retour_callback)]
             ])
 
             if update.callback_query:
@@ -95,6 +106,15 @@ class StatsManager:
 
             cursor.execute(
                 """
+                SELECT COUNT(*) AS total
+                FROM users
+                WHERE is_vip = TRUE AND (vip_until IS NULL OR vip_until > NOW())
+                """
+            )
+            stats["total_vips"] = cursor.fetchone()["total"]
+
+            cursor.execute(
+                """
                 SELECT COUNT(DISTINCT user_id) AS actifs
                 FROM users
                 WHERE derniere_activite >= NOW() - INTERVAL 24 HOUR
@@ -110,6 +130,13 @@ class StatsManager:
                 """
             )
             stats["new_7d"] = cursor.fetchone()["nouveaux"]
+
+            # Métriques Rôles & Équipe
+            cursor.execute("SELECT COUNT(*) AS total FROM staff")
+            stats["total_staff"] = cursor.fetchone()["total"]
+
+            cursor.execute("SELECT COUNT(*) AS total FROM admins")
+            stats["total_admins"] = cursor.fetchone()["total"]
 
             # Métriques Demandes
             cursor.execute("SELECT COUNT(*) AS total FROM demandes")
@@ -181,8 +208,11 @@ class StatsManager:
 
         lines = [
             "📈 <b>Tableau de Bord & Statistiques</b>\n",
-            "👥 <b>Communauté :</b>",
+            "👥 <b>Communauté & Équipe :</b>",
             f"• Inscrits totaux : <b>{stats.get('total_users', 0)}</b>",
+            f"• Membres VIP actifs : <b>{stats.get('total_vips', 0)}</b>",
+            f"• Opérateurs Staff : <b>{stats.get('total_staff', 0)}</b>",
+            f"• Direction & Admins : <b>{stats.get('total_admins', 0)}</b>",
             f"• Actifs (dernières 24h) : <b>{stats.get('active_24h', 0)}</b>",
             f"• Nouveaux (7 derniers jours) : <b>{stats.get('new_7d', 0)}</b>\n",
             "📋 <b>Volume de Demandes :</b>",
@@ -201,6 +231,6 @@ class StatsManager:
         storage_pct = (storage / 512.0) * 100.0 if storage else 0.0
         lines.append("\n💾 <b>Ressources Système :</b>")
         lines.append(f"• Stockage local : <b>{storage:.1f} Mo / 512 Mo</b> ({storage_pct:.1f} %)")
-        lines.append(f"• Base de données : <b>{db_size} Mo</b>")
+        lines.append(f"• Base de données MySQL : <b>{db_size} Mo</b>")
 
         return "\n".join(lines)

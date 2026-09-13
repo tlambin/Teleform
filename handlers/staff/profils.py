@@ -1,4 +1,4 @@
-"""Module de consultation des profils statistiques pour administrateurs et utilisateurs."""
+"""Module de consultation des profils statistiques pour opérateurs (Staff) et demandeurs."""
 
 import html
 import logging
@@ -9,12 +9,12 @@ logger = logging.getLogger(__name__)
 
 
 class ProfilsManager:
-    """Gestionnaire de rendu des profils de performance (Admin) et d'activité (Demandeur)."""
+    """Gestionnaire de rendu des profils de performance (Staff) et d'activité (Demandeur)."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("ProfilsManager initialisé")
+        logger.info("ProfilsManager initialisé avec support Staff/Admin")
 
     def _render_progress_bar(self, rate: float) -> str:
         """Génère une jauge graphique sur 10 blocs."""
@@ -59,26 +59,30 @@ class ProfilsManager:
                         disable_web_page_preview=True
                     )
 
-    # ==================== PROFIL ADMINISTRATEUR ====================
+    # ==================== PROFIL OPÉRATEUR / STAFF ====================
 
     async def show_admin_profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
-        """Affiche la fiche détaillée de performance d'un administrateur."""
+        """Affiche la fiche détaillée de performance d'un membre de l'équipe."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
         user_id = update.effective_user.id
         is_owner = self.config.is_owner(user_id)
+        is_admin = self.config.is_admin(user_id)
+        privs = self.db_manager.get_admin_privileges(user_id) if is_admin else {}
+        can_view_others = is_owner or privs.get("can_view_stats", False)
 
-        if not is_owner and user_id != admin_id:
-            await query.answer("❌ Seul le propriétaire peut consulter le profil d'autres administrateurs.", show_alert=True)
+        # Un membre peut voir son propre profil ; pour voir celui d'un tiers, il faut être admin/owner habilité
+        if user_id != admin_id and not can_view_others:
+            await query.answer("❌ Consultation réservée aux responsables d'équipe.", show_alert=True)
             return
 
         stats = self.db_manager.get_admin_stats(admin_id)
-        alias_esc = html.escape(str(stats.get("alias") or f"Admin_{admin_id}"))
+        alias_esc = html.escape(str(stats.get("alias") or f"Membre_{admin_id}"))
 
-        if is_owner and admin_id == self.config.OWNER_ID:
-            date_str = "Créateur / Propriétaire"
+        if self.config.is_owner(admin_id):
+            date_str = "Direction / Propriétaire"
         else:
             dt_added = stats.get("date_added")
             date_str = dt_added.strftime("%d/%m/%Y") if dt_added and hasattr(dt_added, "strftime") else "Inconnue"
@@ -86,13 +90,17 @@ class ProfilsManager:
         taux = stats.get("taux_reussite", 0)
         bar = self._render_progress_bar(taux)
 
-        res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(stats.get("perm_reseaux"), str(stats.get("perm_reseaux", "all")))
-        typ_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(stats.get("perm_type"), str(stats.get("perm_type", "all")))
+        res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(
+            stats.get("perm_reseaux"), str(stats.get("perm_reseaux", "all"))
+        )
+        typ_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(
+            stats.get("perm_type"), str(stats.get("perm_type", "all"))
+        )
 
         montant_total = float(stats.get("montant_total") or 0.0)
 
         lines = [
-            f"🦈 <b>Profil Administrateur : {alias_esc}</b>",
+            f"🦈 <b>Profil Opérateur : {alias_esc}</b>",
             f"🆔 ID Telegram : <code>{admin_id}</code>",
             f"📅 Dans l'équipe : <b>{html.escape(date_str)}</b>",
             f"🛡️ Permissions : <i>{html.escape(res_label)} | {html.escape(typ_label)}</i>\n",
@@ -104,20 +112,22 @@ class ProfilsManager:
             f"📦 <b>Total demandes clôturées :</b> <code>{stats.get('total_traitees', 0)}</code>\n",
             f"📈 <b>Taux de succès :</b> <b>{taux}%</b>",
             f"{bar}\n",
-            "💎 <b>GESTION PRIORITAIRE</b>",
-            f"• Demandes prioritaires : <b>{stats.get('prioritaires_traitees', 0)}</b>",
-            f"• Volume financier traité : <b>{montant_total:.2f}€</b>"
+            "💎 <b>DOSSIERS PRIORITAIRES</b>",
+            f"• Demandes prioritaires traitées : <b>{stats.get('prioritaires_traitees', 0)}</b>",
+            f"• Volume financier traité : <b>{montant_total:.2f} €</b>"
         ]
 
         text = "\n".join(lines)
-
         buttons = []
-        if is_owner:
+
+        if is_owner and user_id != admin_id:
             buttons.append([
-                InlineKeyboardButton("🛡️ Modifier ses droits", callback_data=f"perm_admin_{admin_id}"),
+                InlineKeyboardButton("🛡️ Modifier ses droits", callback_data=f"perm_staff_{admin_id}"),
                 InlineKeyboardButton("🏷️ Renommer", callback_data=f"owner_edit_alias_{admin_id}")
             ])
-            buttons.append([InlineKeyboardButton("👥 Retour Équipe", callback_data="gerer_admins")])
+            buttons.append([InlineKeyboardButton("👥 Retour Équipe Staff", callback_data="gerer_staff")])
+        elif can_view_others and user_id != admin_id:
+            buttons.append([InlineKeyboardButton("👥 Retour Équipe Staff", callback_data="gerer_staff")])
         else:
             buttons.append([InlineKeyboardButton("🔙 Menu Paramètres", callback_data="parametres")])
 
@@ -132,8 +142,8 @@ class ProfilsManager:
             return
 
         user_id = update.effective_user.id
-        if not self.config.is_admin(user_id):
-            await query.answer("❌ Réservé à l'équipe d'administration.", show_alert=True)
+        if not self.config.is_staff(user_id):
+            await query.answer("❌ Réservé aux membres de l'équipe (Staff).", show_alert=True)
             return
 
         demande = None
@@ -193,7 +203,7 @@ class ProfilsManager:
             f"📨 En attente de prise en charge : <b>{stats.get('en_attente', 0)}</b>",
             f"✅ Terminées avec succès : <b>{stats.get('reussies', 0)}</b>",
             f"❌ Demandes échouées / refusées : <b>{stats.get('abandonnees', 0)}</b>\n",
-            f"💎 <b>Demandes payantes :</b> {stats.get('total_prio', 0)} (Total investi : <b>{montant_investi:.2f}€</b>)"
+            f"💎 <b>Demandes payantes :</b> {stats.get('total_prio', 0)} (Total investi : <b>{montant_investi:.2f} €</b>)"
         ]
 
         text = "\n".join(lines)
