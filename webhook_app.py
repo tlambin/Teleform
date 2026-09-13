@@ -68,7 +68,7 @@ def webhook():
     try:
         app_instance, loop = get_bot_and_loop()
         update = Update.de_json(json_data, app_instance.bot)
-        
+
         msg_summary = update.message.text if update.message and update.message.text else "autre"
         logger.info("📩 Update reçue : ID=%s, type=%s", update.update_id, msg_summary)
 
@@ -110,12 +110,19 @@ def trigger_hourly_reminders():
         class DummyContext:
             job = DummyJob()
             bot = app_instance.bot
+            application = app_instance
 
-        future = asyncio.run_coroutine_threadsafe(
-            bot_main.check_and_send_admin_reminders(DummyContext()), loop
-        )
-        future.result(timeout=20)
-        return jsonify(status="ok", message="Rappels envoyés."), 200
+        async def _run_all_maintenance_tasks():
+            # 1. Rappels habituels des administrateurs
+            await bot_main.check_and_send_admin_reminders(DummyContext())
+            # 2. Auto-archivage des demandes livrées depuis plus de 72h
+            await bot_main.check_and_auto_archive_demandes(DummyContext())
+            # 3. Rappel hebdomadaire (7j) pour les demandes terminées sans contenu envoyé
+            await bot_main.check_and_send_delivery_reminders(DummyContext())
+
+        future = asyncio.run_coroutine_threadsafe(_run_all_maintenance_tasks(), loop)
+        future.result(timeout=45)
+        return jsonify(status="ok", message="Toutes les tâches cron ont été exécutées avec succès."), 200
     except Exception as exc:
         logger.error("Erreur cron reminders : %s", exc, exc_info=True)
         return jsonify(status="error", message=str(exc)), 500

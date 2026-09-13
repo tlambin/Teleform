@@ -221,6 +221,28 @@ class OwnerHandlers:
             await query.answer()
             msg, kb = self.interface.get_gerer_vips_menu()
             await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+        elif data == "menu_delais":
+            await self.show_delais_menu(update, context)
+        elif data == "cfg_sub_archive_hours":
+            await self.show_archive_hours_menu(update, context)
+        elif data == "cfg_sub_reminder_days":
+            await self.show_reminder_days_menu(update, context)
+        elif data.startswith("set_arch_hours_"):
+            try:
+                val = int(data.replace("set_arch_hours_", ""))
+                self.db_manager.set_auto_archive_hours(val)
+                await query.answer(f"✅ Auto-archivage fixé à {val}h !")
+                await self.show_delais_menu(update, context)
+            except (ValueError, TypeError):
+                await query.answer("❌ Valeur invalide.", show_alert=True)
+        elif data.startswith("set_rem_days_"):
+            try:
+                val = int(data.replace("set_rem_days_", ""))
+                self.db_manager.set_delivery_reminder_days(val)
+                await query.answer(f"✅ Relance admin fixée à {val} jours !")
+                await self.show_delais_menu(update, context)
+            except (ValueError, TypeError):
+                await query.answer("❌ Valeur invalide.", show_alert=True)
         elif data.startswith("perm_admin_"):
             try:
                 admin_target_id = int(data.replace("perm_admin_", ""))
@@ -236,6 +258,97 @@ class OwnerHandlers:
                 await self.alias_manager.modifier_alias(update, context)
             except (ValueError, TypeError):
                 pass
+
+    # ==================== GESTION DES DÉLAIS PARAMÉTRABLES ====================
+
+    async def show_delais_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche le menu de gestion des délais d'archivage et de relance."""
+        query = update.callback_query
+        if not query:
+            return
+
+        await query.answer()
+        hours = self.db_manager.get_auto_archive_hours()
+        days = self.db_manager.get_delivery_reminder_days()
+
+        text = (
+            "⚙️ <b>Gestion des Délais Automatiques</b>\n\n"
+            f"• 📦 <b>Auto-archivage après livraison :</b> <code>{hours}h</code>\n"
+            f"• ⚠️ <b>Rappel admin sans livraison :</b> <code>{days} jours</code>\n\n"
+            "<i>Cliquez sur une option pour modifier la fréquence :</i>"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton(f"📦 Auto-archivage ({hours}h)", callback_data="cfg_sub_archive_hours")],
+            [InlineKeyboardButton(f"⚠️ Relance sans livraison ({days}j)", callback_data="cfg_sub_reminder_days")],
+            [InlineKeyboardButton("🔙 Gestion Bot", callback_data="gerer_bot")]
+        ]
+
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def show_archive_hours_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche les options de sélection pour le délai d'auto-archivage."""
+        query = update.callback_query
+        if not query:
+            return
+
+        await query.answer()
+        current = self.db_manager.get_auto_archive_hours()
+
+        def b_lbl(name: str, val: int) -> str:
+            return f"✅ {name}" if current == val else name
+
+        keyboard = [
+            [
+                InlineKeyboardButton(b_lbl("24 heures (1j)", 24), callback_data="set_arch_hours_24"),
+                InlineKeyboardButton(b_lbl("48 heures (2j)", 48), callback_data="set_arch_hours_48"),
+            ],
+            [
+                InlineKeyboardButton(b_lbl("72 heures (3j)", 72), callback_data="set_arch_hours_72"),
+                InlineKeyboardButton(b_lbl("168 heures (7j)", 168), callback_data="set_arch_hours_168"),
+            ],
+            [InlineKeyboardButton("🔙 Retour", callback_data="menu_delais")]
+        ]
+
+        text = (
+            "📦 <b>Délai d'auto-archivage</b>\n\n"
+            f"Valeur actuelle : <b>{current} heures</b>\n\n"
+            "Une fois le contenu livré à l'utilisateur, ce délai s'écoule avant "
+            "que la demande ne soit déplacée automatiquement vers les archives."
+        )
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def show_reminder_days_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche les options de sélection pour le délai de relance de livraison."""
+        query = update.callback_query
+        if not query:
+            return
+
+        await query.answer()
+        current = self.db_manager.get_delivery_reminder_days()
+
+        def b_lbl(name: str, val: int) -> str:
+            return f"✅ {name}" if current == val else name
+
+        keyboard = [
+            [
+                InlineKeyboardButton(b_lbl("3 jours", 3), callback_data="set_rem_days_3"),
+                InlineKeyboardButton(b_lbl("5 jours", 5), callback_data="set_rem_days_5"),
+            ],
+            [
+                InlineKeyboardButton(b_lbl("7 jours", 7), callback_data="set_rem_days_7"),
+                InlineKeyboardButton(b_lbl("14 jours", 14), callback_data="set_rem_days_14"),
+            ],
+            [InlineKeyboardButton("🔙 Retour", callback_data="menu_delais")]
+        ]
+
+        text = (
+            "⚠️ <b>Délai de relance pour contenu non livré</b>\n\n"
+            f"Valeur actuelle : <b>{current} jours</b>\n\n"
+            "Si une demande est déclarée <b>✅ Réussie (❎ Terminée)</b> mais que l'administrateur "
+            "n'a toujours rien transmis, un rappel lui sera envoyé selon cet intervalle."
+        )
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     # ==================== GESTION DES PERMISSIONS ADMIN ====================
 

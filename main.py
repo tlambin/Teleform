@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Point d'entrée principal de l'application Telegram avec gestion des VIP, Telegram Stars, mode pause et auto-archivage."""
+"""Point d'entrée principal de l'application Telegram avec gestion des VIP, Telegram Stars, mode pause, auto-archivage et rappels de livraison."""
 
 from datetime import datetime
+import html
 import logging
 import os
 import sys
@@ -168,7 +169,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def check_and_auto_archive_demandes(context: ContextTypes.DEFAULT_TYPE):
-    """Archive automatiquement les demandes terminées et livrées depuis plus de 72 heures."""
+    """Archive automatiquement les demandes terminées et livrées selon le délai configuré (72h par défaut)."""
     db_manager = getattr(context, "job", None) and context.job.data.get("db_manager")
     if not db_manager and hasattr(context, "application"):
         db_manager = context.application.bot_data.get("db_manager")
@@ -177,14 +178,60 @@ async def check_and_auto_archive_demandes(context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        expired_demandes = db_manager.get_expired_delivered_demandes(hours=72)
+        hours = db_manager.get_auto_archive_hours()
+        expired_demandes = db_manager.get_expired_delivered_demandes(hours=hours)
         for dem in expired_demandes:
             dem_id = dem["id"]
             req_num = dem.get("request_number") or dem_id
             if db_manager.archiver_demande_reussie(dem_id):
-                logger.info("📦 Demande #%s archivée automatiquement après 72h post-livraison.", req_num)
+                logger.info("📦 Demande #%s archivée automatiquement après %sh post-livraison.", req_num, hours)
     except Exception as exc:
-        logger.error("Erreur exécution auto-archivage 72h : %s", exc)
+        logger.error("Erreur exécution auto-archivage : %s", exc)
+
+
+async def check_and_send_delivery_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Envoie un rappel aux administrateurs pour les demandes terminées sans livraison selon le délai configuré (7j par défaut)."""
+    db_manager = getattr(context, "job", None) and context.job.data.get("db_manager")
+    if not db_manager and hasattr(context, "application"):
+        db_manager = context.application.bot_data.get("db_manager")
+
+    if not db_manager:
+        return
+
+    try:
+        days = db_manager.get_delivery_reminder_days()
+        undelivered = db_manager.get_undelivered_terminee_demandes_for_reminder(days=days)
+        for dem in undelivered:
+            admin_id = dem["admin_id"]
+            dem_id = dem["id"]
+            req_num = html.escape(str(dem.get("request_number") or dem_id))
+            prenom = html.escape(str(dem.get("prenom") or "la cible"))
+
+            msg = (
+                f"⚠️ <b>Rappel de livraison (Demande #{req_num})</b>\n\n"
+                f"Le dossier concernant <b>{prenom}</b> est passé en <b>✅ Réussie (❎ Terminée)</b> "
+                f"depuis plus de {days} jours, mais <b>aucun contenu n'a encore été transmis</b> au demandeur.\n\n"
+                "👉 Pensez à lui envoyer ses fichiers afin de finaliser la prestation et débloquer l'archivage du dossier."
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 Transmettre le contenu", callback_data=f"contacter_{dem_id}")],
+                [InlineKeyboardButton("📋 Ouvrir mes suivis", callback_data="demandes_suivies")]
+            ])
+
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=msg,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+                db_manager.mark_delivery_reminder_sent(dem_id)
+                logger.info("Rappel de livraison (%sj) envoyé à l'admin %s pour la demande #%s", days, admin_id, req_num)
+            except Exception as notif_err:
+                logger.warning("Impossible d'envoyer le rappel de livraison à %s : %s", admin_id, notif_err)
+
+    except Exception as exc:
+        logger.error("Erreur lors de la vérification des rappels de livraison : %s", exc)
 
 
 # ==================== HANDLERS TELEGRAM STARS ====================
@@ -480,9 +527,10 @@ class TelegramBot:
         app.add_handler(CommandHandler("toggle_demandes", self.owner_handlers.toggle_demandes))
         app.add_handler(CommandHandler("maintenance", self.owner_handlers.run_maintenance))
 
+        # Aiguillage des actions spécifiques au propriétaire (avec support des délais & archivage)
         app.add_handler(CallbackQueryHandler(
             self.owner_handlers.handle_owner_callbacks,
-            pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips)$",
+            pattern=r"^(perm_admin_.*|set_perm_.*|bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|gerer_vips|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*)$",
         ))
 
         # Aiguillage de toutes les actions d'administration et de gestion des statuts
@@ -517,14 +565,23 @@ class TelegramBot:
             )
             logger.info("⏰ JobQueue activée : vérification des rappels admins toutes les 3600s.")
 
-            # 2. Auto-archivage des demandes livrées depuis 72h
+            # 2. Auto-archivage des demandes livrées (délai paramétrable)
             app.job_queue.run_repeating(
                 check_and_auto_archive_demandes,
                 interval=3600,
                 first=30,
                 data={"db_manager": self.db_manager},
             )
-            logger.info("📦 JobQueue activée : auto-archivage des demandes livrées (+72h) toutes les 3600s.")
+            logger.info("📦 JobQueue activée : auto-archivage des demandes livrées toutes les 3600s.")
+
+            # 3. Rappels des demandes terminées non livrées (délai paramétrable)
+            app.job_queue.run_repeating(
+                check_and_send_delivery_reminders,
+                interval=21600,
+                first=45,
+                data={"db_manager": self.db_manager},
+            )
+            logger.info("⏰ JobQueue activée : vérification des rappels de livraison toutes les 6h.")
 
         async def post_init(application: Application):
             await self.setup_bot_commands(application)

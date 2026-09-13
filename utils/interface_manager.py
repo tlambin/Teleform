@@ -281,6 +281,7 @@ class InterfaceManager:
         keyboard = [
             [InlineKeyboardButton(f"{toggle_text} LES DEMANDES", callback_data=toggle_callback)],
             [InlineKeyboardButton("⚙️ LIMITES & QUOTAS", callback_data="menu_limits")],
+            [InlineKeyboardButton("⏱️ DÉLAIS & ARCHIVAGE", callback_data="menu_delais")],
             [InlineKeyboardButton("🛠️ MAINTENANCE SYSTÈME", callback_data="maintenance")],
             [InlineKeyboardButton("🔙 Retour", callback_data="parametres")]
         ]

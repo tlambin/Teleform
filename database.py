@@ -209,6 +209,7 @@ class DatabaseManager:
                 reussie_substatus VARCHAR(20) DEFAULT NULL,
                 has_delivered_content BOOLEAN NOT NULL DEFAULT FALSE,
                 date_livraison DATETIME DEFAULT NULL,
+                last_delivery_reminder DATETIME DEFAULT NULL,
                 admin_en_charge BIGINT DEFAULT NULL,
                 ancien_admin_alias VARCHAR(64) DEFAULT NULL,
                 raison_abandon TEXT DEFAULT NULL,
@@ -280,6 +281,7 @@ class DatabaseManager:
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
             ("demandes", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "date_livraison", "DATETIME DEFAULT NULL"),
+            ("demandes", "last_delivery_reminder", "DATETIME DEFAULT NULL"),
             ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
             ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
             ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
@@ -303,11 +305,9 @@ class DatabaseManager:
 
         try:
             with self.get_cursor() as cursor:
-                # 1. Création des tables de base
                 for query in tables:
                     cursor.execute(query)
 
-                # 2. Harmonisation de la table config
                 try:
                     cursor.execute("DESCRIBE config")
                     cols = [r["Field"].lower() for r in cursor.fetchall()]
@@ -325,7 +325,6 @@ class DatabaseManager:
                 except Exception as cfg_err:
                     logger.warning("Vérification schéma config : %s", cfg_err)
 
-                # 3. Auto-migration des colonnes avec vérification SHOW COLUMNS
                 for table, col, col_def in expected_columns:
                     try:
                         cursor.execute(f"SHOW COLUMNS FROM {table} LIKE %s", (col,))
@@ -336,7 +335,6 @@ class DatabaseManager:
                         if getattr(e, "errno", None) != 1060:
                             logger.debug("Info colonne %s.%s : %s", table, col, e)
 
-                # 4. Paramètres de config par défaut
                 try:
                     k_col, v_col = self._get_config_columns()
                     default_configs = [
@@ -345,6 +343,8 @@ class DatabaseManager:
                         ('demandes_enabled', 'true'),
                         ('max_total_demandes', '0'),
                         ('max_demandes_per_user', '3'),
+                        ('auto_archive_hours', '72'),
+                        ('delivery_reminder_days', '7'),
                     ]
                     for k, v in default_configs:
                         cursor.execute(
@@ -386,7 +386,6 @@ class DatabaseManager:
     # ==================== TABLE CONFIG DYNAMIQUE ====================
 
     def _get_config_columns(self) -> Tuple[str, str]:
-        """Détecte les vrais noms de colonnes de la table config (clé, valeur)."""
         cached = self._get_cached_value("cfg_col_names")
         if cached:
             return cached
@@ -416,7 +415,6 @@ class DatabaseManager:
             return "key_name", "`value`"
 
     def get_config_value(self, key_name: str, default: Optional[str] = None) -> Optional[str]:
-        """Récupère une valeur de configuration depuis la table config."""
         cache_key = f"cfg_{key_name}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
@@ -438,7 +436,6 @@ class DatabaseManager:
             return default
 
     def set_config_value(self, key_name: str, value: str) -> bool:
-        """Met à jour ou insère un paramètre dans la table config avec invalidation immédiate."""
         k_col, v_col = self._get_config_columns()
         try:
             with self.get_cursor() as cursor:
@@ -458,7 +455,6 @@ class DatabaseManager:
             return False
 
     def get_all_config(self) -> Dict[str, str]:
-        """Retourne l'ensemble des clés de configuration sous forme de dictionnaire."""
         cached = self._get_cached_value("cfg_all")
         if cached is not None:
             return cached
@@ -476,7 +472,6 @@ class DatabaseManager:
             return {}
 
     def is_bot_active(self) -> bool:
-        """Indique si la création de demandes est activée (vérifie bot_active et maintenance)."""
         maint = str(self.get_config_value("maintenance_mode", "false")).lower()
         if maint in ("true", "1", "yes"):
             return False
@@ -485,14 +480,12 @@ class DatabaseManager:
         return val in ("true", "1", "yes")
 
     def set_bot_active(self, active: bool) -> bool:
-        """Bascule l'acceptation globale des demandes et synchronise les clés associées."""
         val_str = "true" if active else "false"
         ok1 = self.set_config_value("bot_active", val_str)
         ok2 = self.set_config_value("demandes_enabled", val_str)
         return ok1 and ok2
 
     def get_max_total_demandes(self) -> int:
-        """Retourne la limite globale de demandes (0 = illimité)."""
         val = self.get_config_value("max_total_demandes", "0")
         try:
             return int(val)
@@ -500,12 +493,10 @@ class DatabaseManager:
             return 0
 
     def set_max_total_demandes(self, limit: int) -> bool:
-        """Met à jour le plafond global de demandes."""
         val = max(0, int(limit))
         return self.set_config_value("max_total_demandes", str(val))
 
     def get_max_demandes_per_user(self) -> int:
-        """Retourne la limite par utilisateur (3 par défaut, 0 = illimité)."""
         val = self.get_config_value("max_demandes_per_user", "3")
         try:
             return int(val)
@@ -513,9 +504,36 @@ class DatabaseManager:
             return 3
 
     def set_max_demandes_per_user(self, limit: int) -> bool:
-        """Met à jour le plafond par utilisateur."""
         val = max(0, int(limit))
         return self.set_config_value("max_demandes_per_user", str(val))
+
+    # ==================== GESTION DES DÉLAIS PARAMÉTRABLES ====================
+
+    def get_auto_archive_hours(self) -> int:
+        """Retourne le délai en heures avant l'archivage automatique (72h par défaut)."""
+        val = self.get_config_value("auto_archive_hours", "72")
+        try:
+            return max(1, int(val))
+        except (ValueError, TypeError):
+            return 72
+
+    def set_auto_archive_hours(self, hours: int) -> bool:
+        """Définit le délai en heures avant l'archivage automatique."""
+        val = max(1, int(hours))
+        return self.set_config_value("auto_archive_hours", str(val))
+
+    def get_delivery_reminder_days(self) -> int:
+        """Retourne le délai en jours avant relance d'une demande terminée non livrée (7j par défaut)."""
+        val = self.get_config_value("delivery_reminder_days", "7")
+        try:
+            return max(1, int(val))
+        except (ValueError, TypeError):
+            return 7
+
+    def set_delivery_reminder_days(self, days: int) -> bool:
+        """Définit le délai en jours avant relance d'une demande terminée non livrée."""
+        val = max(1, int(days))
+        return self.set_config_value("delivery_reminder_days", str(val))
 
     def get_owner_id(self) -> int:
         val = self.get_config_value("owner_id", str(getattr(self.config, "OWNER_ID", 0)))
@@ -757,7 +775,7 @@ class DatabaseManager:
             return False
 
     def mark_content_delivered(self, demande_id: int):
-        """Marque le contenu comme livré et initialise la date pour le décompte de 72h."""
+        """Marque le contenu comme livré et initialise la date pour le décompte d'archivage."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -822,8 +840,9 @@ class DatabaseManager:
             logger.error("Erreur archivage demande réussie %s : %s", demande_id, exc)
             return False
 
-    def get_expired_delivered_demandes(self, hours: int = 72) -> List[Dict[str, Any]]:
+    def get_expired_delivered_demandes(self, hours: Optional[int] = None) -> List[Dict[str, Any]]:
         """Récupère les demandes terminées avec contenu livré depuis plus de X heures pour auto-archivage."""
+        effective_hours = hours if hours is not None else self.get_auto_archive_hours()
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -836,12 +855,48 @@ class DatabaseManager:
                       AND date_livraison IS NOT NULL
                       AND TIMESTAMPDIFF(HOUR, date_livraison, NOW()) >= %s
                     """,
-                    (hours,)
+                    (effective_hours,)
                 )
                 return cursor.fetchall()
         except Exception as exc:
             logger.error("Erreur extraction demandes prêtes pour auto-archivage : %s", exc)
             return []
+
+    def get_undelivered_terminee_demandes_for_reminder(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Récupère les demandes terminées non livrées nécessitant un rappel (délai paramétrable)."""
+        effective_days = days if days is not None else self.get_delivery_reminder_days()
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT d.id, d.request_number, d.prenom, d.nom, ds.admin_id
+                    FROM demandes d
+                    JOIN demandes_suivi ds ON d.id = ds.demande_id
+                    WHERE d.statut = '✅ Réussie'
+                      AND d.reussie_substatus = 'terminee'
+                      AND d.has_delivered_content = FALSE
+                      AND (
+                          (d.last_delivery_reminder IS NULL AND TIMESTAMPDIFF(DAY, d.date_modification, NOW()) >= %s)
+                          OR (d.last_delivery_reminder IS NOT NULL AND TIMESTAMPDIFF(DAY, d.last_delivery_reminder, NOW()) >= %s)
+                      )
+                    """,
+                    (effective_days, effective_days)
+                )
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur récupération demandes non livrées pour rappel : %s", exc)
+            return []
+
+    def mark_delivery_reminder_sent(self, demande_id: int):
+        """Met à jour la date du dernier rappel de livraison envoyé à l'administrateur."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE demandes SET last_delivery_reminder = NOW() WHERE id = %s",
+                    (int(demande_id),)
+                )
+        except Exception as exc:
+            logger.error("Erreur mise à jour last_delivery_reminder sur demande %s : %s", demande_id, exc)
 
     @staticmethod
     def format_statut_display(statut: str, is_difficile: bool = False, reussie_substatus: Optional[str] = None) -> str:
