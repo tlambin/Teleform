@@ -1,4 +1,4 @@
-"""Formulaire de création de demandes avec vérification des quotas, choix du référent VIP et validation des réseaux sociaux."""
+"""Formulaire de création de demandes avec orientation cible, matrice de canaux, quotas et choix du référent VIP."""
 
 import html
 import logging
@@ -27,7 +27,8 @@ class FormulaireManager:
         self.config = config
         self.account_manager = account_manager
 
-        # Constantes d'états
+        # Constantes d'états (ORIENTATION devient la première étape)
+        self.ORIENTATION = 0
         self.PRENOM = 1
         self.NOM = 2
         self.AGE = 3
@@ -42,6 +43,7 @@ class FormulaireManager:
 
         # Historique pour navigation arrière
         self.state_history = {
+            self.PRENOM: self.ORIENTATION,
             self.NOM: self.PRENOM,
             self.AGE: self.NOM,
             self.LOCALISATION: self.AGE,
@@ -60,7 +62,7 @@ class FormulaireManager:
         }
 
         self.navigation = NavigationManager(self)
-        logger.info("FormulaireManager initialisé avec support Staff/RBAC")
+        logger.info("FormulaireManager initialisé avec support Matrice Canaux & RBAC")
 
     def get_conversation_handler(self):
         """Retourne le ConversationHandler complet du formulaire."""
@@ -71,6 +73,10 @@ class FormulaireManager:
                 CallbackQueryHandler(self.new_demande_from_callback, pattern="^new_demande$"),
             ],
             states={
+                self.ORIENTATION: [
+                    CallbackQueryHandler(self.handle_orientation_choice, pattern="^ori_(hetero|gay|bi)$"),
+                    CallbackQueryHandler(self.navigation.handle_form_navigation, pattern=nav_pattern),
+                ],
                 self.PRENOM: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.prenom),
                     CallbackQueryHandler(self.navigation.handle_form_navigation, pattern=nav_pattern),
@@ -152,11 +158,18 @@ class FormulaireManager:
                     reply_markup=reply_markup
                 )
             else:
-                await query.edit_message_text(
-                    text=text,
-                    parse_mode=parse_mode,
-                    reply_markup=reply_markup
-                )
+                try:
+                    await query.edit_message_text(
+                        text=text,
+                        parse_mode=parse_mode,
+                        reply_markup=reply_markup
+                    )
+                except Exception:
+                    await query.message.reply_text(
+                        text=text,
+                        parse_mode=parse_mode,
+                        reply_markup=reply_markup
+                    )
         elif update.message:
             await update.message.reply_text(
                 text=text,
@@ -242,6 +255,16 @@ class FormulaireManager:
 
         return True
 
+    def _get_orientation_keyboard(self) -> InlineKeyboardMarkup:
+        """Construit le clavier de choix de l'orientation cible."""
+        buttons = [
+            [InlineKeyboardButton("👩‍❤️‍👨 Hétéro (Défaut)", callback_data="ori_hetero")],
+            [InlineKeyboardButton("👨‍❤️‍👨 Gay", callback_data="ori_gay")],
+            [InlineKeyboardButton("🔄 Bi (Les deux)", callback_data="ori_bi")],
+            [InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")]
+        ]
+        return InlineKeyboardMarkup(buttons)
+
     async def new_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Initialise le formulaire via la commande /new."""
         if not await self._check_service_active(update, context):
@@ -260,13 +283,16 @@ class FormulaireManager:
         context.user_data["demande"] = {}
         context.user_data["user_id"] = user_id
 
-        await update.message.reply_text(
-            "📝 <b>Création d'une nouvelle demande</b>\n\n"
-            "Pour démarrer, quel est le <b>prénom</b> de la personne ?",
-            parse_mode="HTML",
-            reply_markup=self.navigation.create_navigation_keyboard(self.PRENOM),
+        text = (
+            "🎯 <b>Nouvelle demande — Étape 1/10</b>\n\n"
+            "Pour commencer, quelle est l'<b>orientation de la cible</b> ou le type de piège souhaité ?"
         )
-        return self.PRENOM
+        await update.message.reply_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=self._get_orientation_keyboard()
+        )
+        return self.ORIENTATION
 
     async def new_demande_from_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Initialise le formulaire suite à un clic sur bouton Inline."""
@@ -292,8 +318,46 @@ class FormulaireManager:
         context.user_data["user_id"] = user_id
 
         text = (
-            "📝 <b>Création d'une nouvelle demande</b>\n\n"
-            "Pour démarrer, quel est le <b>prénom</b> de la personne ?"
+            "🎯 <b>Nouvelle demande — Étape 1/10</b>\n\n"
+            "Pour commencer, quelle est l'<b>orientation de la cible</b> ou le type de piège souhaité ?"
+        )
+        await self._edit_or_send(update, context, text, reply_markup=self._get_orientation_keyboard())
+        return self.ORIENTATION
+
+    async def handle_orientation_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Intercepte et valide le choix d'orientation."""
+        query = update.callback_query
+        if not query or not query.data:
+            return self.ORIENTATION
+
+        orientation = query.data.replace("ori_", "")
+
+        # Vérification qu'au moins un canal (Insta ou Snap) est ouvert pour cette orientation
+        allow_insta = self.db_manager.is_channel_combination_allowed(orientation, "insta")
+        allow_snap = self.db_manager.is_channel_combination_allowed(orientation, "snap")
+
+        if not allow_insta and not allow_snap:
+            labels = {"hetero": "hétéro", "gay": "gay", "bi": "bi"}
+            lbl = labels.get(orientation, orientation)
+            await query.answer(
+                f"🚫 Les demandes {lbl} (Insta & Snap) sont actuellement suspendues par l'administration.",
+                show_alert=True
+            )
+            return self.ORIENTATION
+
+        await query.answer()
+        context.user_data.setdefault("demande", {})["orientation"] = orientation
+
+        label_map = {
+            "hetero": "👩‍❤️‍👨 Hétéro",
+            "gay": "👨‍❤️‍👨 Gay",
+            "bi": "🔄 Bi (Les deux)"
+        }
+        ori_label = label_map.get(orientation, orientation.capitalize())
+
+        text = (
+            f"✅ Orientation choisie : <b>{ori_label}</b>\n\n"
+            "👤 Quel est maintenant le <b>prénom</b> de la personne ?"
         )
         kb = self.navigation.create_navigation_keyboard(self.PRENOM)
         await self._edit_or_send(update, context, text, reply_markup=kb)
@@ -440,6 +504,33 @@ class FormulaireManager:
         if not update.message or not update.message.text:
             return self.INSTAGRAM
 
+        demande = context.user_data.get("demande", {})
+        orientation = demande.get("orientation", "hetero")
+
+        # 1. Vérification activation combinaison (ex: allow_hetero_insta ou allow_gay_insta)
+        if not self.db_manager.is_channel_combination_allowed(orientation, "insta"):
+            await update.message.reply_text(
+                f"🚫 Les demandes Instagram pour le profil <b>{orientation.capitalize()}</b> sont actuellement désactivées.\n\n"
+                "Veuillez passer cette étape et renseigner son compte Snapchat.",
+                parse_mode="HTML",
+                reply_markup=self.navigation.create_navigation_keyboard(self.INSTAGRAM, include_skip=True)
+            )
+            return self.INSTAGRAM
+
+        # 2. Vérification quota combinaison (contourné pour VIP)
+        if orientation in ("hetero", "gay"):
+            max_quota = int(self.db_manager.get_config_value(f"max_{orientation}_insta", "0") or 0)
+            if max_quota > 0 and not self.db_manager.is_user_vip(update.effective_user.id):
+                current = self.db_manager.get_channel_combination_active_count(orientation, "insta")
+                if current >= max_quota:
+                    await update.message.reply_text(
+                        f"⚠️ Le quota maximal pour Insta {orientation.capitalize()} ({max_quota}) est atteint.\n\n"
+                        "Veuillez passer cette étape et utiliser Snapchat.",
+                        parse_mode="HTML",
+                        reply_markup=self.navigation.create_navigation_keyboard(self.INSTAGRAM, include_skip=True)
+                    )
+                    return self.INSTAGRAM
+
         user_input = Validators.clean_input(update.message.text)
         try:
             val = Validators.validate_instagram(user_input)
@@ -476,6 +567,44 @@ class FormulaireManager:
     async def snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.message.text:
             return self.SNAPCHAT
+
+        demande = context.user_data.get("demande", {})
+        orientation = demande.get("orientation", "hetero")
+        has_insta = bool(demande.get("instagram"))
+
+        # 1. Vérification activation combinaison
+        if not self.db_manager.is_channel_combination_allowed(orientation, "snap"):
+            if not has_insta:
+                await update.message.reply_text(
+                    f"🚫 Les demandes Snapchat pour le profil <b>{orientation.capitalize()}</b> sont actuellement désactivées et aucun compte Instagram n'est renseigné.\n\n"
+                    "Veuillez revenir en arrière pour indiquer Instagram.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.SNAPCHAT}")],
+                        [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                    ])
+                )
+                return self.SNAPCHAT
+            return await self.skip_snapchat(update, context)
+
+        # 2. Vérification quota combinaison (contourné pour VIP)
+        if orientation in ("hetero", "gay"):
+            max_quota = int(self.db_manager.get_config_value(f"max_{orientation}_snap", "0") or 0)
+            if max_quota > 0 and not self.db_manager.is_user_vip(update.effective_user.id):
+                current = self.db_manager.get_channel_combination_active_count(orientation, "snap")
+                if current >= max_quota:
+                    if not has_insta:
+                        await update.message.reply_text(
+                            f"⚠️ Le quota maximal pour Snap {orientation.capitalize()} ({max_quota}) est atteint.\n\n"
+                            "Veuillez revenir en arrière pour renseigner un profil Instagram.",
+                            parse_mode="HTML",
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.SNAPCHAT}")],
+                                [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                            ])
+                        )
+                        return self.SNAPCHAT
+                    return await self.skip_snapchat(update, context)
 
         user_input = Validators.clean_input(update.message.text)
         try:
@@ -617,23 +746,36 @@ class FormulaireManager:
             return self.MONTANT
 
     async def prompt_admin_selection_or_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Si l'utilisateur est VIP, propose le choix d'un référent Staff. Sinon, enregistre directement."""
+        """Si l'utilisateur est VIP, propose le choix d'un référent Staff compatible. Sinon, enregistre directement."""
         user = update.effective_user
         if not user:
             return ConversationHandler.END
 
         if self.db_manager.is_user_vip(user.id):
             equipe = self.db_manager.get_available_staff()
+            demande = context.user_data.get("demande", {})
+            target_ori = demande.get("orientation", "hetero")
             kb_rows = []
 
             for member in equipe:
                 alias = member.get("alias", f"Staff_{member['user_id']}")
-                kb_rows.append([
-                    InlineKeyboardButton(
-                        f"🦈 {alias}",
-                        callback_data=f"vip_assign_admin_{member['user_id']}"
-                    )
-                ])
+                perms = self.db_manager.get_staff_permissions(member["user_id"])
+                p_ori = perms.get("perm_orientation", "all")
+
+                # Filtrage de compatibilité pour le choix du VIP
+                is_compatible = (
+                    p_ori in ("all", "bi")
+                    or p_ori == target_ori
+                    or (target_ori == "bi" and p_ori in ("hetero", "gay"))
+                )
+
+                if is_compatible:
+                    kb_rows.append([
+                        InlineKeyboardButton(
+                            f"🦈 {alias}",
+                            callback_data=f"vip_assign_admin_{member['user_id']}"
+                        )
+                    ])
 
             kb_rows.append([InlineKeyboardButton("🎲 Premier disponible (Aléatoire)", callback_data="vip_assign_admin_0")])
             kb_rows.append([InlineKeyboardButton("⬅️ Retour", callback_data=f"form_back_{self.CHOIX_ADMIN}")])
@@ -682,6 +824,7 @@ class FormulaireManager:
 
         target_admin_id = demande.get("target_admin_id")
         statut_initial = "⏳ En attente" if target_admin_id else "📥 Reçue"
+        orientation = demande.get("orientation", "hetero")
 
         try:
             with self.db_manager.transaction() as cursor:
@@ -695,13 +838,14 @@ class FormulaireManager:
                 cursor.execute(
                     """
                     INSERT INTO demandes (
-                        user_id, prenom, nom, age, localisation, photo_id,
+                        user_id, orientation, prenom, nom, age, localisation, photo_id,
                         instagram, snapchat, details, prioritaire, montant, statut,
                         admin_en_charge, request_number, date_creation, date_modification
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                     """,
                     (
                         int(user_id),
+                        orientation,
                         demande.get("prenom"),
                         demande.get("nom"),
                         demande.get("age"),
@@ -733,7 +877,8 @@ class FormulaireManager:
                     )
 
             context.user_data.pop("demande", None)
-            logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s (Assigné: %s)", next_num, demande_id, user_id, target_admin_id)
+            logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s (Orientation: %s, Assigné: %s)",
+                        next_num, demande_id, user_id, orientation, target_admin_id)
 
             type_txt = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
             montant_txt = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -743,6 +888,9 @@ class FormulaireManager:
                 alias = self.db_manager.get_staff_alias(target_admin_id)
                 referent_txt = f"\n👨‍💼 <b>Référent assigné :</b> {html.escape(alias or 'Opérateur')}"
 
+            label_map = {"hetero": "👩‍❤️‍👨 Hétéro", "gay": "👨‍❤️‍👨 Gay", "bi": "🔄 Bi"}
+            ori_badge = label_map.get(orientation, orientation.capitalize())
+
             prenom_esc = html.escape(demande.get("prenom") or "")
             nom_esc = html.escape(demande.get("nom") or "")
             nom_complet_esc = f"{prenom_esc} {nom_esc}".strip()
@@ -750,6 +898,7 @@ class FormulaireManager:
 
             recap = (
                 f"✅ <b>Demande n°{next_num} enregistrée avec succès !</b>\n\n"
+                f"🎯 <b>Orientation cible :</b> {ori_badge}\n"
                 f"👤 <b>Identité :</b> {nom_complet_esc}\n"
                 f"🎂 <b>Âge :</b> {demande.get('age')} ans\n"
                 f"📍 <b>Localisation :</b> {loc_esc}\n"
@@ -778,9 +927,13 @@ class FormulaireManager:
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
         loc_esc = html.escape(str(demande.get("localisation") or ""))
 
+        label_map = {"hetero": "👩‍❤️‍👨 Hétéro", "gay": "👨‍❤️‍👨 Gay", "bi": "🔄 Bi"}
+        ori_str = label_map.get(demande.get("orientation", "hetero"), "Hétéro")
+
         alert_text = (
             f"👑 <b>NOUVELLE DEMANDE VIP ASSIGNÉE (#{req_num})</b>\n\n"
             f"Un client VIP vous a sélectionné comme référent pour traiter sa demande :\n\n"
+            f"🎯 <b>Cible :</b> {ori_str}\n"
             f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
             f"📍 <b>Localisation :</b> {loc_esc}\n"
             f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}\n\n"
@@ -814,14 +967,19 @@ class FormulaireManager:
     async def _broadcast_new_demande_alert(
         self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict
     ):
-        """Avertit l'équipe Staff selon les préférences de notification."""
+        """Avertit l'équipe Staff selon les préférences de notification et la compatibilité d'orientation."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
         loc_esc = html.escape(str(demande.get("localisation") or ""))
 
+        label_map = {"hetero": "👩‍❤️‍👨 Hétéro", "gay": "👨‍❤️‍👨 Gay", "bi": "🔄 Bi"}
+        target_ori = demande.get("orientation", "hetero")
+        ori_str = label_map.get(target_ori, "Hétéro")
+
         alert_text = (
             f"🔔 <b>Nouvelle demande disponible #{req_num}</b>\n\n"
+            f"🎯 <b>Orientation cible :</b> {ori_str}\n"
             f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
             f"📍 <b>Localisation :</b> {loc_esc}\n"
             f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}"
@@ -831,13 +989,25 @@ class FormulaireManager:
             [InlineKeyboardButton("📮 Voir les disponibles", callback_data="demandes_disponibles")]
         ])
 
-        # Envoi à l'ensemble du Staff opérationnel (et co-gérants)
         staff_destinataires = self.config.get_all_staff() or self.config.get_all_admins()
 
         for staff_id in staff_destinataires:
             try:
                 sid = int(staff_id)
                 if self.db_manager.is_staff_paused(sid):
+                    continue
+
+                # Contrôle de compatibilité orientation du staff
+                perms = self.db_manager.get_staff_permissions(sid)
+                p_ori = perms.get("perm_orientation", "all")
+
+                is_compatible = (
+                    p_ori in ("all", "bi")
+                    or p_ori == target_ori
+                    or (target_ori == "bi" and p_ori in ("hetero", "gay"))
+                )
+
+                if not is_compatible:
                     continue
 
                 prefs = self.db_manager.get_admin_preferences(sid)

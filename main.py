@@ -582,7 +582,7 @@ class TelegramBot:
         # Aiguillage Gouvernance & Administration (Admin/Owner)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*)$",
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*)$",
         ))
 
         # Aiguillage Traitement opérationnel des dossiers (Staff)
@@ -594,7 +594,7 @@ class TelegramBot:
         # Menus d'interface et navigation
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_interface_callbacks,
-            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_limits|limit_.*)$",
+            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_channels|menu_limits|limit_.*)$",
         ))
 
         # Callbacks utilisateurs / clients

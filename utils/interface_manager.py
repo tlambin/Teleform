@@ -153,6 +153,140 @@ class InterfaceManager:
 
         return message, InlineKeyboardMarkup(keyboard)
 
+    # ========== SOUS-MENU GÉRER LE SERVICE (Owner Only) ==========
+
+    def get_gerer_bot_menu(self):
+        """Menu de contrôle du bot avec synchronisation de l'état des demandes."""
+        try:
+            bot_active = self.config.are_demandes_enabled()
+        except Exception:
+            bot_active = True
+
+        status_badge = "🟢 ACTIF" if bot_active else "🔴 SUSPENDU"
+        toggle_text = "🔴 SUSPENDRE" if bot_active else "🟢 ACTIVER"
+        toggle_callback = "bot_off" if bot_active else "bot_on"
+
+        try:
+            max_tot = self.config.get_max_total_demandes()
+            max_usr = self.config.get_max_demandes_per_user()
+            tot_str = str(max_tot) if max_tot > 0 else "Illimité"
+            usr_str = str(max_usr) if max_usr > 0 else "Illimité"
+        except Exception:
+            tot_str, usr_str = "Inconnu", "Inconnu"
+
+        message = (
+            "🤖 <b>Contrôle du Service</b>\n\n"
+            f"• <b>Statut des demandes :</b> {status_badge}\n"
+            f"• <b>Plafond global :</b> <code>{html.escape(tot_str)}</code>\n"
+            f"• <b>Plafond par personne :</b> <code>{html.escape(usr_str)}</code>\n\n"
+            "Options opérationnelles :"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton(f"{toggle_text} LES DEMANDES", callback_data=toggle_callback)],
+            [InlineKeyboardButton("🎛️ CANAUX & ORIENTATIONS (ON/OFF)", callback_data="menu_channels")],
+            [InlineKeyboardButton("⚙️ LIMITES & QUOTAS", callback_data="menu_limits")],
+            [InlineKeyboardButton("⏱️ DÉLAIS & ARCHIVAGE", callback_data="menu_delais")],
+            [InlineKeyboardButton("🛠️ MAINTENANCE SYSTÈME", callback_data="maintenance")],
+            [InlineKeyboardButton("🔙 Retour", callback_data="parametres")]
+        ]
+
+        return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU CANAUX & COMBINAISONS (Toggles ON/OFF) ==========
+
+    def get_channels_menu(self):
+        """Menu interactif de bascule pour les 4 canaux combinés (Hétéro/Gay × Insta/Snap)."""
+        h_insta = str(self.db_manager.get_config_value("allow_hetero_insta", "true")).lower() == "true"
+        h_snap = str(self.db_manager.get_config_value("allow_hetero_snap", "true")).lower() == "true"
+        g_insta = str(self.db_manager.get_config_value("allow_gay_insta", "true")).lower() == "true"
+        g_snap = str(self.db_manager.get_config_value("allow_gay_snap", "true")).lower() == "true"
+
+        b_hi = "🟢 Insta Hétéro" if h_insta else "🔴 Insta Hétéro"
+        b_hs = "🟢 Snap Hétéro" if h_snap else "🔴 Snap Hétéro"
+        b_gi = "🟢 Insta Gay" if g_insta else "🔴 Insta Gay"
+        b_gs = "🟢 Snap Gay" if g_snap else "🔴 Snap Gay"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(b_hi, callback_data="toggle_allow_hetero_insta"),
+                InlineKeyboardButton(b_hs, callback_data="toggle_allow_hetero_snap"),
+            ],
+            [
+                InlineKeyboardButton(b_gi, callback_data="toggle_allow_gay_insta"),
+                InlineKeyboardButton(b_gs, callback_data="toggle_allow_gay_snap"),
+            ],
+            [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
+        ]
+
+        text = (
+            "🎛️ <b>Disponibilité des Canaux Combinés</b>\n\n"
+            "Activez ou suspendez individuellement chaque flux :\n\n"
+            f"• <b>Insta Hétéro :</b> {'✅ Ouvert' if h_insta else '❌ Désactivé'}\n"
+            f"• <b>Snap Hétéro :</b> {'✅ Ouvert' if h_snap else '❌ Désactivé'}\n"
+            f"• <b>Insta Gay :</b> {'✅ Ouvert' if g_insta else '❌ Désactivé'}\n"
+            f"• <b>Snap Gay :</b> {'✅ Ouvert' if g_snap else '❌ Désactivé'}\n\n"
+            "<i>(Les demandes Bi utilisent ces canaux selon le réseau sélectionné)</i>"
+        )
+        return text, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU QUOTAS & LIMITES (Matrice) ==========
+
+    def get_limits_menu(self):
+        """Ajustement rapide des quotas globaux, par client et par canal combiné."""
+        max_total = self.config.get_max_total_demandes()
+        max_user = self.config.get_max_demandes_per_user()
+
+        m_hi = int(self.db_manager.get_config_value("max_hetero_insta", "0") or 0)
+        m_hs = int(self.db_manager.get_config_value("max_hetero_snap", "0") or 0)
+        m_gi = int(self.db_manager.get_config_value("max_gay_insta", "0") or 0)
+        m_gs = int(self.db_manager.get_config_value("max_gay_snap", "0") or 0)
+
+        def fmt(val: int) -> str:
+            return f"<b>{val}</b>" if val > 0 else "<i>Illimité</i>"
+
+        message = (
+            "⚙️ <b>Limitation & Plafonds des Demandes</b>\n\n"
+            f"🌐 <b>Plafond global actif :</b> {fmt(max_total)}\n"
+            f"👤 <b>Plafond par client :</b> {fmt(max_user)}\n\n"
+            "<b>Plafonds spécifiques par canal :</b>\n"
+            f"• 📷 Insta Hétéro : {fmt(m_hi)}\n"
+            f"• 👻 Snap Hétéro : {fmt(m_hs)}\n"
+            f"• 📷 Insta Gay : {fmt(m_gi)}\n"
+            f"• 👻 Snap Gay : {fmt(m_gs)}\n\n"
+            "<i>Choisissez un quota à saisir au clavier :</i>"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🌐 Global: -5", callback_data="limit_total_sub5"),
+                InlineKeyboardButton("Illimité (0)", callback_data="limit_total_0"),
+                InlineKeyboardButton("+5", callback_data="limit_total_add5"),
+            ],
+            [
+                InlineKeyboardButton("👤 Client: -1", callback_data="limit_user_sub1"),
+                InlineKeyboardButton("Défaut (3)", callback_data="limit_user_3"),
+                InlineKeyboardButton("+1", callback_data="limit_user_add1"),
+            ],
+            [
+                InlineKeyboardButton("📷 Max Insta Hétéro", callback_data="limit_input_hetero_insta"),
+                InlineKeyboardButton("👻 Max Snap Hétéro", callback_data="limit_input_hetero_snap"),
+            ],
+            [
+                InlineKeyboardButton("📷 Max Insta Gay", callback_data="limit_input_gay_insta"),
+                InlineKeyboardButton("👻 Max Snap Gay", callback_data="limit_input_gay_snap"),
+            ],
+            [
+                InlineKeyboardButton("✏️ Saisir Total", callback_data="limit_input_total"),
+                InlineKeyboardButton("✏️ Saisir Client", callback_data="limit_input_user"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Retour Gestion Service", callback_data="gerer_bot")
+            ]
+        ]
+
+        return message, InlineKeyboardMarkup(keyboard)
+
     # ========== SOUS-MENU GÉRER LE STAFF (Admins & Owner) ==========
 
     def get_gerer_staff_menu(self):
@@ -161,7 +295,7 @@ class InterfaceManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT s.user_id, s.alias, s.date_added, s.perm_reseaux, s.perm_type, s.is_paused,
+                    SELECT s.user_id, s.alias, s.date_added, s.perm_reseaux, s.perm_type, s.perm_orientation, s.is_paused,
                            u.first_name, u.username,
                            u_add.first_name AS nom_ajouteur
                     FROM staff s
@@ -189,14 +323,17 @@ class InterfaceManager:
 
                     res_tag = st.get("perm_reseaux") or "all"
                     type_tag = st.get("perm_type") or "all"
+                    ori_tag = st.get("perm_orientation") or "all"
+
                     res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(res_tag, str(res_tag))
                     type_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(type_tag, str(type_tag))
+                    ori_label = {"all": "Toutes", "hetero": "Hétéro/Bi", "gay": "Gay/Bi", "bi": "Bi"}.get(ori_tag, str(ori_tag))
                     statut_dispo = "⏸️ <i>(En pause)</i>" if st.get("is_paused") else "🟢 <i>(En service)</i>"
 
                     message += (
                         f"• <b>{alias_esc}</b> {statut_dispo} ({pseudo})\n"
                         f"  ID : <code>{st['user_id']}</code> | Recruté le {date_str} par {par_qui}\n"
-                        f"  🛡️ <i>Accès : {html.escape(res_label)} | {html.escape(type_label)}</i>\n\n"
+                        f"  🛡️ <i>Accès : {html.escape(res_label)} | {html.escape(type_label)} | {html.escape(ori_label)}</i>\n\n"
                     )
 
                     keyboard.append([
@@ -336,84 +473,6 @@ class InterfaceManager:
         ]
         return message, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU GÉRER LE SERVICE (Owner Only) ==========
-
-    def get_gerer_bot_menu(self):
-        """Menu de contrôle du bot avec synchronisation de l'état des demandes."""
-        try:
-            bot_active = self.config.are_demandes_enabled()
-        except Exception:
-            bot_active = True
-
-        status_badge = "🟢 ACTIF" if bot_active else "🔴 SUSPENDU"
-        toggle_text = "🔴 SUSPENDRE" if bot_active else "🟢 ACTIVER"
-        toggle_callback = "bot_off" if bot_active else "bot_on"
-
-        try:
-            max_tot = self.config.get_max_total_demandes()
-            max_usr = self.config.get_max_demandes_per_user()
-            tot_str = str(max_tot) if max_tot > 0 else "Illimité"
-            usr_str = str(max_usr) if max_usr > 0 else "Illimité"
-        except Exception:
-            tot_str, usr_str = "Inconnu", "Inconnu"
-
-        message = (
-            "🤖 <b>Contrôle du Service</b>\n\n"
-            f"• <b>Statut des demandes :</b> {status_badge}\n"
-            f"• <b>Plafond global :</b> <code>{html.escape(tot_str)}</code>\n"
-            f"• <b>Plafond par personne :</b> <code>{html.escape(usr_str)}</code>\n\n"
-            "Options opérationnelles :"
-        )
-
-        keyboard = [
-            [InlineKeyboardButton(f"{toggle_text} LES DEMANDES", callback_data=toggle_callback)],
-            [InlineKeyboardButton("⚙️ LIMITES & QUOTAS", callback_data="menu_limits")],
-            [InlineKeyboardButton("⏱️ DÉLAIS & ARCHIVAGE", callback_data="menu_delais")],
-            [InlineKeyboardButton("🛠️ MAINTENANCE SYSTÈME", callback_data="maintenance")],
-            [InlineKeyboardButton("🔙 Retour", callback_data="parametres")]
-        ]
-
-        return message, InlineKeyboardMarkup(keyboard)
-
-    # ========== SOUS-MENU QUOTAS & LIMITES (Owner Only) ==========
-
-    def get_limits_menu(self):
-        """Ajustement rapide des quotas de soumission de demandes."""
-        max_total = self.config.get_max_total_demandes()
-        max_user = self.config.get_max_demandes_per_user()
-
-        total_str = f"<b>{max_total}</b>" if max_total > 0 else "<i>Illimité (aucun plafond)</i>"
-        user_str = f"<b>{max_user}</b>" if max_user > 0 else "<i>Illimité</i>"
-
-        message = (
-            "⚙️ <b>Limitation des Demandes</b>\n\n"
-            f"🌐 <b>Plafond global actif :</b> {total_str}\n"
-            f"👤 <b>Plafond par personne :</b> {user_str}\n\n"
-            "Ajustez les quotas souhaités :"
-        )
-
-        keyboard = [
-            [
-                InlineKeyboardButton("🌐 Global: -5", callback_data="limit_total_sub5"),
-                InlineKeyboardButton("Illimité (0)", callback_data="limit_total_0"),
-                InlineKeyboardButton("+5", callback_data="limit_total_add5"),
-            ],
-            [
-                InlineKeyboardButton("👤 User: -1", callback_data="limit_user_sub1"),
-                InlineKeyboardButton("Défaut (3)", callback_data="limit_user_3"),
-                InlineKeyboardButton("+1", callback_data="limit_user_add1"),
-            ],
-            [
-                InlineKeyboardButton("✏️ Saisir Total au clavier", callback_data="limit_input_total"),
-                InlineKeyboardButton("✏️ Saisir User au clavier", callback_data="limit_input_user"),
-            ],
-            [
-                InlineKeyboardButton("🔙 Retour Gestion Service", callback_data="gerer_bot")
-            ]
-        ]
-
-        return message, InlineKeyboardMarkup(keyboard)
-
     # ========== RÔLE UTILISATEUR ==========
 
     def _get_user_role(self, user_id: int) -> str:
@@ -444,6 +503,7 @@ class InterfaceManager:
             "gerer_vips": self.get_gerer_vips_menu,
             "menu_vip_shop": self.get_vip_shop_menu,
             "gerer_bot": self.get_gerer_bot_menu,
+            "menu_channels": self.get_channels_menu,
             "menu_limits": self.get_limits_menu,
         }
 

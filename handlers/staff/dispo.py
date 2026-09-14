@@ -22,12 +22,13 @@ class DispoManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("DispoManager initialisé avec support Staff")
+        logger.info("DispoManager initialisé avec support Orientation & Staff")
 
     def _get_active_filters(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les filtres de la session utilisateur."""
         if "dispo_filters" not in context.user_data:
             context.user_data["dispo_filters"] = {
+                "orientation": "all",
                 "reseau": "all",
                 "age_range": "all",
                 "type_demande": "all",
@@ -58,30 +59,38 @@ class DispoManager:
             await self.show_filters_menu(update, context)
             return
 
-        # 3. Bascule Filtre Réseaux
+        # 3. Bascule Filtre Orientation
+        elif data.startswith("dispo_filter_ori_"):
+            val = data.replace("dispo_filter_ori_", "")
+            filters["orientation"] = val
+            await self.show_filters_menu(update, context)
+            return
+
+        # 4. Bascule Filtre Réseaux
         elif data.startswith("dispo_filter_net_"):
             val = data.replace("dispo_filter_net_", "")
             filters["reseau"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 4. Bascule Filtre Âge
+        # 5. Bascule Filtre Âge
         elif data.startswith("dispo_filter_age_"):
             val = data.replace("dispo_filter_age_", "")
             filters["age_range"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 5. Bascule Filtre Priorité
+        # 6. Bascule Filtre Priorité
         elif data.startswith("dispo_filter_type_"):
             val = data.replace("dispo_filter_type_", "")
             filters["type_demande"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 6. Reset Filtres
+        # 7. Reset Filtres
         elif data == "dispo_filter_reset":
             context.user_data["dispo_filters"] = {
+                "orientation": "all",
                 "reseau": "all",
                 "age_range": "all",
                 "type_demande": "all",
@@ -90,7 +99,7 @@ class DispoManager:
             await self.show_filters_menu(update, context)
             return
 
-        # 7. Lancement de la recherche textuelle
+        # 8. Lancement de la recherche textuelle
         elif data == "dispo_search_prompt":
             context.user_data["waiting_dispo_search"] = True
             msg = (
@@ -103,7 +112,7 @@ class DispoManager:
             await self._render_clean_text(query, context, msg, keyboard)
             return
 
-        # 8. Annulation ou réinitialisation de la recherche
+        # 9. Annulation ou réinitialisation de la recherche
         elif data == "dispo_cancel_search":
             context.user_data.pop("waiting_dispo_search", None)
             await self.show_demandes_disponibles_page(update, context, page=0)
@@ -114,12 +123,12 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=0)
             return
 
-        # 9. Pioche aléatoire
+        # 10. Pioche aléatoire
         elif data == "dispo_random":
             await self.show_random_demande(update, context)
             return
 
-        # 10. Pagination standard
+        # 11. Pagination standard
         elif data.startswith("dispo_prev_") or data.startswith("dispo_next_"):
             parts = data.split("_")
             curr = int(parts[2])
@@ -139,7 +148,7 @@ class DispoManager:
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, user_id, request_number, prenom, statut, admin_en_charge
+                    SELECT id, user_id, request_number, prenom, statut, admin_en_charge, orientation
                     FROM demandes WHERE id = %s FOR UPDATE
                     """,
                     (demande_id,)
@@ -153,6 +162,20 @@ class DispoManager:
                 if demande.get("admin_en_charge"):
                     await query.answer("⚠️ Cette demande est déjà prise en charge par un autre opérateur.", show_alert=True)
                     await self.show_demandes_disponibles_page(update, context, page=0)
+                    return
+
+                # Contrôle de compatibilité d'orientation
+                perms = self.db_manager.get_staff_permissions(staff_id)
+                p_ori = perms.get("perm_orientation", "all")
+                target_ori = demande.get("orientation", "hetero")
+
+                is_compatible = (
+                    p_ori in ("all", "bi")
+                    or p_ori == target_ori
+                    or (target_ori == "bi" and p_ori in ("hetero", "gay"))
+                )
+                if not is_compatible:
+                    await query.answer("❌ Vos permissions d'orientation ne vous permettent pas de prendre ce dossier.", show_alert=True)
                     return
 
                 nouveau_statut = "⏳ En attente"
@@ -275,6 +298,12 @@ class DispoManager:
         query = update.callback_query
         filters = self._get_active_filters(context)
 
+        ori = filters.get("orientation", "all")
+        ori_all = "✅ Toutes" if ori == "all" else "Toutes"
+        ori_h = "✅ Hétéro" if ori == "hetero" else "Hétéro"
+        ori_g = "✅ Gay" if ori == "gay" else "Gay"
+        ori_bi = "✅ Bi" if ori == "bi" else "Bi"
+
         net = filters["reseau"]
         net_all = "✅ Tous" if net == "all" else "Tous"
         net_insta = "✅ Insta" if net == "insta" else "Insta"
@@ -293,6 +322,12 @@ class DispoManager:
         typ_std = "✅ 📝 Standard" if typ == "standard" else "📝 Standard"
 
         keyboard = [
+            [
+                InlineKeyboardButton(ori_all, callback_data="dispo_filter_ori_all"),
+                InlineKeyboardButton(ori_h, callback_data="dispo_filter_ori_hetero"),
+                InlineKeyboardButton(ori_g, callback_data="dispo_filter_ori_gay"),
+                InlineKeyboardButton(ori_bi, callback_data="dispo_filter_ori_bi"),
+            ],
             [
                 InlineKeyboardButton(net_all, callback_data="dispo_filter_net_all"),
                 InlineKeyboardButton(net_insta, callback_data="dispo_filter_net_insta"),
@@ -322,6 +357,7 @@ class DispoManager:
         search_info = f"« {html.escape(filters['search'])} »" if filters["search"] else "<i>Aucun</i>"
         text = (
             "⚙️ <b>Filtres des demandes disponibles</b>\n\n"
+            f"• <b>Orientation :</b> {html.escape(ori.upper())}\n"
             f"• <b>Réseaux :</b> {html.escape(net.upper())}\n"
             f"• <b>Âge :</b> {html.escape(age)}\n"
             f"• <b>Type :</b> {html.escape(typ)}\n"
@@ -347,18 +383,32 @@ class DispoManager:
         perms = self.db_manager.get_staff_permissions(user_id)
         p_reseau = perms.get("perm_reseaux", "all")
         p_type = perms.get("perm_type", "all")
+        p_ori = perms.get("perm_orientation", "all")
 
+        # 1. Filtrage strict par permission d'orientation de l'opérateur
+        if p_ori == "hetero":
+            sql_where.append("d.orientation IN ('hetero', 'bi')")
+        elif p_ori == "gay":
+            sql_where.append("d.orientation IN ('gay', 'bi')")
+        # Si 'bi' ou 'all', l'opérateur peut tout voir (hétéro, gay, bi)
+
+        # 2. Filtrage strict par permission de réseau de l'opérateur
         if p_reseau == "insta":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
         elif p_reseau == "snap":
             sql_where.append("d.snapchat IS NOT NULL AND d.snapchat != ''")
 
+        # 3. Filtrage strict par permission de type de l'opérateur
         if p_type == "prio_only":
             sql_where.append("d.prioritaire = 1")
         elif p_type == "standard_only":
             sql_where.append("d.prioritaire = 0")
 
-        # Filtres session
+        # Filtres choisis manuellement par l'opérateur dans sa session
+        if filters.get("orientation") and filters["orientation"] != "all":
+            sql_where.append("d.orientation = %s")
+            where_params.append(filters["orientation"])
+
         if filters["reseau"] == "insta":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
         elif filters["reseau"] == "snap":
@@ -525,6 +575,9 @@ class DispoManager:
         montant_val = float(demande.get("montant") or 0.0)
         montant_str = f" ({montant_val:.2f}€)" if demande.get("prioritaire") else ""
 
+        label_map = {"hetero": "👩‍❤️‍👨 Hétéro", "gay": "👨‍❤️‍👨 Gay", "bi": "🔄 Bi"}
+        ori_badge = label_map.get(demande.get("orientation", "hetero"), "👩‍❤️‍👨 Hétéro")
+
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
@@ -549,6 +602,7 @@ class DispoManager:
 
         lines = [
             f"📮 <b>Demande disponible #{req_num}</b> ({page + 1}/{total})\n",
+            f"🎯 <b>Orientation :</b> {ori_badge}",
             f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
             f"📍 <b>Localisation :</b> {loc_esc}",
             f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
@@ -579,6 +633,8 @@ class DispoManager:
 
         f = self._get_active_filters(context)
         active_tags = []
+        if f.get("orientation") and f["orientation"] != "all":
+            active_tags.append(f"🎯 {html.escape(f['orientation'])}")
         if f["reseau"] != "all":
             active_tags.append(f"🌐 {html.escape(f['reseau'])}")
         if f["age_range"] != "all":

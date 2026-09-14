@@ -185,6 +185,7 @@ class DatabaseManager:
                 added_by BIGINT,
                 perm_reseaux VARCHAR(16) DEFAULT 'all',
                 perm_type VARCHAR(16) DEFAULT 'all',
+                perm_orientation VARCHAR(16) DEFAULT 'all',
                 alias_locked BOOLEAN DEFAULT FALSE,
                 is_paused BOOLEAN DEFAULT FALSE,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -208,6 +209,7 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS demandes (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id BIGINT NOT NULL,
+                orientation VARCHAR(16) DEFAULT 'hetero',
                 prenom VARCHAR(64) NOT NULL,
                 nom VARCHAR(64),
                 age INT,
@@ -232,7 +234,8 @@ class DatabaseManager:
                 date_modification DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 request_number INT DEFAULT NULL,
                 INDEX idx_user (user_id),
-                INDEX idx_statut (statut)
+                INDEX idx_statut (statut),
+                INDEX idx_orientation (orientation)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
             """
@@ -253,6 +256,7 @@ class DatabaseManager:
                 original_id INT NOT NULL,
                 user_id BIGINT NOT NULL,
                 admin_en_charge BIGINT DEFAULT NULL,
+                orientation VARCHAR(16) DEFAULT 'hetero',
                 prenom VARCHAR(64),
                 nom VARCHAR(64),
                 age INT,
@@ -272,6 +276,7 @@ class DatabaseManager:
                 date_archivage DATETIME DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_archive_user (user_id),
                 INDEX idx_archive_admin (admin_en_charge),
+                INDEX idx_archive_orientation (orientation),
                 INDEX idx_archive_date (date_archivage)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
@@ -292,6 +297,7 @@ class DatabaseManager:
         expected_columns = [
             ("staff", "perm_reseaux", "VARCHAR(16) DEFAULT 'all'"),
             ("staff", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
+            ("staff", "perm_orientation", "VARCHAR(16) DEFAULT 'all'"),
             ("staff", "alias_locked", "BOOLEAN DEFAULT FALSE"),
             ("staff", "is_paused", "BOOLEAN DEFAULT FALSE"),
             ("admins", "is_owner", "BOOLEAN DEFAULT FALSE"),
@@ -300,6 +306,7 @@ class DatabaseManager:
             ("admins", "can_view_stats", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_manage_delais", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_view_archives", "BOOLEAN DEFAULT FALSE"),
+            ("demandes", "orientation", "VARCHAR(16) DEFAULT 'hetero'"),
             ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
             ("demandes", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -312,6 +319,7 @@ class DatabaseManager:
             ("demandes", "date_modification", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
             ("demandes", "last_vip_reminder", "DATETIME DEFAULT NULL"),
             ("archives", "admin_en_charge", "BIGINT DEFAULT NULL"),
+            ("archives", "orientation", "VARCHAR(16) DEFAULT 'hetero'"),
             ("archives", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("archives", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
             ("archives", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -369,6 +377,14 @@ class DatabaseManager:
                         ('max_demandes_per_user', '3'),
                         ('auto_archive_hours', '72'),
                         ('delivery_reminder_days', '7'),
+                        ('allow_hetero_insta', 'true'),
+                        ('allow_hetero_snap', 'true'),
+                        ('allow_gay_insta', 'true'),
+                        ('allow_gay_snap', 'true'),
+                        ('max_hetero_insta', '0'),
+                        ('max_hetero_snap', '0'),
+                        ('max_gay_insta', '0'),
+                        ('max_gay_snap', '0'),
                     ]
                     for k, v in default_configs:
                         cursor.execute(
@@ -683,6 +699,49 @@ class DatabaseManager:
         val = max(0, int(limit))
         return self.set_config_value("max_demandes_per_user", str(val))
 
+    # ==================== MATRICE COMBINÉE (ORIENTATION / RÉSEAUX) ====================
+
+    def is_channel_combination_allowed(self, orientation: str, reseau: str) -> bool:
+        """Vérifie si une combinaison orientation + réseau est active."""
+        ori = orientation.lower()
+        res = "insta" if "insta" in reseau.lower() else "snap"
+
+        if ori in ("hetero", "gay"):
+            cfg_key = f"allow_{ori}_{res}"
+            return str(self.get_config_value(cfg_key, "true")).lower() in ("true", "1", "yes")
+
+        elif ori == "bi":
+            allow_h = str(self.get_config_value(f"allow_hetero_{res}", "true")).lower() in ("true", "1", "yes")
+            allow_g = str(self.get_config_value(f"allow_gay_{res}", "true")).lower() in ("true", "1", "yes")
+            return allow_h or allow_g
+
+        return True
+
+    def get_channel_combination_active_count(self, orientation: str, reseau: str) -> int:
+        """Compte les demandes en cours pour une combinaison précise."""
+        active_statuses = ("📥 Reçue", "⏳ En attente", "🔄 En cours")
+        placeholders = ", ".join(["%s"] * len(active_statuses))
+        res_col = "instagram" if "insta" in reseau.lower() else "snapchat"
+
+        query = f"""
+            SELECT COUNT(*) AS total
+            FROM demandes
+            WHERE statut IN ({placeholders})
+              AND orientation = %s
+              AND {res_col} IS NOT NULL
+              AND {res_col} != ''
+        """
+        params = list(active_statuses) + [orientation.lower()]
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(query, tuple(params))
+                row = cursor.fetchone()
+                return int(row["total"]) if row and row.get("total") else 0
+        except Exception as exc:
+            logger.error("Erreur comptage combinaison canal (%s, %s) : %s", orientation, reseau, exc)
+            return 0
+
     # ==================== DÉLAIS PARAMÉTRABLES ====================
 
     def get_auto_archive_hours(self) -> int:
@@ -835,7 +894,7 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT d.id, d.user_id, d.request_number, d.prenom, d.nom, d.statut, d.is_difficile, d.reussie_substatus
+                    SELECT d.id, d.user_id, d.request_number, d.orientation, d.prenom, d.nom, d.statut, d.is_difficile, d.reussie_substatus
                     FROM demandes d
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
                     WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours')
@@ -985,18 +1044,19 @@ class DatabaseManager:
                 cursor.execute(
                     """
                     INSERT INTO archives (
-                        original_id, user_id, admin_en_charge, prenom, nom, age, localisation,
+                        original_id, user_id, admin_en_charge, orientation, prenom, nom, age, localisation,
                         photo_id, instagram, snapchat, details, prioritaire,
                         montant, statut, is_difficile, reussie_substatus,
                         has_delivered_content, date_livraison, date_creation, date_archivage
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                     )
                     """,
                     (
                         demande["id"],
                         demande["user_id"],
                         demande.get("admin_en_charge"),
+                        demande.get("orientation", "hetero"),
                         demande.get("prenom"),
                         demande.get("nom"),
                         demande.get("age"),
@@ -1096,7 +1156,8 @@ class DatabaseManager:
         self,
         user_id: Optional[int] = None,
         admin_id: Optional[int] = None,
-        filter_status: Optional[str] = None
+        filter_status: Optional[str] = None,
+        orientation: Optional[str] = None
     ) -> int:
         """Retourne le nombre d'archives (client, staff assigné ou global)."""
         query = "SELECT COUNT(*) AS total FROM archives WHERE 1=1"
@@ -1114,6 +1175,10 @@ class DatabaseManager:
             query += " AND statut LIKE %s"
             params.append(f"%{filter_status}%")
 
+        if orientation:
+            query += " AND orientation = %s"
+            params.append(orientation)
+
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(query, tuple(params))
@@ -1128,11 +1193,12 @@ class DatabaseManager:
         page: int = 0,
         user_id: Optional[int] = None,
         admin_id: Optional[int] = None,
-        filter_status: Optional[str] = None
+        filter_status: Optional[str] = None,
+        orientation: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """Récupère une archive paginée par date d'archivage descendante."""
         query = """
-            SELECT id, original_id, user_id, admin_en_charge, prenom, nom, age, localisation,
+            SELECT id, original_id, user_id, admin_en_charge, orientation, prenom, nom, age, localisation,
                    photo_id, instagram, snapchat, details, prioritaire,
                    montant, statut, is_difficile, reussie_substatus,
                    has_delivered_content, date_livraison, date_creation, date_archivage
@@ -1152,6 +1218,10 @@ class DatabaseManager:
         if filter_status:
             query += " AND statut LIKE %s"
             params.append(f"%{filter_status}%")
+
+        if orientation:
+            query += " AND orientation = %s"
+            params.append(orientation)
 
         query += " ORDER BY date_archivage DESC, id DESC LIMIT 1 OFFSET %s"
         params.append(max(0, int(page)))
@@ -1178,21 +1248,22 @@ class DatabaseManager:
 
     def get_staff_permissions(self, user_id: int) -> Dict[str, str]:
         if self.is_owner(user_id):
-            return {"perm_reseaux": "all", "perm_type": "all"}
+            return {"perm_reseaux": "all", "perm_type": "all", "perm_orientation": "all"}
 
         cache_key = f"perm_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
             return cached
 
-        default_perms = {"perm_reseaux": "all", "perm_type": "all"}
+        default_perms = {"perm_reseaux": "all", "perm_type": "all", "perm_orientation": "all"}
         try:
             with self.get_cursor() as cursor:
-                cursor.execute("SELECT perm_reseaux, perm_type FROM staff WHERE user_id = %s", (user_id,))
+                cursor.execute("SELECT perm_reseaux, perm_type, perm_orientation FROM staff WHERE user_id = %s", (user_id,))
                 row = cursor.fetchone()
                 if row:
                     default_perms["perm_reseaux"] = row.get("perm_reseaux") or "all"
                     default_perms["perm_type"] = row.get("perm_type") or "all"
+                    default_perms["perm_orientation"] = row.get("perm_orientation") or "all"
             self._set_cached_value(cache_key, default_perms)
             return default_perms
         except Exception as exc:
@@ -1202,7 +1273,7 @@ class DatabaseManager:
     get_admin_permissions = get_staff_permissions
 
     def update_staff_permission(self, user_id: int, perm_key: str, perm_value: str) -> bool:
-        if perm_key not in ("perm_reseaux", "perm_type"):
+        if perm_key not in ("perm_reseaux", "perm_type", "perm_orientation"):
             return False
         try:
             with self.transaction() as cursor:
@@ -1450,6 +1521,7 @@ class DatabaseManager:
             "date_added": None,
             "perm_reseaux": "all",
             "perm_type": "all",
+            "perm_orientation": "all",
             "en_cours": 0,
             "reussies": 0,
             "abandonnees": 0,
@@ -1465,9 +1537,10 @@ class DatabaseManager:
                     stats["alias"] = self.get_owner_alias()
                     stats["perm_reseaux"] = "all"
                     stats["perm_type"] = "all"
+                    stats["perm_orientation"] = "all"
                 else:
                     cursor.execute(
-                        "SELECT alias, date_added, perm_reseaux, perm_type FROM staff WHERE user_id = %s",
+                        "SELECT alias, date_added, perm_reseaux, perm_type, perm_orientation FROM staff WHERE user_id = %s",
                         (admin_id,)
                     )
                     staff_row = cursor.fetchone()
@@ -1476,6 +1549,7 @@ class DatabaseManager:
                         stats["date_added"] = staff_row.get("date_added")
                         stats["perm_reseaux"] = staff_row.get("perm_reseaux") or "all"
                         stats["perm_type"] = staff_row.get("perm_type") or "all"
+                        stats["perm_orientation"] = staff_row.get("perm_orientation") or "all"
 
                 cursor.execute(
                     """

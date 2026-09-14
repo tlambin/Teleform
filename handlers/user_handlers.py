@@ -281,15 +281,16 @@ class UserHandlers:
                                 INSERT INTO archives (
                                     original_id, user_id, prenom, nom, age, localisation,
                                     photo_id, instagram, snapchat, details, prioritaire,
-                                    montant, statut, date_creation, date_archivage
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                                    montant, statut, orientation, date_creation, date_archivage
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                                 """,
                                 (
                                     demande["id"], demande["user_id"], demande["prenom"], demande.get("nom"),
                                     demande.get("age"), demande.get("localisation"), demande.get("photo_id"),
                                     demande.get("instagram"), demande.get("snapchat"), demande.get("details"),
                                     demande.get("prioritaire", False), demande.get("montant", 0.0),
-                                    "❌ Abandonnée (Demandeur)", demande.get("date_creation")
+                                    "❌ Abandonnée (Demandeur)", demande.get("orientation", "hetero"),
+                                    demande.get("date_creation")
                                 )
                             )
                             cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
@@ -429,7 +430,7 @@ class UserHandlers:
             "gerer_admins", "admin_ajouter", "admin_supprimer",
             "gerer_staff", "staff_ajouter", "staff_supprimer",
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance",
-            "menu_limits", "gerer_vips", "owner_add_vip", "owner_remove_vip"
+            "menu_channels", "menu_limits", "gerer_vips", "owner_add_vip", "owner_remove_vip"
         }
         if (data in owner_actions or data.startswith("limit_")) and not self.config.is_admin(user_id):
             await query.answer("❌ Accès réservé aux administrateurs.", show_alert=True)
@@ -503,6 +504,25 @@ class UserHandlers:
                 )
                 return
 
+            elif data in (
+                "limit_input_hetero_insta", "limit_input_hetero_snap",
+                "limit_input_gay_insta", "limit_input_gay_snap"
+            ):
+                field = data.replace("limit_input_", "")
+                context.user_data["waiting_limit_input"] = field
+                labels = {
+                    "hetero_insta": "Max Insta Hétéro",
+                    "hetero_snap": "Max Snap Hétéro",
+                    "gay_insta": "Max Insta Gay",
+                    "gay_snap": "Max Snap Gay",
+                }
+                await query.edit_message_text(
+                    f"🔢 Tapez au clavier le <b>{labels.get(field, field)}</b> autorisé (0 = illimité) :",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_limits")]])
+                )
+                return
+
             msg, kb = self.interface.get_limits_menu()
             try:
                 await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
@@ -536,23 +556,40 @@ class UserHandlers:
         if not update.message:
             return
 
-        # Saisie d'un quota par le propriétaire
+        # Saisie d'un quota par le propriétaire / admin
         if update.message.text and context.user_data and context.user_data.get("waiting_limit_input"):
             if self.config.is_owner(update.effective_user.id):
                 raw = update.message.text.strip()
                 if raw.isdigit():
                     mode = context.user_data.pop("waiting_limit_input")
                     val = int(raw)
+                    key_map = {
+                        "total": "max_total_demandes",
+                        "user": "max_demandes_per_user",
+                        "hetero_insta": "max_hetero_insta",
+                        "hetero_snap": "max_hetero_snap",
+                        "gay_insta": "max_gay_insta",
+                        "gay_snap": "max_gay_snap",
+                    }
+                    cfg_key = key_map.get(mode, f"max_{mode}")
+                    labels = {
+                        "total": "Plafond global",
+                        "user": "Plafond par client",
+                        "hetero_insta": "Plafond Insta Hétéro",
+                        "hetero_snap": "Plafond Snap Hétéro",
+                        "gay_insta": "Plafond Insta Gay",
+                        "gay_snap": "Plafond Snap Gay",
+                    }
+
                     if mode == "total":
                         self.config.set_max_total_demandes(val)
-                        self.db_manager.set_config_value("max_total_demandes", str(val))
-                        libelle = "Illimité" if val == 0 else str(val)
-                        await update.message.reply_text(f"✅ Plafond global défini à : <b>{libelle}</b>", parse_mode="HTML")
                     elif mode == "user":
                         self.config.set_max_demandes_per_user(val)
-                        self.db_manager.set_config_value("max_demandes_per_user", str(val))
-                        libelle = "Illimité" if val == 0 else str(val)
-                        await update.message.reply_text(f"✅ Plafond par personne défini à : <b>{libelle}</b>", parse_mode="HTML")
+
+                    self.db_manager.set_config_value(cfg_key, str(val))
+                    libelle = "Illimité" if val == 0 else str(val)
+                    label_desc = labels.get(mode, "Plafond")
+                    await update.message.reply_text(f"✅ {label_desc} défini à : <b>{libelle}</b>", parse_mode="HTML")
 
                     msg, kb = self.interface.get_limits_menu()
                     await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)

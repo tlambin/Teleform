@@ -47,7 +47,7 @@ class AdminHandlers:
         self.bot_manager = BotManager(db_manager, config, self.interface)
         self.staff_manager = StaffManager(db_manager, config, self.interface)
 
-        logger.info("AdminHandlers initialisé avec architecture RBAC et support Archives Générales.")
+        logger.info("AdminHandlers initialisé avec architecture RBAC, support Archives Générales et Orientations.")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou envoie un message texte propre."""
@@ -254,6 +254,13 @@ class AdminHandlers:
             msg, kb = self.interface.get_gerer_admins_menu()
             await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
 
+        # Menus Canaux & Orientations combinés (Owner only)
+        elif data == "menu_channels" and is_owner:
+            await self.config_manager.show_channels_menu(update, context)
+        elif data.startswith("toggle_allow_") and is_owner:
+            key_name = data.replace("toggle_", "")
+            await self.config_manager.toggle_channel_setting(update, context, key_name)
+
         # Délais & Archivage
         elif data == "menu_delais" and (is_owner or privs.get("can_manage_delais", False)):
             await self.config_manager.show_delais_menu(update, context)
@@ -310,6 +317,7 @@ class AdminHandlers:
         perms = self.db_manager.get_staff_permissions(staff_id)
         reseau = perms.get("perm_reseaux", "all")
         typ = perms.get("perm_type", "all")
+        ori = perms.get("perm_orientation", "all")
 
         b_res_all = "✅ Tous réseaux" if reseau == "all" else "Tous réseaux"
         b_res_insta = "✅ Insta seul" if reseau == "insta" else "Insta seul"
@@ -318,6 +326,11 @@ class AdminHandlers:
         b_typ_all = "✅ Tout type" if typ == "all" else "Tout type"
         b_typ_prio = "✅ 💎 Payantes" if typ == "prio_only" else "💎 Payantes"
         b_typ_std = "✅ 📝 Gratuites" if typ == "standard_only" else "📝 Gratuites"
+
+        b_ori_all = "✅ Toutes" if ori == "all" else "Toutes"
+        b_ori_h = "✅ Hétéro" if ori == "hetero" else "Hétéro"
+        b_ori_g = "✅ Gay" if ori == "gay" else "Gay"
+        b_ori_bi = "✅ Bi" if ori == "bi" else "Bi"
 
         keyboard = [
             [
@@ -330,13 +343,19 @@ class AdminHandlers:
                 InlineKeyboardButton(b_typ_prio, callback_data=f"set_permstaff_{staff_id}_type_prio_only"),
                 InlineKeyboardButton(b_typ_std, callback_data=f"set_permstaff_{staff_id}_type_standard_only"),
             ],
+            [
+                InlineKeyboardButton(b_ori_all, callback_data=f"set_permstaff_{staff_id}_orientation_all"),
+                InlineKeyboardButton(b_ori_h, callback_data=f"set_permstaff_{staff_id}_orientation_hetero"),
+                InlineKeyboardButton(b_ori_g, callback_data=f"set_permstaff_{staff_id}_orientation_gay"),
+                InlineKeyboardButton(b_ori_bi, callback_data=f"set_permstaff_{staff_id}_orientation_bi"),
+            ],
             [InlineKeyboardButton("🔙 Équipe Staff", callback_data="gerer_staff")]
         ]
 
         text = (
             f"🛡️ <b>Permissions Opérateur : {alias}</b>\n"
             f"🆔 ID : <code>{staff_id}</code>\n\n"
-            "Ajustez les dossiers auxquels ce membre a accès :"
+            "Ajustez les dossiers auxquels ce membre a accès (Réseaux, Type et Orientation cible) :"
         )
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 

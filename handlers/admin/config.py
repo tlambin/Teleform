@@ -21,12 +21,20 @@ class ConfigManager:
         "max_request_age_days": "30",
         "auto_archive_hours": "72",
         "delivery_reminder_days": "7",
+        "allow_hetero_insta": "true",
+        "allow_hetero_snap": "true",
+        "allow_gay_insta": "true",
+        "allow_gay_snap": "true",
+        "max_hetero_insta": "0",
+        "max_hetero_snap": "0",
+        "max_gay_insta": "0",
+        "max_gay_snap": "0",
     }
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("ConfigManager initialisé avec support RBAC")
+        logger.info("ConfigManager initialisé avec support RBAC, Matrice Canaux & Orientations")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou supprime la photo existante pour émettre du texte."""
@@ -160,6 +168,49 @@ class ConfigManager:
             logger.error("Erreur bascule demandes prioritaires : %s", exc)
             await self._send_error_message(update, context, "❌ Erreur lors du réglage des demandes prioritaires.")
 
+    # ==================== ACTIVATION / DÉSACTIVATION DES 4 CANAUX COMBINÉS ====================
+
+    async def show_channels_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Menu interactif de bascule pour les 4 canaux combinés (Hétéro/Gay × Insta/Snap)."""
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+
+        from utils.interface_manager import InterfaceManager
+        ui = InterfaceManager(self.config, self.db_manager)
+        text, keyboard = ui.get_channels_menu()
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
+
+    async def toggle_channel_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE, key_name: str):
+        """Bascule l'état d'un canal combiné (allow_hetero_insta, allow_hetero_snap, allow_gay_insta, allow_gay_snap)."""
+        query = update.callback_query
+        if not query:
+            return
+
+        current = str(self.get_setting(key_name, "true")).lower() == "true"
+        new_val = not current
+        self.set_setting(key_name, "true" if new_val else "false")
+        await query.answer("✅ État du canal mis à jour !")
+        await self.show_channels_menu(update, context)
+
+    # ==================== MENU LIMITES & PLAFONDS PAR CANAL ====================
+
+    async def show_limits_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche le menu complet des quotas globaux et par canal combiné."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        from utils.interface_manager import InterfaceManager
+        ui = InterfaceManager(self.config, self.db_manager)
+        text, keyboard = ui.get_limits_menu()
+
+        if query:
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
+        elif update.message:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
     # ==================== GESTION DES DÉLAIS PARAMÉTRABLES ====================
 
     async def show_delais_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -291,7 +342,7 @@ class ConfigManager:
         max_user = html.escape(str(cfg.get("max_demandes_per_user", "3")))
         max_tot = str(cfg.get("max_total_demandes", "0"))
         tot_str = "Illimité" if max_tot == "0" else html.escape(max_tot)
-        retention = html.escape(str(cfg.get("max_request_age_days", "30")))
+
         auto_arch = html.escape(str(cfg.get("auto_archive_hours", "72")))
         deliv_rem = html.escape(str(cfg.get("delivery_reminder_days", "7")))
 
@@ -301,11 +352,10 @@ class ConfigManager:
             f"• <b>Mode maintenance :</b> {maint_badge}\n"
             f"• <b>Demandes prioritaires :</b> {prio_badge}\n"
             f"• <b>Plafond global :</b> <code>{tot_str}</code>\n"
-            f"• <b>Plafond par utilisateur :</b> <code>{max_user}</code>\n"
+            f"• <b>Plafond par client :</b> <code>{max_user}</code>\n"
             f"• <b>Auto-archivage :</b> {auto_arch}h post-livraison\n"
-            f"• <b>Relance livraison :</b> {deliv_rem} jours\n"
-            f"• <b>Rétention archives :</b> {retention} jours\n\n"
-            "Sélectionnez un paramètre pour modifier son état :"
+            f"• <b>Relance livraison :</b> {deliv_rem} jours\n\n"
+            "Sélectionnez une catégorie pour configurer :"
         )
 
     def _create_config_keyboard(self) -> InlineKeyboardMarkup:
@@ -316,11 +366,12 @@ class ConfigManager:
                 InlineKeyboardButton("💎 Prioritaires", callback_data="config_toggle_priority"),
             ],
             [
-                InlineKeyboardButton("⚙️ Quotas & Limites", callback_data="menu_limits"),
-                InlineKeyboardButton("⏱️ Délais & Relances", callback_data="menu_delais"),
+                InlineKeyboardButton("🎛️ Canaux & Orientations", callback_data="menu_channels"),
+                InlineKeyboardButton("⚙️ Quotas & Plafonds", callback_data="menu_limits"),
             ],
             [
-                InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")
+                InlineKeyboardButton("⏱️ Délais & Relances", callback_data="menu_delais"),
+                InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot"),
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
