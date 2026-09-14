@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes
 from utils.interface_manager import InterfaceManager
 
 from .staff.alias import AliasManager
+from .staff.archives import ArchivesManager
 from .staff.contact import ContactManager
 from .staff.dispo import DispoManager
 from .staff.notifs import NotifsManager
@@ -41,6 +42,7 @@ class StaffHandlers:
         self.notifs = NotifsManager(db_manager, config)
         self.contact = ContactManager(db_manager, config)
         self.profils = ProfilsManager(db_manager, config)
+        self.archives = ArchivesManager(db_manager, config)
 
     async def _safe_edit_or_reply(self, query, text: str, reply_markup=None, parse_mode="HTML"):
         """Met à jour le message texte ou envoie une nouvelle bulle si le message cible contient une photo."""
@@ -119,7 +121,15 @@ class StaffHandlers:
             elif data.startswith("status_"):
                 await self.statuts.handle_status_callback(update, context)
 
-            # 7. Profils
+            # 7. Archives du service
+            elif data == "demandes_archives":
+                await self.archives.show_archives(update, context, page=0)
+
+            elif data.startswith("archive_page_"):
+                page = int(data.replace("archive_page_", ""))
+                await self.archives.show_archives(update, context, page=page)
+
+            # 8. Profils
             elif data.startswith("profil_admin_"):
                 target_admin_id = int(data.replace("profil_admin_", ""))
                 await self.profils.show_admin_profile(update, context, target_admin_id)
@@ -128,11 +138,11 @@ class StaffHandlers:
                 demande_id = int(data.replace("profil_demande_", ""))
                 await self.profils.show_user_profile_by_demande(update, context, demande_id)
 
-            # 8. Mode pause
+            # 9. Mode pause
             elif data in ("admin_pause_prompt", "admin_pause_keep", "admin_pause_release", "admin_resume"):
                 await self._handle_admin_pause(update, context, data)
 
-            # 9. Contact du demandeur
+            # 10. Contact du demandeur
             elif data.startswith("contacter_") and not data.startswith("contacter_owner"):
                 demande_id = int(data.replace("contacter_", ""))
                 await self._prompt_contact_user(update, context, demande_id)

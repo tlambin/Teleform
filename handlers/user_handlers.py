@@ -76,7 +76,7 @@ class UserHandlers:
         data = query.data
         user_id = query.from_user.id
 
-        # 1. Contrôle global du service
+        # 1. Contrôle global du service (bloque uniquement la création/navigation de fiches actives)
         if data.startswith(("form_", "nav_", "new_demande")) and not self.config.are_demandes_enabled():
             await query.edit_message_text(
                 "🚫 <b>Service temporairement indisponible</b>\n\n"
@@ -111,7 +111,12 @@ class UserHandlers:
                     return
                 await self.formulaire.navigation.handle_form_navigation(update, context)
 
-            # 4. Boutique VIP Telegram Stars
+            # 4. Consultation des archives de l'utilisateur
+            elif data == "mes_archives" or data.startswith("user_arch_page_"):
+                await self.demande.handle_navigation(update, context, data)
+                return
+
+            # 5. Boutique VIP Telegram Stars
             elif data == "menu_vip_shop":
                 msg, kb = self.interface.get_vip_shop_menu()
                 await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
@@ -135,7 +140,7 @@ class UserHandlers:
                 )
                 return
 
-            # 5. Relance hebdomadaire gratuite
+            # 6. Relance hebdomadaire gratuite
             elif data.startswith("remind_admin_free_"):
                 demande_id = int(data.replace("remind_admin_free_", ""))
                 can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
@@ -159,7 +164,7 @@ class UserHandlers:
                 await self._dispatch_admin_reminder(update, context, demande_id, is_paid_boost=False)
                 return
 
-            # 6. Relance payante
+            # 7. Relance payante
             elif data.startswith("remind_admin_pay_"):
                 demande_id = int(data.replace("remind_admin_pay_", ""))
                 can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
@@ -195,7 +200,7 @@ class UserHandlers:
                 )
                 return
 
-            # 7. Ligne directe VIP
+            # 8. Ligne directe VIP
             elif data.startswith("vip_contact_admin_"):
                 demande_id = int(data.replace("vip_contact_admin_", ""))
                 with self.db_manager.get_cursor() as cursor:
@@ -234,7 +239,7 @@ class UserHandlers:
                 await self.formulaire.handle_vip_admin_choice(update, context)
                 return
 
-            # 8. Reprise suite à un abandon
+            # 9. Reprise suite à un abandon
             elif data.startswith("reprendre_demande_"):
                 demande_id = int(data.replace("reprendre_demande_", ""))
                 try:
@@ -262,7 +267,7 @@ class UserHandlers:
                     await query.answer("❌ Erreur technique lors de la remise en file d'attente.", show_alert=True)
                 return
 
-            # 9. Archivage
+            # 10. Archivage par l'utilisateur
             elif data.startswith("archiver_demande_"):
                 demande_id = int(data.replace("archiver_demande_", ""))
                 try:

@@ -4,6 +4,7 @@ import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
+from utils.validators import convert_utc_to_paris
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class DemandeManager:
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
-        logger.info("DemandeManager initialisé avec support Staff/RBAC")
+        logger.info("DemandeManager initialisé avec support Archives")
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
         """Contrôle les plafonds global et individuel avant création (contourné pour VIP)."""
@@ -80,7 +81,7 @@ class DemandeManager:
             await self.show_demande_page(update, context, user.id, page=0, edit_message=False)
 
     async def handle_navigation(self, update: Update, context: ContextTypes.DEFAULT_TYPE, callback_data: str):
-        """Gère la pagination des demandes (nav_page_X)."""
+        """Gère la pagination des demandes actives et des archives."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -88,9 +89,20 @@ class DemandeManager:
         await query.answer()
         parts = callback_data.split("_")
 
+        # 1. Pagination des demandes actives (nav_page_X)
         if len(parts) >= 3 and parts[1] == "page" and parts[2].isdigit():
             target_page = int(parts[2])
             await self.show_demande_page(update, context, update.effective_user.id, page=target_page, edit_message=True)
+
+        # 2. Pagination des archives client (user_arch_page_X)
+        elif len(parts) >= 4 and parts[1] == "arch" and parts[2] == "page" and parts[3].isdigit():
+            target_page = int(parts[3])
+            await self.show_user_archive_page(update, context, update.effective_user.id, page=target_page)
+
+        # 3. Accès direct aux archives client
+        elif callback_data == "mes_archives":
+            await self.show_user_archive_page(update, context, update.effective_user.id, page=0)
+
         else:
             await self.voir_demandes(update, context)
 
@@ -224,8 +236,9 @@ class DemandeManager:
             det_short = (det[:150] + "...") if len(det) > 150 else det
             lignes.append(f"💬 <b>Remarque :</b> <i>{html.escape(det_short)}</i>")
 
-        date_str = str(demande.get("date_creation", ""))[:16]
-        lignes.append(f"\n📅 <i>Créée le {date_str}</i>")
+        dt_crea = demande.get("date_creation")
+        crea_str = convert_utc_to_paris(dt_crea).strftime("%d/%m/%Y à %H:%M") if dt_crea else "?"
+        lignes.append(f"\n📅 <i>Créée le {crea_str}</i>")
 
         return "\n".join(lignes)
 
@@ -278,11 +291,147 @@ class DemandeManager:
             else InlineKeyboardButton("🔒 Quota atteint", callback_data="quota_reached_info")
         )
 
+        nb_archives = self.db_manager.get_archives_count(user_id=user_id)
+        btn_archives = InlineKeyboardButton(f"📦 Mes archives ({nb_archives})", callback_data="mes_archives")
+
+        buttons.append([btn_creation, btn_archives])
+        buttons.append([InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")])
+
+        return InlineKeyboardMarkup(buttons)
+
+    # ==================== GESTION DES ARCHIVES CLIENT ====================
+
+    async def show_user_archive_page(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        user_id: int,
+        page: int = 0
+    ):
+        """Affiche les demandes archivées propres à l'utilisateur."""
+        query = update.callback_query
+        total_archives = self.db_manager.get_archives_count(user_id=user_id)
+
+        if total_archives == 0:
+            msg = (
+                "📦 <b>Mes Archives</b>\n\n"
+                "Vous n'avez actuellement aucune demande archivée.\n"
+                "Les demandes finalisées ou clôturées apparaîtront ici."
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Voir mes demandes actives", callback_data="voir_demandes")],
+                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+            ])
+            if query:
+                if query.message and query.message.photo:
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=msg,
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+                else:
+                    await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+            return
+
+        page = max(0, min(page, total_archives - 1))
+        archive_item = self.db_manager.get_archives_page(page=page, user_id=user_id)
+        if not archive_item:
+            return
+
+        caption_text = self._format_user_archive_card(archive_item, page, total_archives)
+        keyboard = self._build_user_archive_keyboard(page, total_archives)
+        photo_id = archive_item.get("photo_id")
+        chat_id = update.effective_chat.id if update.effective_chat else None
+
+        if query and query.message:
+            if query.message.photo:
+                await query.edit_message_media(
+                    media=InputMediaPhoto(media=photo_id, caption=caption_text, parse_mode="HTML"),
+                    reply_markup=keyboard,
+                )
+            else:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                if chat_id:
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo_id,
+                        caption=caption_text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                    )
+        else:
+            if chat_id:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_id,
+                    caption=caption_text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+
+    def _format_user_archive_card(self, item: dict, page: int, total: int) -> str:
+        """Formate la fiche d'une archive pour la vue du demandeur."""
+        prenom_esc = html.escape(str(item.get("prenom") or ""))
+        nom_esc = html.escape(str(item.get("nom") or ""))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Non renseigné"
+        loc_esc = html.escape(str(item.get("localisation") or "Non précisée"))
+        statut_esc = html.escape(str(item.get("statut") or "Archivée"))
+        num = item.get("original_id") or item.get("id")
+
+        type_badge = "💎 Prioritaire" if item.get("prioritaire") else "📝 Standard"
+
+        dt_crea = item.get("date_creation")
+        crea_str = convert_utc_to_paris(dt_crea).strftime("%d/%m/%Y") if dt_crea else "?"
+
+        dt_arch = item.get("date_archivage")
+        arch_str = convert_utc_to_paris(dt_arch).strftime("%d/%m/%Y") if dt_arch else "?"
+
+        lines = [
+            f"📦 <b>Archive dossier #{num}</b> ({page + 1}/{total})\n",
+            f"👤 <b>Identité :</b> {nom_complet} ({item.get('age', '?')} ans)",
+            f"📍 <b>Localisation :</b> {loc_esc}",
+            f"🎯 <b>Type :</b> {type_badge}",
+            f"📊 <b>Statut final :</b> <code>{statut_esc}</code>",
+        ]
+
+        admin_charge = item.get("admin_en_charge")
+        if admin_charge:
+            alias = self.db_manager.get_staff_alias(admin_charge)
+            lines.append(f"👨‍💼 <b>Traité par :</b> {html.escape(alias or 'Opérateur')}")
+        else:
+            lines.append("👨‍💼 <b>Traité par :</b> <i>Équipe support</i>")
+
+        lines.extend([
+            f"\n📅 <i>Déposée le : {crea_str}</i>",
+            f"🗄️ <i>Archivée le : {arch_str}</i>",
+        ])
+        return "\n".join(lines)
+
+    def _build_user_archive_keyboard(self, page: int, total: int) -> InlineKeyboardMarkup:
+        """Construit la barre de navigation pour les archives client."""
+        buttons = []
+        nav_row = []
+
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"user_arch_page_{page - 1}"))
+        if page < total - 1:
+            nav_row.append(InlineKeyboardButton("Suivante ➡️", callback_data=f"user_arch_page_{page + 1}"))
+
+        if nav_row:
+            buttons.append(nav_row)
+
         buttons.append([
-            btn_creation,
+            InlineKeyboardButton("📋 Retour à mes demandes", callback_data="voir_demandes"),
             InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
         ])
-
         return InlineKeyboardMarkup(buttons)
 
     async def _send_no_requests_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, edit_message: bool, user_id: int):
@@ -294,13 +443,17 @@ class DemandeManager:
             else InlineKeyboardButton("🔒 Quota atteint", callback_data="quota_reached_info")
         )
 
+        nb_archives = self.db_manager.get_archives_count(user_id=user_id)
+        btn_archives = InlineKeyboardButton(f"📦 Mes archives ({nb_archives})", callback_data="mes_archives")
+
         text = (
             "📭 <b>Aucune demande active</b>\n\n"
             "Vous n'avez pas encore soumis de demande.\n"
-            "Cliquez ci-dessous pour en créer une !"
+            "Cliquez ci-dessous pour en créer une ou consultez votre historique :"
         )
         keyboard = InlineKeyboardMarkup([
             [btn_creation],
+            [btn_archives],
             [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
         ])
 

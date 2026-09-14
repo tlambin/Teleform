@@ -199,6 +199,7 @@ class DatabaseManager:
                 can_manage_vips BOOLEAN DEFAULT TRUE,
                 can_view_stats BOOLEAN DEFAULT TRUE,
                 can_manage_delais BOOLEAN DEFAULT FALSE,
+                can_view_archives BOOLEAN DEFAULT FALSE,
                 added_by BIGINT DEFAULT NULL,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -251,6 +252,7 @@ class DatabaseManager:
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 original_id INT NOT NULL,
                 user_id BIGINT NOT NULL,
+                admin_en_charge BIGINT DEFAULT NULL,
                 prenom VARCHAR(64),
                 nom VARCHAR(64),
                 age INT,
@@ -268,7 +270,9 @@ class DatabaseManager:
                 date_livraison DATETIME DEFAULT NULL,
                 date_creation DATETIME,
                 date_archivage DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_archive_user (user_id)
+                INDEX idx_archive_user (user_id),
+                INDEX idx_archive_admin (admin_en_charge),
+                INDEX idx_archive_date (date_archivage)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
             """
@@ -295,6 +299,7 @@ class DatabaseManager:
             ("admins", "can_manage_vips", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_view_stats", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_manage_delais", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "can_view_archives", "BOOLEAN DEFAULT FALSE"),
             ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
             ("demandes", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -306,6 +311,7 @@ class DatabaseManager:
             ("demandes", "request_number", "INT DEFAULT NULL"),
             ("demandes", "date_modification", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
             ("demandes", "last_vip_reminder", "DATETIME DEFAULT NULL"),
+            ("archives", "admin_en_charge", "BIGINT DEFAULT NULL"),
             ("archives", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("archives", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
             ("archives", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -382,9 +388,9 @@ class DatabaseManager:
                     owner_alias = self.get_config_value("owner_alias", "Propriétaire")
                     cursor.execute(
                         """
-                        INSERT INTO admins (user_id, alias, is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais)
-                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE)
-                        ON DUPLICATE KEY UPDATE is_owner = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE
+                        INSERT INTO admins (user_id, alias, is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives)
+                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+                        ON DUPLICATE KEY UPDATE is_owner = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE
                         """,
                         (owner_id, owner_alias)
                     )
@@ -501,13 +507,14 @@ class DatabaseManager:
                 "can_manage_vips": True,
                 "can_view_stats": True,
                 "can_manage_delais": True,
+                "can_view_archives": True,
             }
 
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais
+                    SELECT is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives
                     FROM admins WHERE user_id = %s
                     """,
                     (int(user_id),)
@@ -520,6 +527,7 @@ class DatabaseManager:
                         "can_manage_vips": bool(row["can_manage_vips"]),
                         "can_view_stats": bool(row["can_view_stats"]),
                         "can_manage_delais": bool(row["can_manage_delais"]),
+                        "can_view_archives": bool(row.get("can_view_archives", False)),
                     }
         except Exception as exc:
             logger.error("Erreur lecture privilèges admin %s : %s", user_id, exc)
@@ -530,7 +538,26 @@ class DatabaseManager:
             "can_manage_vips": False,
             "can_view_stats": False,
             "can_manage_delais": False,
+            "can_view_archives": False,
         }
+
+    def update_admin_privilege(self, user_id: int, priv_key: str, value: bool) -> bool:
+        """Met à jour un privilège granulaire d'un administrateur."""
+        allowed_keys = {
+            "can_manage_staff", "can_manage_vips", "can_view_stats",
+            "can_manage_delais", "can_view_archives"
+        }
+        if priv_key not in allowed_keys:
+            return False
+
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(f"UPDATE admins SET {priv_key} = %s WHERE user_id = %s", (value, int(user_id)))
+            self.clear_cache(f"is_admin_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur mise à jour privilège admin %s (%s) : %s", user_id, priv_key, exc)
+            return False
 
     # ==================== TABLE CONFIG DYNAMIQUE ====================
 
@@ -958,17 +985,18 @@ class DatabaseManager:
                 cursor.execute(
                     """
                     INSERT INTO archives (
-                        original_id, user_id, prenom, nom, age, localisation,
+                        original_id, user_id, admin_en_charge, prenom, nom, age, localisation,
                         photo_id, instagram, snapchat, details, prioritaire,
                         montant, statut, is_difficile, reussie_substatus,
                         has_delivered_content, date_livraison, date_creation, date_archivage
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                     )
                     """,
                     (
                         demande["id"],
                         demande["user_id"],
+                        demande.get("admin_en_charge"),
                         demande.get("prenom"),
                         demande.get("nom"),
                         demande.get("age"),
@@ -1061,6 +1089,90 @@ class DatabaseManager:
             return "✅ Réussie (🟢 Active)"
 
         return clean_statut
+
+    # ==================== CONSULTATION DES ARCHIVES ====================
+
+    def get_archives_count(
+        self,
+        user_id: Optional[int] = None,
+        admin_id: Optional[int] = None,
+        filter_status: Optional[str] = None
+    ) -> int:
+        """Retourne le nombre d'archives (client, staff assigné ou global)."""
+        query = "SELECT COUNT(*) AS total FROM archives WHERE 1=1"
+        params = []
+
+        if user_id is not None:
+            query += " AND user_id = %s"
+            params.append(int(user_id))
+
+        if admin_id is not None:
+            query += " AND admin_en_charge = %s"
+            params.append(int(admin_id))
+
+        if filter_status:
+            query += " AND statut LIKE %s"
+            params.append(f"%{filter_status}%")
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(query, tuple(params))
+                row = cursor.fetchone()
+                return int(row["total"]) if row and row.get("total") else 0
+        except Exception as exc:
+            logger.error("Erreur comptage archives (user=%s, admin=%s) : %s", user_id, admin_id, exc)
+            return 0
+
+    def get_archives_page(
+        self,
+        page: int = 0,
+        user_id: Optional[int] = None,
+        admin_id: Optional[int] = None,
+        filter_status: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Récupère une archive paginée par date d'archivage descendante."""
+        query = """
+            SELECT id, original_id, user_id, admin_en_charge, prenom, nom, age, localisation,
+                   photo_id, instagram, snapchat, details, prioritaire,
+                   montant, statut, is_difficile, reussie_substatus,
+                   has_delivered_content, date_livraison, date_creation, date_archivage
+            FROM archives
+            WHERE 1=1
+        """
+        params = []
+
+        if user_id is not None:
+            query += " AND user_id = %s"
+            params.append(int(user_id))
+
+        if admin_id is not None:
+            query += " AND admin_en_charge = %s"
+            params.append(int(admin_id))
+
+        if filter_status:
+            query += " AND statut LIKE %s"
+            params.append(f"%{filter_status}%")
+
+        query += " ORDER BY date_archivage DESC, id DESC LIMIT 1 OFFSET %s"
+        params.append(max(0, int(page)))
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(query, tuple(params))
+                return cursor.fetchone()
+        except Exception as exc:
+            logger.error("Erreur récupération page archive (page=%s, user=%s, admin=%s) : %s", page, user_id, admin_id, exc)
+            return None
+
+    def get_archive_by_id(self, archive_id: int) -> Optional[Dict[str, Any]]:
+        """Récupère une archive précise par son identifiant unique."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT * FROM archives WHERE id = %s", (int(archive_id),))
+                return cursor.fetchone()
+        except Exception as exc:
+            logger.error("Erreur récupération archive id %s : %s", archive_id, exc)
+            return None
 
     # ==================== PERMISSIONS OPÉRATIONNELLES (STAFF) ====================
 
@@ -1284,6 +1396,10 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur extraction équipe VIP : %s", exc)
             return equipe
+
+    def get_available_staff(self) -> List[Dict[str, Any]]:
+        """Alias de get_available_admins_for_selection pour la cohérence RBAC Staff."""
+        return self.get_available_admins_for_selection()
 
     # ==================== RAPPELS DEMANDES ====================
 

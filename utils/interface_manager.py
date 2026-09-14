@@ -80,6 +80,7 @@ class InterfaceManager:
         keyboard = [
             [InlineKeyboardButton("📮 DEMANDES DISPONIBLES", callback_data="demandes_disponibles")],
             [InlineKeyboardButton("💌 DEMANDES SUIVIES", callback_data="demandes_suivies")],
+            [InlineKeyboardButton("📦 MES DOSSIERS CLÔTURÉS", callback_data="demandes_archives")],
             [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
         ]
         return message, InlineKeyboardMarkup(keyboard)
@@ -98,6 +99,7 @@ class InterfaceManager:
                 [InlineKeyboardButton("👥 ÉQUIPE STAFF (Opérateurs)", callback_data="gerer_staff")],
                 [InlineKeyboardButton("🛡️ MANAGERS (Admins)", callback_data="gerer_admins")],
                 [InlineKeyboardButton("⭐ GESTION DES CLIENTS VIP", callback_data="gerer_vips")],
+                [InlineKeyboardButton("📦 ARCHIVES GÉNÉRALES", callback_data="admin_global_archives")],
                 [InlineKeyboardButton("📊 STATISTIQUES GLOBALES", callback_data="bot_stats")],
                 [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
@@ -115,6 +117,9 @@ class InterfaceManager:
 
             if privs.get("can_manage_vips", True):
                 keyboard.append([InlineKeyboardButton("⭐ GESTION DES CLIENTS VIP", callback_data="gerer_vips")])
+
+            if privs.get("can_view_archives", False):
+                keyboard.append([InlineKeyboardButton("📦 ARCHIVES GÉNÉRALES", callback_data="admin_global_archives")])
 
             if privs.get("can_view_stats", True):
                 keyboard.append([InlineKeyboardButton("📊 STATISTIQUES GLOBALES", callback_data="bot_stats")])
@@ -221,6 +226,7 @@ class InterfaceManager:
                 cursor.execute(
                     """
                     SELECT a.user_id, a.alias, a.is_owner, a.date_added,
+                           a.can_view_archives,
                            u.username, u.first_name
                     FROM admins a
                     LEFT JOIN users u ON a.user_id = u.user_id
@@ -244,9 +250,12 @@ class InterfaceManager:
                     dt_added = admin.get("date_added")
                     date_str = convert_utc_to_paris(dt_added).strftime("%d/%m/%Y") if dt_added else "Inconnue"
 
+                    arch_badge = "✅" if admin.get("can_view_archives") else "❌"
+                    perm_info = f" | Archives: {arch_badge}" if not admin.get("is_owner") else ""
+
                     message += (
                         f"• {role_badge} <b>{alias_esc}</b> ({pseudo})\n"
-                        f"  ID : <code>{admin['user_id']}</code> | Date d'entrée : {date_str}\n\n"
+                        f"  ID : <code>{admin['user_id']}</code> | Date d'entrée : {date_str}{perm_info}\n\n"
                     )
 
                     if not admin.get("is_owner"):

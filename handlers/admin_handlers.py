@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from utils.interface_manager import InterfaceManager
 from utils.maintenance import check_storage_usage, daily_maintenance
 from .staff.alias import AliasManager
+from .staff.archives import ArchivesManager
 from .admin.config import ConfigManager
 from .admin.stats import StatsManager
 from .admin.bot import BotManager
@@ -38,6 +39,7 @@ class AdminHandlers:
         self.db_manager = db_manager
         self.interface = InterfaceManager(config, db_manager)
         self.alias_manager = AliasManager(db_manager, config)
+        self.archives_manager = ArchivesManager(db_manager, config)
 
         # Sous-gestionnaires dédiés
         self.config_manager = ConfigManager(db_manager, config)
@@ -45,7 +47,7 @@ class AdminHandlers:
         self.bot_manager = BotManager(db_manager, config, self.interface)
         self.staff_manager = StaffManager(db_manager, config, self.interface)
 
-        logger.info("AdminHandlers initialisé avec architecture RBAC.")
+        logger.info("AdminHandlers initialisé avec architecture RBAC et support Archives Générales.")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou envoie un message texte propre."""
@@ -229,6 +231,17 @@ class AdminHandlers:
             msg, kb = self.interface.get_gerer_vips_menu()
             await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
 
+        # Archives Générales (Owner ou Admin avec permission)
+        elif data == "admin_global_archives":
+            await self.archives_manager.show_archives(update, context, page=0, is_global=True)
+
+        elif data.startswith("global_arch_page_"):
+            try:
+                page = int(data.replace("global_arch_page_", ""))
+            except ValueError:
+                page = 0
+            await self.archives_manager.show_archives(update, context, page=page, is_global=True)
+
         # Gestion Staff
         elif data == "gerer_staff" and privs.get("can_manage_staff", True):
             await query.answer()
@@ -361,6 +374,7 @@ class AdminHandlers:
         st_vips = "✅ OUI" if privs.get("can_manage_vips") else "❌ NON"
         st_stats = "✅ OUI" if privs.get("can_view_stats") else "❌ NON"
         st_delais = "✅ OUI" if privs.get("can_manage_delais") else "❌ NON"
+        st_archives = "✅ OUI" if privs.get("can_view_archives") else "❌ NON"
         st_owner = "👑 CO-GÉRANT" if privs.get("is_owner") else "🛡️ MANAGER"
 
         keyboard = [
@@ -371,6 +385,9 @@ class AdminHandlers:
             [
                 InlineKeyboardButton(f"Voir Stats : {st_stats}", callback_data=f"set_permadmin_{admin_id}_can_view_stats"),
                 InlineKeyboardButton(f"Régler Délais : {st_delais}", callback_data=f"set_permadmin_{admin_id}_can_manage_delais"),
+            ],
+            [
+                InlineKeyboardButton(f"Archives Générales : {st_archives}", callback_data=f"set_permadmin_{admin_id}_can_view_archives"),
             ],
             [
                 InlineKeyboardButton(f"Rôle Suprême : {st_owner}", callback_data=f"set_permadmin_{admin_id}_is_owner"),
@@ -386,7 +403,7 @@ class AdminHandlers:
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def handle_set_admin_permission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        """Bascule un droit en base et rafraîchit le cache multi-owner."""
+        """Bascule un droit en base et rafraîchit le cache."""
         query = update.callback_query
         if not query or not self.config.is_owner(update.effective_user.id):
             return
@@ -479,8 +496,8 @@ class AdminHandlers:
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO admins (user_id, alias, is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, added_by, date_added)
-                    VALUES (%s, %s, FALSE, TRUE, TRUE, TRUE, FALSE, %s, NOW())
+                    INSERT INTO admins (user_id, alias, is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, added_by, date_added)
+                    VALUES (%s, %s, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, %s, NOW())
                     """,
                     (target_id, alias, user_id)
                 )
