@@ -22,7 +22,7 @@ class DispoManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("DispoManager initialisé avec support Orientation & Staff")
+        logger.info("DispoManager initialisé avec support Anti-Auto-Prise & Suppression Admin")
 
     def _get_active_filters(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les filtres de la session utilisateur."""
@@ -47,6 +47,7 @@ class DispoManager:
             return
 
         filters = self._get_active_filters(context)
+        user_id = update.effective_user.id
 
         # 1. Prise en charge d'une demande
         if data.startswith("suivre_demande_"):
@@ -54,40 +55,60 @@ class DispoManager:
             await self.assign_demande_to_admin(update, context, demande_id)
             return
 
-        # 2. Menu filtres
-        if data == "dispo_filters_menu":
+        # 2. Suppression administrative (Admin / Owner uniquement)
+        elif data.startswith("admin_del_dispo_"):
+            if not self.config.is_admin(user_id):
+                await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
+                return
+
+            demande_id = int(data.replace("admin_del_dispo_", ""))
+            context.user_data["waiting_admin_del_reason"] = demande_id
+
+            msg = (
+                f"🗑️ <b>Suppression du dossier #{demande_id}</b>\n\n"
+                "Tapez au clavier le <b>motif de suppression</b> (non-conformité, etc.).\n"
+                "Ce motif sera consigné dans l'archive (statut « Annulée ») et envoyé au client :"
+            )
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Annuler", callback_data="demandes_disponibles")
+            ]])
+            await self._render_clean_text(query, context, msg, kb)
+            return
+
+        # 3. Menu filtres
+        elif data == "dispo_filters_menu":
             await self.show_filters_menu(update, context)
             return
 
-        # 3. Bascule Filtre Orientation
+        # 4. Bascule Filtre Orientation
         elif data.startswith("dispo_filter_ori_"):
             val = data.replace("dispo_filter_ori_", "")
             filters["orientation"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 4. Bascule Filtre Réseaux
+        # 5. Bascule Filtre Réseaux
         elif data.startswith("dispo_filter_net_"):
             val = data.replace("dispo_filter_net_", "")
             filters["reseau"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 5. Bascule Filtre Âge
+        # 6. Bascule Filtre Âge
         elif data.startswith("dispo_filter_age_"):
             val = data.replace("dispo_filter_age_", "")
             filters["age_range"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 6. Bascule Filtre Priorité
+        # 7. Bascule Filtre Priorité
         elif data.startswith("dispo_filter_type_"):
             val = data.replace("dispo_filter_type_", "")
             filters["type_demande"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 7. Reset Filtres
+        # 8. Reset Filtres
         elif data == "dispo_filter_reset":
             context.user_data["dispo_filters"] = {
                 "orientation": "all",
@@ -99,7 +120,7 @@ class DispoManager:
             await self.show_filters_menu(update, context)
             return
 
-        # 8. Lancement de la recherche textuelle
+        # 9. Lancement de la recherche textuelle
         elif data == "dispo_search_prompt":
             context.user_data["waiting_dispo_search"] = True
             msg = (
@@ -112,7 +133,7 @@ class DispoManager:
             await self._render_clean_text(query, context, msg, keyboard)
             return
 
-        # 9. Annulation ou réinitialisation de la recherche
+        # 10. Annulation ou réinitialisation de la recherche
         elif data == "dispo_cancel_search":
             context.user_data.pop("waiting_dispo_search", None)
             await self.show_demandes_disponibles_page(update, context, page=0)
@@ -123,12 +144,12 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=0)
             return
 
-        # 10. Pioche aléatoire
+        # 11. Pioche aléatoire
         elif data == "dispo_random":
             await self.show_random_demande(update, context)
             return
 
-        # 11. Pagination standard
+        # 12. Pagination standard
         elif data.startswith("dispo_prev_") or data.startswith("dispo_next_"):
             parts = data.split("_")
             curr = int(parts[2])
@@ -157,6 +178,11 @@ class DispoManager:
 
                 if not demande:
                     await query.answer("❌ Demande introuvable.", show_alert=True)
+                    return
+
+                # Contrôle anti-auto-prise en charge
+                if int(demande["user_id"]) == int(staff_id):
+                    await query.answer("🚫 Vous ne pouvez pas prendre en charge votre propre demande !", show_alert=True)
                     return
 
                 if demande.get("admin_en_charge"):
@@ -229,7 +255,7 @@ class DispoManager:
             success_msg = (
                 f"🎉 <b>Prise en charge validée !</b>\n\n"
                 f"La demande <b>#{req_num}</b> est passée en statut <b>⏳ En attente</b>.\n"
-                f"Le demandeur a été notifié de votre attribution."
+                "Le demandeur a été notifié de votre attribution."
             )
             await self._render_clean_text(query, context, success_msg, keyboard)
 
@@ -273,7 +299,7 @@ class DispoManager:
         total = len(demandes)
         demande = demandes[0]
         text_card = self._format_demande_card(demande, 0, total, context)
-        keyboard = self._build_navigation_keyboard(demande, 0, total)
+        keyboard = self._build_navigation_keyboard(demande, 0, total, user_id)
         photo_id = demande.get("photo_id")
 
         if photo_id:
@@ -368,43 +394,38 @@ class DispoManager:
         await self._render_clean_text(query, context, text, InlineKeyboardMarkup(keyboard))
 
     def _fetch_filtered_demandes(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> list:
-        """Exécute la requête SQL dynamique selon les permissions du staff et les filtres choisis."""
+        """Exécute la requête SQL dynamique selon les permissions du staff, les filtres et l'anti-auto-prise."""
         filters = self._get_active_filters(context)
 
         join_params = [int(user_id)]
         sql_where = [
             "ds.demande_id IS NULL",
             "d.admin_en_charge IS NULL",
-            "d.statut = '📥 Reçue'"
+            "d.statut = '📥 Reçue'",
+            "d.user_id != %s"
         ]
-        where_params = []
+        where_params = [int(user_id)]
 
-        # Permissions staff
         perms = self.db_manager.get_staff_permissions(user_id)
         p_reseau = perms.get("perm_reseaux", "all")
         p_type = perms.get("perm_type", "all")
         p_ori = perms.get("perm_orientation", "all")
 
-        # 1. Filtrage strict par permission d'orientation de l'opérateur
         if p_ori == "hetero":
             sql_where.append("d.orientation IN ('hetero', 'bi')")
         elif p_ori == "gay":
             sql_where.append("d.orientation IN ('gay', 'bi')")
-        # Si 'bi' ou 'all', l'opérateur peut tout voir (hétéro, gay, bi)
 
-        # 2. Filtrage strict par permission de réseau de l'opérateur
         if p_reseau == "insta":
             sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
         elif p_reseau == "snap":
             sql_where.append("d.snapchat IS NOT NULL AND d.snapchat != ''")
 
-        # 3. Filtrage strict par permission de type de l'opérateur
         if p_type == "prio_only":
             sql_where.append("d.prioritaire = 1")
         elif p_type == "standard_only":
             sql_where.append("d.prioritaire = 0")
 
-        # Filtres choisis manuellement par l'opérateur dans sa session
         if filters.get("orientation") and filters["orientation"] != "all":
             sql_where.append("d.orientation = %s")
             where_params.append(filters["orientation"])
@@ -479,7 +500,7 @@ class DispoManager:
         demande = demandes[page]
 
         text_card = self._format_demande_card(demande, page, total, context)
-        keyboard = self._build_navigation_keyboard(demande, page, total)
+        keyboard = self._build_navigation_keyboard(demande, page, total, user_id)
         photo_id = demande.get("photo_id")
 
         if photo_id:
@@ -582,7 +603,7 @@ class DispoManager:
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip()
         loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-        
+
         statut_label = self.db_manager.format_statut_display(
             demande.get("statut", "📥 Reçue"),
             demande.get("is_difficile", False),
@@ -612,7 +633,7 @@ class DispoManager:
 
         if demande.get("raison_abandon"):
             lines.append(
-                f"\n⚠️ <b>HISTORIQUE - TENTATIVE(S) PRÉCÉDENTE(S) :</b>\n"
+                "\n⚠️ <b>HISTORIQUE - TENTATIVE(S) PRÉCÉDENTE(S) :</b>\n"
                 f"{html.escape(str(demande['raison_abandon']))}"
             )
 
@@ -649,18 +670,25 @@ class DispoManager:
 
         return "\n".join(lines)
 
-    def _build_navigation_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Construit le clavier d'actions enrichi avec Filtres, Aléatoire et Profil Demandeur."""
+    def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
+        """Construit le clavier d'actions avec Filtres, Aléatoire, Profil et Suppression pour les admins."""
         demande_id = demande["id"]
         buttons = [
             [
                 InlineKeyboardButton("❤️ Prendre en charge", callback_data=f"suivre_demande_{demande_id}"),
                 InlineKeyboardButton("🎲 Au hasard", callback_data="dispo_random")
-            ],
-            [
-                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
             ]
         ]
+
+        action_row = [
+            InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
+        ]
+        # Bouton visible uniquement pour les administrateurs et propriétaires
+        if self.config.is_admin(user_id):
+            action_row.append(
+                InlineKeyboardButton("🗑️ Supprimer", callback_data=f"admin_del_dispo_{demande_id}")
+            )
+        buttons.append(action_row)
 
         # Pagination
         nav_row = []

@@ -72,12 +72,12 @@ class UserHandlers:
         if not query or not query.data:
             return
 
-        await query.answer()
         data = query.data
         user_id = query.from_user.id
 
-        # 1. Contrôle global du service (bloque uniquement la création/navigation de fiches actives)
+        # 1. Contrôle global du service
         if data.startswith(("form_", "nav_", "new_demande")) and not self.config.are_demandes_enabled():
+            await query.answer()
             await query.edit_message_text(
                 "🚫 <b>Service temporairement indisponible</b>\n\n"
                 "La création et la navigation des demandes sont actuellement désactivées par l'administration.",
@@ -96,8 +96,9 @@ class UserHandlers:
                 await query.answer(clean_reason, show_alert=True)
                 return
 
-            # 3. Création d'une nouvelle demande (contrôle des quotas)
+            # 3. Création d'une nouvelle demande
             elif data == "new_demande":
+                await query.answer()
                 can_create, reason_msg = self.demande.check_creation_quota(user_id)
                 if not can_create:
                     await query.edit_message_text(
@@ -118,11 +119,13 @@ class UserHandlers:
 
             # 5. Boutique VIP Telegram Stars
             elif data == "menu_vip_shop":
+                await query.answer()
                 msg, kb = self.interface.get_vip_shop_menu()
                 await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
                 return
 
             elif data == "buy_vip_month":
+                await query.answer()
                 stars_price = 250
                 title = "Abonnement VIP 30 Jours"
                 desc = "Accès VIP pendant 30 jours : demandes illimitées, choix du référent et contact direct."
@@ -153,7 +156,11 @@ class UserHandlers:
                     row = cursor.fetchone()
 
                 admin_id = row.get("admin_en_charge") if row else None
-                if admin_id and self.db_manager.is_staff_paused(admin_id):
+                if not admin_id:
+                    await query.answer("❌ Aucun référent n'est assigné à cette demande.", show_alert=True)
+                    return
+
+                if self.db_manager.is_staff_paused(admin_id):
                     raw_alias = self.db_manager.get_staff_alias(admin_id)
                     await query.answer(
                         f"⏸️ Votre référent ({raw_alias}) est actuellement en pause. Relance impossible pour le moment.",
@@ -177,7 +184,11 @@ class UserHandlers:
                     row = cursor.fetchone()
 
                 admin_id = row.get("admin_en_charge") if row else None
-                if admin_id and self.db_manager.is_staff_paused(admin_id):
+                if not admin_id:
+                    await query.answer("❌ Aucun référent n'est assigné à cette demande.", show_alert=True)
+                    return
+
+                if self.db_manager.is_staff_paused(admin_id):
                     raw_alias = self.db_manager.get_staff_alias(admin_id)
                     await query.answer(
                         f"⏸️ Votre référent ({raw_alias}) est actuellement en pause. Relance impossible pour le moment.",
@@ -185,6 +196,7 @@ class UserHandlers:
                     )
                     return
 
+                await query.answer()
                 title = f"Rappel Demande #{demande_id}"
                 desc = "Relance prioritaire hebdomadaire envoyée directement à votre référent."
                 payload = f"remind_pay_{demande_id}_{user_id}"
@@ -200,11 +212,11 @@ class UserHandlers:
                 )
                 return
 
-            # 8. Ligne directe VIP
-            elif data.startswith("vip_contact_admin_"):
-                demande_id = int(data.replace("vip_contact_admin_", ""))
+            # 8. Contacter mon référent (VIP & Standard dès prise en charge)
+            elif data.startswith(("vip_contact_admin_", "contact_admin_")):
+                demande_id = int(data.split("_")[-1])
                 with self.db_manager.get_cursor() as cursor:
-                    cursor.execute("SELECT admin_en_charge FROM demandes WHERE id = %s", (demande_id,))
+                    cursor.execute("SELECT admin_en_charge, request_number FROM demandes WHERE id = %s", (demande_id,))
                     d_row = cursor.fetchone()
 
                 if not d_row or not d_row.get("admin_en_charge"):
@@ -225,22 +237,41 @@ class UserHandlers:
                     "demande_id": demande_id,
                     "admin_id": admin_id,
                 }
-                await query.message.reply_text(
-                    "⭐ <b>Ligne directe VIP avec votre référent :</b>\n\n"
-                    "Tapez votre message ou envoyez vos fichiers ci-dessous. Ils lui seront immédiatement transmis :",
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_reply")
-                    ]])
+                await query.answer()
+                req_num = d_row.get("request_number", demande_id)
+                alias = self.db_manager.get_staff_alias(admin_id)
+
+                contact_text = (
+                    f"💬 <b>Ligne directe avec votre référent ({html.escape(str(alias))}) — Dossier #{req_num}</b>\n\n"
+                    "Tapez votre message ou envoyez vos fichiers ci-dessous. Ils lui seront immédiatement transmis :"
                 )
+                contact_kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_reply")
+                ]])
+
+                if query.message and query.message.photo:
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=contact_text,
+                        parse_mode="HTML",
+                        reply_markup=contact_kb
+                    )
+                else:
+                    await query.edit_message_text(contact_text, parse_mode="HTML", reply_markup=contact_kb)
                 return
 
             elif data.startswith("vip_assign_admin_"):
+                await query.answer()
                 await self.formulaire.handle_vip_admin_choice(update, context)
                 return
 
             # 9. Reprise suite à un abandon
             elif data.startswith("reprendre_demande_"):
+                await query.answer()
                 demande_id = int(data.replace("reprendre_demande_", ""))
                 try:
                     with self.db_manager.transaction() as cursor:
@@ -269,33 +300,10 @@ class UserHandlers:
 
             # 10. Archivage par l'utilisateur
             elif data.startswith("archiver_demande_"):
+                await query.answer()
                 demande_id = int(data.replace("archiver_demande_", ""))
-                try:
-                    with self.db_manager.transaction() as cursor:
-                        cursor.execute("SELECT * FROM demandes WHERE id = %s AND user_id = %s", (demande_id, user_id))
-                        demande = cursor.fetchone()
-
-                        if demande:
-                            cursor.execute(
-                                """
-                                INSERT INTO archives (
-                                    original_id, user_id, prenom, nom, age, localisation,
-                                    photo_id, instagram, snapchat, details, prioritaire,
-                                    montant, statut, orientation, date_creation, date_archivage
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                                """,
-                                (
-                                    demande["id"], demande["user_id"], demande["prenom"], demande.get("nom"),
-                                    demande.get("age"), demande.get("localisation"), demande.get("photo_id"),
-                                    demande.get("instagram"), demande.get("snapchat"), demande.get("details"),
-                                    demande.get("prioritaire", False), demande.get("montant", 0.0),
-                                    "❌ Abandonnée (Demandeur)", demande.get("orientation", "hetero"),
-                                    demande.get("date_creation")
-                                )
-                            )
-                            cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
-                            cursor.execute("DELETE FROM demandes WHERE id = %s", (demande_id,))
-
+                demande = self.db_manager.archiver_demande_annulee(demande_id, "Abandonnée par le demandeur")
+                if demande:
                     await query.edit_message_text(
                         "🗑️ <b>Demande classée sans suite.</b>\n\n"
                         "Votre demande a été archivée. Une place vient d'être libérée dans votre quota.",
@@ -305,12 +313,93 @@ class UserHandlers:
                             InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
                         ]])
                     )
-                except Exception as exc:
-                    logger.error("Erreur archivage demande %s : %s", demande_id, exc)
+                else:
                     await query.answer("❌ Erreur technique lors de l'archivage.", show_alert=True)
                 return
 
+            # 11. Protocole d'annulation client soumis au piégeur
+            elif data.startswith("ask_cancel_demande_"):
+                await query.answer()
+                demande_id = int(data.replace("ask_cancel_demande_", ""))
+                context.user_data["waiting_cancel_reason_demande_id"] = demande_id
+
+                prompt_text = (
+                    f"✍️ <b>Demande d'annulation (Dossier #{demande_id})</b>\n\n"
+                    "Indiquez au clavier la <b>raison</b> de votre annulation :\n"
+                    "<i>Elle sera transmise à l'opérateur en charge pour validation.</i>"
+                )
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="voir_demandes")]])
+
+                if query.message and query.message.photo:
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=prompt_text,
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+                else:
+                    await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=kb)
+                return
+
+            # 12. Décision du piégeur : Acceptation
+            elif data.startswith("accept_cancel_"):
+                await query.answer()
+                demande_id = int(data.replace("accept_cancel_", ""))
+                raison = context.user_data.pop(f"cancel_reason_{demande_id}", "Convenance demandeur")
+                demande = self.db_manager.archiver_demande_annulee(demande_id, raison)
+                if demande:
+                    req_num = demande.get("request_number", demande_id)
+                    await query.edit_message_text(
+                        f"✅ <b>Annulation acceptée.</b> Le dossier #{req_num} est archivé sous le statut « ❌ Annulée ».",
+                        parse_mode="HTML"
+                    )
+                    try:
+                        await context.bot.send_message(
+                            chat_id=demande["user_id"],
+                            text=(
+                                f"✅ <b>Votre demande d'annulation pour le dossier #{req_num} a été acceptée par l'opérateur.</b>\n"
+                                "Le dossier est désormais clôturé et archivé."
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+                else:
+                    await query.answer("❌ Demande introuvable ou déjà traitée.", show_alert=True)
+                return
+
+            # 13. Décision du piégeur : Refus
+            elif data.startswith("refuse_cancel_"):
+                await query.answer()
+                demande_id = int(data.replace("refuse_cancel_", ""))
+                context.user_data.pop(f"cancel_reason_{demande_id}", None)
+                await query.edit_message_text(
+                    f"❌ <b>Annulation refusée.</b> Le traitement du dossier #{demande_id} se poursuit.",
+                    parse_mode="HTML"
+                )
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute("SELECT user_id, request_number FROM demandes WHERE id = %s", (demande_id,))
+                    dem = cursor.fetchone()
+                if dem:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=dem["user_id"],
+                            text=(
+                                f"⚠️ <b>Demande d'annulation refusée pour le dossier #{dem.get('request_number', demande_id)}.</b>\n"
+                                "Le piège est déjà trop avancé pour être interrompu."
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+                return
+
             elif data.startswith("reply_to_admin_"):
+                await query.answer()
                 try:
                     await query.edit_message_reply_markup(reply_markup=None)
                 except Exception:
@@ -332,36 +421,48 @@ class UserHandlers:
                     ]])
                 )
             elif data == "cancel_user_reply":
+                await query.answer()
                 context.user_data.pop("replying_to_admin", None)
                 await query.edit_message_text("❌ Réponse annulée.")
             elif data.startswith("form_"):
+                await query.answer()
                 await self.formulaire.navigation.handle_form_navigation(update, context)
             elif data.startswith("nav_"):
+                await query.answer()
                 await self.demande.handle_navigation(update, context, data)
             elif data.startswith("modify_"):
+                await query.answer()
                 await self.edition.handle_modify_request(update, context, data)
             elif data.startswith("edit_"):
+                await query.answer()
                 await self.edition.handle_edit_field(update, context, data)
             elif data.startswith("delete_"):
+                await query.answer()
                 await self.edition.handle_delete_request(update, context, data)
             elif data.startswith("confirm_delete_"):
+                await query.answer()
                 await self.edition.handle_confirm_delete(update, context, data)
             elif data.startswith("cancel_demande_"):
+                await query.answer()
                 await self._handle_cancel_demande_placeholder(update, data)
             elif data == "cancel_edit":
+                await query.answer()
                 await self.edition.handle_cancel_edit(update, context)
             else:
                 await query.answer("❌ Action non reconnue", show_alert=True)
 
         except Exception as exc:
             logger.error("Erreur callback %s : %s", data, exc, exc_info=True)
-            await query.edit_message_text(
-                "❌ Une erreur est survenue lors du traitement de votre demande.",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Retour au menu", callback_data="start_menu")]
-                ]),
-            )
+            try:
+                await query.edit_message_text(
+                    "❌ Une erreur est survenue lors du traitement de votre demande.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Retour au menu", callback_data="start_menu")]
+                    ]),
+                )
+            except Exception:
+                pass
 
     async def _dispatch_admin_reminder(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int, is_paid_boost: bool = False
@@ -375,6 +476,8 @@ class UserHandlers:
             row = cursor.fetchone()
 
         if not row or not row.get("admin_en_charge"):
+            if update.callback_query:
+                await update.callback_query.answer("❌ Aucun référent n'est assigné à cette demande.", show_alert=True)
             return
 
         admin_id = row["admin_en_charge"]
@@ -556,7 +659,7 @@ class UserHandlers:
         if not update.message:
             return
 
-        # Saisie d'un quota par le propriétaire / admin
+        # 1. Saisie d'un quota par le propriétaire
         if update.message.text and context.user_data and context.user_data.get("waiting_limit_input"):
             if self.config.is_owner(update.effective_user.id):
                 raw = update.message.text.strip()
@@ -597,6 +700,83 @@ class UserHandlers:
                 else:
                     await update.message.reply_text("❌ Veuillez saisir un nombre entier positif (ex : 0, 5, 10).")
                     return
+
+        # 2. Admin saisit la raison de suppression d'une demande disponible
+        if update.message.text and context.user_data and context.user_data.get("waiting_admin_del_reason"):
+            if self.config.is_admin(update.effective_user.id):
+                demande_id = context.user_data.pop("waiting_admin_del_reason")
+                raison = update.message.text.strip()
+                demande = self.db_manager.archiver_demande_annulee(demande_id, f"Suppression admin : {raison}")
+                if demande:
+                    req_num = demande.get("request_number", demande_id)
+                    await update.message.reply_text(
+                        f"✅ <b>Demande #{req_num} supprimée et archivée sous « ❌ Annulée ».</b>",
+                        parse_mode="HTML"
+                    )
+                    try:
+                        await context.bot.send_message(
+                            chat_id=demande["user_id"],
+                            text=(
+                                f"❌ <b>Votre demande #{req_num} a été annulée par l'administration.</b>\n\n"
+                                f"<b>Motif :</b> {html.escape(raison)}"
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+                else:
+                    await update.message.reply_text("❌ Demande introuvable.")
+                return
+
+        # 3. Client saisit sa raison d'annulation
+        if update.message.text and context.user_data and context.user_data.get("waiting_cancel_reason_demande_id"):
+            demande_id = context.user_data.pop("waiting_cancel_reason_demande_id")
+            raison = update.message.text.strip()
+
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT admin_en_charge, request_number, prenom, user_id FROM demandes WHERE id = %s", (demande_id,))
+                d = cursor.fetchone()
+
+            if not d:
+                await update.message.reply_text("❌ Demande introuvable.")
+                return
+
+            admin_id = d.get("admin_en_charge")
+            req_num = d.get("request_number", demande_id)
+
+            if admin_id:
+                context.user_data[f"cancel_reason_{demande_id}"] = raison
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Accepter l'annulation", callback_data=f"accept_cancel_{demande_id}")],
+                    [InlineKeyboardButton("❌ Refuser l'annulation", callback_data=f"refuse_cancel_{demande_id}")]
+                ])
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=(
+                            f"⚠️ <b>Demande d'annulation (Dossier #{req_num})</b>\n\n"
+                            f"Le client souhaite annuler son dossier pour <b>{html.escape(str(d.get('prenom') or ''))}</b>.\n"
+                            f"<b>Motif indiqué :</b> « {html.escape(raison)} »\n\n"
+                            "Acceptez-vous d'annuler et d'archiver ce dossier ?"
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+                    await update.message.reply_text(
+                        "📨 <b>Votre demande d'annulation a été transmise à votre piégeur.</b>\n"
+                        "Vous serez notifié dès qu'il aura pris sa décision.",
+                        parse_mode="HTML"
+                    )
+                except Exception as exc:
+                    logger.error("Impossible de contacter le piégeur pour annulation : %s", exc)
+                    await update.message.reply_text("❌ Erreur lors de la transmission au piégeur.")
+            else:
+                self.db_manager.archiver_demande_annulee(demande_id, raison)
+                await update.message.reply_text(
+                    f"✅ <b>Votre demande #{req_num} a été annulée et archivée.</b>",
+                    parse_mode="HTML"
+                )
+            return
 
         # Saisie de la raison d'abandon par un opérateur
         if update.message.text and context.user_data and context.user_data.get("waiting_abandon_reason"):

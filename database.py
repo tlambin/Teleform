@@ -235,7 +235,9 @@ class DatabaseManager:
                 request_number INT DEFAULT NULL,
                 INDEX idx_user (user_id),
                 INDEX idx_statut (statut),
-                INDEX idx_orientation (orientation)
+                INDEX idx_orientation (orientation),
+                INDEX idx_insta (instagram),
+                INDEX idx_snap (snapchat)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
             """
@@ -415,6 +417,48 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur lors de la création des tables : %s", exc)
             raise
+
+    # ==================== DÉTECTION DOUBLON SOCIAL ====================
+
+    def check_social_duplicate(self, instagram: Optional[str] = None, snapchat: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+        """Vérifie si un compte Instagram ou Snapchat existe déjà sur une demande active."""
+        active_statuses = ("📥 Reçue", "⏳ En attente", "🔄 En cours")
+        placeholders = ", ".join(["%s"] * len(active_statuses))
+
+        try:
+            with self.get_cursor() as cursor:
+                if instagram:
+                    clean_insta = instagram.strip().lstrip("@").lower()
+                    cursor.execute(
+                        f"""
+                        SELECT id, request_number FROM demandes
+                        WHERE LOWER(REPLACE(instagram, '@', '')) = %s
+                          AND statut IN ({placeholders})
+                        LIMIT 1
+                        """,
+                        (clean_insta, *active_statuses)
+                    )
+                    if cursor.fetchone():
+                        return True, f"@{clean_insta}"
+
+                if snapchat:
+                    clean_snap = snapchat.strip().lower()
+                    cursor.execute(
+                        f"""
+                        SELECT id, request_number FROM demandes
+                        WHERE LOWER(snapchat) = %s
+                          AND statut IN ({placeholders})
+                        LIMIT 1
+                        """,
+                        (clean_snap, *active_statuses)
+                    )
+                    if cursor.fetchone():
+                        return True, clean_snap
+
+            return False, None
+        except Exception as exc:
+            logger.error("Erreur vérification doublon réseau : %s", exc)
+            return False, None
 
     # ==================== GESTION DU CACHE EN MÉMOIRE ====================
 
@@ -741,6 +785,111 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur comptage combinaison canal (%s, %s) : %s", orientation, reseau, exc)
             return 0
+
+    # ==================== RÉCUPÉRATION DES DEMANDES DISPONIBLES (ANTI-AUTO-PRISE) ====================
+
+    def get_demandes_disponibles(
+        self,
+        staff_id: int,
+        orientation_filter: Optional[str] = None,
+        reseau_filter: Optional[str] = None,
+        type_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Récupère les demandes disponibles en excluant celles créées par le staff lui-même."""
+        query = """
+            SELECT id, request_number, user_id, prenom, nom, age, localisation,
+                   photo_id, instagram, snapchat, details, prioritaire, montant,
+                   statut, orientation, date_creation
+            FROM demandes
+            WHERE statut = '📥 Reçue'
+              AND user_id != %s
+        """
+        params: List[Any] = [int(staff_id)]
+
+        if orientation_filter and orientation_filter != "all":
+            if orientation_filter == "bi":
+                query += " AND orientation = 'bi'"
+            else:
+                query += " AND (orientation = %s OR orientation = 'bi')"
+                params.append(orientation_filter)
+
+        if reseau_filter == "insta":
+            query += " AND instagram IS NOT NULL AND instagram != ''"
+        elif reseau_filter == "snap":
+            query += " AND snapchat IS NOT NULL AND snapchat != ''"
+
+        if type_filter == "prio_only":
+            query += " AND prioritaire = TRUE"
+        elif type_filter == "standard_only":
+            query += " AND prioritaire = FALSE"
+
+        query += " ORDER BY prioritaire DESC, date_creation ASC"
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(query, tuple(params))
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur récupération demandes disponibles staff %s : %s", staff_id, exc)
+            return []
+
+    # ==================== GESTION DE L'ANNULATION UNIQUE (ARCHIVAGE) ====================
+
+    def archiver_demande_annulee(self, demande_id: int, raison: str, archive_par_user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Archive définitivement une demande sous le statut unique '❌ Annulée' avec son motif."""
+        clean_raison = str(raison or "Non précisée").strip()
+        try:
+            with self.transaction() as cursor:
+                cursor.execute("SELECT * FROM demandes WHERE id = %s", (int(demande_id),))
+                demande = cursor.fetchone()
+                if not demande:
+                    return None
+
+                details_existant = demande.get("details") or ""
+                details_notes = f"{details_existant}\n[Motif annulation : {clean_raison}]".strip()
+
+                cursor.execute(
+                    """
+                    INSERT INTO archives (
+                        original_id, user_id, admin_en_charge, orientation, prenom, nom, age, localisation,
+                        photo_id, instagram, snapchat, details, prioritaire,
+                        montant, statut, is_difficile, reussie_substatus,
+                        has_delivered_content, date_livraison, date_creation, date_archivage
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    )
+                    """,
+                    (
+                        demande["id"],
+                        demande["user_id"],
+                        demande.get("admin_en_charge"),
+                        demande.get("orientation", "hetero"),
+                        demande.get("prenom"),
+                        demande.get("nom"),
+                        demande.get("age"),
+                        demande.get("localisation"),
+                        demande.get("photo_id"),
+                        demande.get("instagram"),
+                        demande.get("snapchat"),
+                        details_notes,
+                        demande.get("prioritaire", False),
+                        demande.get("montant", 0.0),
+                        "❌ Annulée",
+                        False,
+                        None,
+                        False,
+                        None,
+                        demande.get("date_creation"),
+                    )
+                )
+
+                cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (int(demande_id),))
+                cursor.execute("DELETE FROM demandes WHERE id = %s", (int(demande_id),))
+
+                return demande
+        except Exception as exc:
+            logger.error("Erreur archivage annulation demande %s : %s", demande_id, exc)
+            return None
 
     # ==================== DÉLAIS PARAMÉTRABLES ====================
 

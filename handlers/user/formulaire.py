@@ -1,4 +1,4 @@
-"""Formulaire de création de demandes avec orientation cible, matrice de canaux, quotas et choix du référent VIP."""
+"""Formulaire de création de demandes avec orientation cible, matrice de canaux, quotas, détection des doublons et choix du référent VIP."""
 
 import html
 import logging
@@ -15,6 +15,9 @@ from utils.validators import ValidationError, Validators
 from .navigation import NavigationManager
 
 logger = logging.getLogger(__name__)
+
+# URL du bot de contact en cas de doublon
+CONTACT_BOT_URL = "https://t.me/Teleform_contact_bot"
 
 
 class FormulaireManager:
@@ -62,7 +65,7 @@ class FormulaireManager:
         }
 
         self.navigation = NavigationManager(self)
-        logger.info("FormulaireManager initialisé avec support Matrice Canaux & RBAC")
+        logger.info("FormulaireManager initialisé avec support Matrice Canaux & Doublons")
 
     def get_conversation_handler(self):
         """Retourne le ConversationHandler complet du formulaire."""
@@ -332,7 +335,6 @@ class FormulaireManager:
 
         orientation = query.data.replace("ori_", "")
 
-        # Vérification qu'au moins un canal (Insta ou Snap) est ouvert pour cette orientation
         allow_insta = self.db_manager.is_channel_combination_allowed(orientation, "insta")
         allow_snap = self.db_manager.is_channel_combination_allowed(orientation, "snap")
 
@@ -507,7 +509,7 @@ class FormulaireManager:
         demande = context.user_data.get("demande", {})
         orientation = demande.get("orientation", "hetero")
 
-        # 1. Vérification activation combinaison (ex: allow_hetero_insta ou allow_gay_insta)
+        # 1. Vérification activation combinaison
         if not self.db_manager.is_channel_combination_allowed(orientation, "insta"):
             await update.message.reply_text(
                 f"🚫 Les demandes Instagram pour le profil <b>{orientation.capitalize()}</b> sont actuellement désactivées.\n\n"
@@ -536,6 +538,23 @@ class FormulaireManager:
             val = Validators.validate_instagram(user_input)
             if val is None:
                 return await self.skip_instagram(update, context)
+
+            # 3. Vérification unicité / détection des doublons
+            is_duplicate, matched_value = self.db_manager.check_social_duplicate(instagram=val)
+            if is_duplicate:
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Contacter le Support", url=CONTACT_BOT_URL)],
+                    [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                ])
+                await update.message.reply_text(
+                    f"⚠️ <b>Dossier déjà existant !</b>\n\n"
+                    f"Une demande active concerne déjà ce profil Instagram (<code>{html.escape(matched_value)}</code>).\n"
+                    "Pour éviter les doublons de traitement, cette cible ne peut être soumise à nouveau.\n\n"
+                    "Si vous pensez qu'il s'agit d'une erreur, contactez notre équipe :",
+                    parse_mode="HTML",
+                    reply_markup=kb
+                )
+                return self.INSTAGRAM
 
             context.user_data.setdefault("demande", {})["instagram"] = val
             await update.message.reply_text(
@@ -611,6 +630,23 @@ class FormulaireManager:
             val = Validators.validate_snapchat(user_input)
             if val is None:
                 return await self.skip_snapchat(update, context)
+
+            # 3. Vérification unicité / détection des doublons
+            is_duplicate, matched_value = self.db_manager.check_social_duplicate(snapchat=val)
+            if is_duplicate:
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Contacter le Support", url=CONTACT_BOT_URL)],
+                    [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                ])
+                await update.message.reply_text(
+                    f"⚠️ <b>Dossier déjà existant !</b>\n\n"
+                    f"Une demande active concerne déjà ce profil Snapchat (<code>{html.escape(matched_value)}</code>).\n"
+                    "Pour éviter les doublons de traitement, cette cible ne peut être soumise à nouveau.\n\n"
+                    "Si vous pensez qu'il s'agit d'une erreur, contactez notre équipe :",
+                    parse_mode="HTML",
+                    reply_markup=kb
+                )
+                return self.SNAPCHAT
 
             context.user_data.setdefault("demande", {})["snapchat"] = val
             await update.message.reply_text(
@@ -758,6 +794,10 @@ class FormulaireManager:
             kb_rows = []
 
             for member in equipe:
+                # Un membre VIP ne peut pas choisir sa propre personne comme référent
+                if int(member["user_id"]) == int(user.id):
+                    continue
+
                 alias = member.get("alias", f"Staff_{member['user_id']}")
                 perms = self.db_manager.get_staff_permissions(member["user_id"])
                 p_ori = perms.get("perm_orientation", "all")
@@ -911,7 +951,7 @@ class FormulaireManager:
             if target_admin_id:
                 await self._send_targeted_admin_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
             else:
-                await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet_esc, demande)
+                await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet_esc, demande, user_id)
 
         except Exception as exc:
             logger.error("Erreur lors de la sauvegarde de la demande : %s", exc, exc_info=True)
@@ -965,9 +1005,9 @@ class FormulaireManager:
             logger.warning("Impossible de notifier l'opérateur assigné %s : %s", admin_id, err)
 
     async def _broadcast_new_demande_alert(
-        self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict
+        self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict, creator_id: int
     ):
-        """Avertit l'équipe Staff selon les préférences de notification et la compatibilité d'orientation."""
+        """Avertit l'équipe Staff en excluant le créateur de la demande."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -994,10 +1034,14 @@ class FormulaireManager:
         for staff_id in staff_destinataires:
             try:
                 sid = int(staff_id)
+
+                # Règle anti-notification de sa propre demande
+                if sid == int(creator_id):
+                    continue
+
                 if self.db_manager.is_staff_paused(sid):
                     continue
 
-                # Contrôle de compatibilité orientation du staff
                 perms = self.db_manager.get_staff_permissions(sid)
                 p_ori = perms.get("perm_orientation", "all")
 

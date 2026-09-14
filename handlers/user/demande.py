@@ -18,7 +18,7 @@ class DemandeManager:
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
-        logger.info("DemandeManager initialisé avec support Archives")
+        logger.info("DemandeManager initialisé avec support Annulation & Archives")
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
         """Contrôle les plafonds global et individuel avant création (contourné pour VIP)."""
@@ -243,38 +243,37 @@ class DemandeManager:
         return "\n".join(lignes)
 
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
-        """Génère les boutons de pagination, de modification et d'actions de relance."""
+        """Génère les boutons d'actions selon que la demande est reçue ou déjà prise en charge."""
         buttons = []
         demande_id = demande["id"]
-        statut = demande.get("statut", "")
         admin_en_charge = demande.get("admin_en_charge")
+        statut_raw = str(demande.get("statut") or "").strip()
         is_prio = bool(demande.get("prioritaire"))
         is_vip = self.db_manager.is_user_vip(user_id)
 
-        if statut in ["📥 Reçue", "⏳ En attente"]:
+        # 1. Boutons de modification / annulation selon le statut opérationnel
+        if not admin_en_charge and ("reçue" in statut_raw.lower() or "recue" in statut_raw.lower()):
+            # Demande NON prise en charge : Modification et Suppression directe disponibles
             buttons.append([
                 InlineKeyboardButton("✏️ Modifier", callback_data=f"modify_{demande_id}"),
                 InlineKeyboardButton("🗑️ Supprimer", callback_data=f"delete_{demande_id}")
             ])
+        elif statut_raw not in ["✅ Réussie", "❌ Annulée", "❌ Abandonnée"]:
+            # Demande PRISE EN CHARGE : Le bouton modifier DISPARAÎT, seul le bouton d'annulation soumis à validation apparaît
+            buttons.append([
+                InlineKeyboardButton("❌ Demander l'annulation", callback_data=f"ask_cancel_demande_{demande_id}")
+            ])
 
+        # 2. Boutons de contact et de relance si un opérateur est assigné
         if admin_en_charge:
-            actions_row = []
-            if is_vip:
-                actions_row.append(
-                    InlineKeyboardButton("💬 Contacter mon référent", callback_data=f"vip_contact_admin_{demande_id}")
-                )
-
+            contact_btn = InlineKeyboardButton("💬 Contacter mon référent", callback_data=f"vip_contact_admin_{demande_id}")
             if is_vip or is_prio:
-                actions_row.append(
-                    InlineKeyboardButton("🔔 Relancer (Gratuit)", callback_data=f"remind_admin_free_{demande_id}")
-                )
+                relance_btn = InlineKeyboardButton("🔔 Relancer (Gratuit)", callback_data=f"remind_admin_free_{demande_id}")
             else:
-                actions_row.append(
-                    InlineKeyboardButton("🔔 Relancer (1 €)", callback_data=f"remind_admin_pay_{demande_id}")
-                )
+                relance_btn = InlineKeyboardButton("🔔 Relancer (1 €)", callback_data=f"remind_admin_pay_{demande_id}")
+            buttons.append([contact_btn, relance_btn])
 
-            buttons.append(actions_row)
-
+        # 3. Pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"nav_page_{page - 1}"))
@@ -284,6 +283,7 @@ class DemandeManager:
         if nav_row:
             buttons.append(nav_row)
 
+        # 4. Actions complémentaires
         can_create, _ = self.check_creation_quota(user_id)
         btn_creation = (
             InlineKeyboardButton("➕ Nouvelle demande", callback_data="new_demande")
@@ -316,7 +316,7 @@ class DemandeManager:
             msg = (
                 "📦 <b>Mes Archives</b>\n\n"
                 "Vous n'avez actuellement aucune demande archivée.\n"
-                "Les demandes finalisées ou clôturées apparaîtront ici."
+                "Les demandes finalisées, clôturées ou annulées apparaîtront ici."
             )
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Voir mes demandes actives", callback_data="voir_demandes")],
@@ -408,6 +408,10 @@ class DemandeManager:
             lines.append(f"👨‍💼 <b>Traité par :</b> {html.escape(alias or 'Opérateur')}")
         else:
             lines.append("👨‍💼 <b>Traité par :</b> <i>Équipe support</i>")
+
+        if item.get("details"):
+            det_esc = html.escape(str(item["details"]))
+            lines.append(f"📝 <b>Détails / Note :</b> {det_esc}")
 
         lines.extend([
             f"\n📅 <i>Déposée le : {crea_str}</i>",
