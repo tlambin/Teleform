@@ -370,7 +370,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
                     chat_id=admin_id,
                     text=admin_alert,
                     parse_mode="HTML",
-                    reply_markup=alert_kb
+                    reply_markup=alert_kb,
                 )
             except Exception as notif_err:
                 logger.warning("Impossible d'avertir l'opérateur %s du paiement Stars : %s", admin_id, notif_err)
@@ -691,7 +691,7 @@ class TelegramBot:
         # Aiguillage Traitement opérationnel des dossiers (Staff)
         app.add_handler(CallbackQueryHandler(
             self.staff_handlers.handle_staff_callbacks,
-            pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
+            pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|staff_view_demandes_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
         ))
 
         # Menus d'interface et navigation
@@ -700,7 +700,7 @@ class TelegramBot:
             pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_channels|menu_limits|limit_.*)$",
         ))
 
-        # Callbacks utilisateurs / clients (mis à jour avec annulation et contact)
+        # Callbacks utilisateurs / clients (mis à jour avec préférences VIP et navigation)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
             pattern=r"^(nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|menu_vip_settings|vip_set_assign_.*|vip_pick_auto_staff|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|pay_stars_prio_.*|pay_contact_prio_.*)$",

@@ -1,4 +1,4 @@
-"""Module de gestion de l'affichage des photos jointes aux demandes."""
+"""Module de gestion de l'affichage des photos et fiches textuelles jointes aux demandes."""
 
 import html
 import logging
@@ -9,12 +9,55 @@ logger = logging.getLogger(__name__)
 
 
 class PhotosManager:
-    """Gestionnaire d'affichage des fiches demandes avec photo intégrée."""
+    """Gestionnaire d'affichage des fiches demandes avec photo intégrée ou vue texte."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("PhotosManager initialisé avec support Staff")
+        logger.info("PhotosManager initialisé avec supervision hiérarchique")
+
+    def _build_keyboard_for_viewer(self, demande: dict, viewer_id: int, custom_back: str = None) -> InlineKeyboardMarkup:
+        """Construit le clavier contextuel : opérationnel, supervision admin ou lecture seule."""
+        demande_id = demande["id"]
+        admin_en_charge = demande.get("admin_en_charge")
+        is_assigned_operator = (viewer_id == admin_en_charge)
+        is_creator = (viewer_id == demande.get("user_id"))
+        is_admin_or_owner = self.config.is_admin(viewer_id) or self.config.is_owner(viewer_id)
+
+        # Cas 1 : Consultation depuis une liste de profil pour un dossier tiers
+        if custom_back and not (is_assigned_operator or is_creator):
+            keyboard = []
+            if is_admin_or_owner:
+                contact_row = []
+                if admin_en_charge and int(admin_en_charge) != viewer_id:
+                    contact_row.append(
+                        InlineKeyboardButton("🦈 Contacter le piégeur", callback_data=f"admin_contact_staff_{demande_id}_{admin_en_charge}")
+                    )
+                contact_row.append(
+                    InlineKeyboardButton("👤 Contacter le client", callback_data=f"contacter_{demande_id}")
+                )
+                keyboard.append(contact_row)
+
+            keyboard.append([InlineKeyboardButton("↩️ Retour à la liste", callback_data=custom_back)])
+            return InlineKeyboardMarkup(keyboard)
+
+        # Cas 2 : Vue opérationnelle complète (dossier dont on s'occupe ou consultation standard)
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
+                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}")
+            ],
+            [
+                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
+            ]
+        ]
+
+        if custom_back:
+            keyboard.append([InlineKeyboardButton("↩️ Retour à la liste", callback_data=custom_back)])
+        else:
+            keyboard.append([InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")])
+
+        return InlineKeyboardMarkup(keyboard)
 
     async def voir_photo_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche ou met à jour la fiche avec sa photo native sans bouton de bascule texte."""
@@ -25,11 +68,20 @@ class PhotosManager:
         if not self.config.is_staff(update.effective_user.id):
             return
 
-        try:
-            demande_id = int(query.data.split("_")[2])
-        except (IndexError, ValueError) as exc:
-            logger.error("Erreur format callback photo : %s", exc)
-            return
+        data = query.data or ""
+        custom_back = None
+        if "_back_" in data:
+            parts = data.replace("voir_photo_", "").split("_back_")
+            demande_id = int(parts[0])
+            custom_back = parts[1]
+        else:
+            try:
+                demande_id = int(data.split("_")[2])
+            except (IndexError, ValueError) as exc:
+                logger.error("Erreur format callback photo : %s", exc)
+                return
+
+        viewer_id = update.effective_user.id
 
         try:
             with self.db_manager.get_cursor() as cursor:
@@ -57,7 +109,7 @@ class PhotosManager:
             nom_esc = html.escape(str(demande.get("nom") or ""))
             nom_complet = f"{prenom_esc} {nom_esc}".strip()
             loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-            
+
             statut_display = self.db_manager.format_statut_display(
                 demande.get("statut", "📥 Reçue"),
                 demande.get("is_difficile", False),
@@ -92,19 +144,7 @@ class PhotosManager:
             caption_lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
             caption = "\n".join(caption_lines)
 
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
-                    InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}")
-                ],
-                [
-                    InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
-                ],
-                [
-                    InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")
-                ]
-            ])
-
+            keyboard = self._build_keyboard_for_viewer(demande, viewer_id, custom_back)
             chat_id = query.message.chat_id if query.message else None
 
             if query.message and query.message.photo:
@@ -133,7 +173,7 @@ class PhotosManager:
             logger.error("Erreur affichage photo intégrée %s : %s", demande_id, exc, exc_info=True)
 
     async def retour_texte_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Redirige proprement vers la fiche native (avec photo si disponible, texte sinon)."""
+        """Affiche la fiche textuelle complète ou redirige vers la photo selon le contenu."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -141,11 +181,20 @@ class PhotosManager:
         if not self.config.is_staff(update.effective_user.id):
             return
 
-        try:
-            demande_id = int(query.data.split("_")[-1])
-        except (IndexError, ValueError) as exc:
-            logger.error("Erreur extraction demande_id depuis %s : %s", query.data, exc)
-            return
+        data = query.data or ""
+        custom_back = None
+        if "_back_" in data:
+            parts = data.replace("retour_texte_", "").split("_back_")
+            demande_id = int(parts[0])
+            custom_back = parts[1]
+        else:
+            try:
+                demande_id = int(data.split("_")[-1])
+            except (IndexError, ValueError) as exc:
+                logger.error("Erreur extraction demande_id depuis %s : %s", query.data, exc)
+                return
+
+        viewer_id = update.effective_user.id
 
         try:
             with self.db_manager.get_cursor() as cursor:
@@ -161,9 +210,11 @@ class PhotosManager:
                 demande = cursor.fetchone()
 
             if not demande:
+                await query.answer("❌ Demande introuvable.", show_alert=True)
                 return
 
-            if demande.get("photo_id"):
+            # Si une photo existe et qu'aucun retour texte explicite n'est imposé, affichage photo native
+            if demande.get("photo_id") and not custom_back:
                 await self.voir_photo_demande(update, context)
                 return
 
@@ -176,7 +227,7 @@ class PhotosManager:
             nom_esc = html.escape(str(demande.get("nom") or ""))
             nom_complet = f"{prenom_esc} {nom_esc}".strip()
             loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-            
+
             statut_display = self.db_manager.format_statut_display(
                 demande.get("statut", "📥 Reçue"),
                 demande.get("is_difficile", False),
@@ -192,6 +243,8 @@ class PhotosManager:
             else:
                 user_display = f"User {demande['user_id']}"
 
+            admin_en_charge = demande.get("admin_en_charge")
+            admin_alias = self.db_manager.get_staff_alias(admin_en_charge) if admin_en_charge else "Non assigné"
             date_str = str(demande.get("date_creation", ""))[:16]
 
             lines = [
@@ -200,6 +253,7 @@ class PhotosManager:
                 f"📍 <b>Localisation :</b> {loc_esc}",
                 f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
                 f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
+                f"🦈 <b>Référent :</b> {html.escape(str(admin_alias))}",
                 f"🙋 <b>Demandeur :</b> {user_display}"
             ]
 
@@ -218,33 +272,29 @@ class PhotosManager:
 
             lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
 
-            keyboard = [
-                [
-                    InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande['id']}"),
-                    InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande['id']}")
-                ],
-                [
-                    InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande['id']}")
-                ],
-                [
-                    InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")
-                ]
-            ]
-
+            keyboard = self._build_keyboard_for_viewer(demande, viewer_id, custom_back)
             chat_id = query.message.chat_id if query.message else None
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
 
-            if chat_id:
-                await context.bot.send_message(
-                    chat_id=chat_id,
+            if query.message and query.message.photo:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                if chat_id:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="\n".join(lines),
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True
+                    )
+            else:
+                await query.edit_message_text(
                     text="\n".join(lines),
                     parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    reply_markup=keyboard,
                     disable_web_page_preview=True
                 )
 
         except Exception as exc:
-            logger.error("Erreur retour vue : %s", exc, exc_info=True)
+            logger.error("Erreur retour vue texte : %s", exc, exc_info=True)

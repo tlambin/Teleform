@@ -140,7 +140,7 @@ class StaffHandlers:
                 page = int(data.replace("archive_page_", ""))
                 await self.archives.show_archives(update, context, page=page)
 
-            # 8. Profils
+            # 8. Profils et sous-menus de visualisation des dossiers associés
             elif data.startswith("profil_admin_"):
                 target_admin_id = int(data.replace("profil_admin_", ""))
                 await self.profils.show_admin_profile(update, context, target_admin_id)
@@ -149,11 +149,27 @@ class StaffHandlers:
                 demande_id = int(data.replace("profil_demande_", ""))
                 await self.profils.show_user_profile_by_demande(update, context, demande_id)
 
+            elif (
+                data.startswith("staff_view_demandes_")
+                or data.startswith("staff_list_")
+                or data.startswith("user_view_demandes_")
+                or data.startswith("user_list_")
+                or data.startswith("archive_view_")
+            ):
+                await self.profils.handle_callback_routing(update, context, data)
+
             # 9. Mode pause
             elif data in ("admin_pause_prompt", "admin_pause_keep", "admin_pause_release", "admin_resume"):
                 await self._handle_admin_pause(update, context, data)
 
-            # 10. Contact du demandeur
+            # 10. Contact superviseur (Admin/Owner) vers Piégeur
+            elif data.startswith("admin_contact_staff_"):
+                parts = data.split("_")
+                demande_id = int(parts[3])
+                target_staff_id = int(parts[4])
+                await self._prompt_admin_contact_staff(update, context, demande_id, target_staff_id)
+
+            # 11. Contact du demandeur
             elif data.startswith("contacter_") and not data.startswith("contacter_owner"):
                 demande_id = int(data.replace("contacter_", ""))
                 await self._prompt_contact_user(update, context, demande_id)
@@ -185,6 +201,42 @@ class StaffHandlers:
 
     # Alias rétrocompatible
     handle_admin_callbacks = handle_staff_callbacks
+
+    # ==================== SUPERVISION ADMIN VERS PIÉGEUR ====================
+
+    async def _prompt_admin_contact_staff(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int, staff_id: int):
+        """Initialise l'envoi d'un message administratif de supervision vers l'opérateur en charge."""
+        query = update.callback_query
+        alias_staff = self.db_manager.get_staff_alias(staff_id)
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute("SELECT request_number, prenom FROM demandes WHERE id = %s", (demande_id,))
+            row = cursor.fetchone()
+
+        req_num = row.get("request_number", demande_id) if row else demande_id
+
+        context.user_data["contact_session"] = {
+            "demande_id": demande_id,
+            "target_user_id": staff_id,
+            "prenom": f"Piégeur ({alias_staff})",
+            "req_num": req_num,
+            "allow_reply": True,
+            "visual_media": [],
+            "doc_media": [],
+            "text_notes": [],
+        }
+
+        text = (
+            f"🛡️ <b>Message Direction ➔ Piégeur ({html.escape(str(alias_staff))})</b>\n"
+            f"Dossier concerné : <b>#{req_num}</b>\n\n"
+            "Envoyez vos instructions, remarques ou fichiers ci-dessous :\n"
+            "<i>Le message lui sera délivré sous votre alias officiel.</i>"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚀 Valider l'envoi (0 élément)", callback_data=f"send_batch_{demande_id}")],
+            [InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")]
+        ])
+        await self._safe_edit_or_reply(query, text, reply_markup=kb)
 
     # ==================== GESTION DE L'ACCEPTATION / REFUS VIP ====================
 
@@ -563,7 +615,7 @@ class StaffHandlers:
         return True
 
     async def _dispatch_media_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Envoie l'ensemble du lot au demandeur et valide la livraison dans la base de données."""
+        """Envoie l'ensemble du lot au destinataire et valide la livraison si applicable."""
         query = update.callback_query
         session = context.user_data.pop("contact_session", None)
 
@@ -654,14 +706,17 @@ class StaffHandlers:
                     reply_markup=user_keyboard
                 )
 
-            # Marquer le contenu comme livré dans la base et horodater date_livraison
-            self.db_manager.mark_content_delivered(demande_id)
+            # Marquer le contenu comme livré dans la base si l'envoi est destiné au client
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT user_id FROM demandes WHERE id = %s", (demande_id,))
+                d_row = cursor.fetchone()
+            if d_row and d_row.get("user_id") == target_user_id:
+                self.db_manager.mark_content_delivered(demande_id)
 
             total_items = len(visuals) + len(docs) + len(texts)
             done_text = (
                 f"✅ <b>Lot de {total_items} élément{'s' if total_items > 1 else ''} envoyé avec succès !</b>\n"
-                f"Les fichiers ont été transmis sous votre alias officiel : <code>{alias_esc}</code>\n\n"
-                "📦 <i>Le contenu est marqué comme livré. Si la demande est terminée, le dossier sera archivé selon le délai configuré.</i>"
+                f"Les fichiers ont été transmis sous votre alias officiel : <code>{alias_esc}</code>"
             )
             back_keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton("↩️ Retour à la demande", callback_data=f"retour_texte_{demande_id}")
