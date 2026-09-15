@@ -21,13 +21,14 @@ class AdminHandlers:
 
     # États pour l'ajout/suppression Staff
     WAITING_STAFF_ID = 1
-    WAITING_STAFF_REMOVE = 2
-    WAITING_STAFF_CONFIRMATION = 3
+    WAITING_STAFF_CONFIG = 2
+    WAITING_STAFF_REMOVE = 3
+    WAITING_STAFF_CONFIRMATION = 4
 
     # États pour l'ajout/suppression Admin (Owner only)
-    WAITING_ADMIN_ID = 4
-    WAITING_ADMIN_REMOVE = 5
-    WAITING_ADMIN_CONFIRMATION = 6
+    WAITING_ADMIN_ID = 5
+    WAITING_ADMIN_REMOVE = 6
+    WAITING_ADMIN_CONFIRMATION = 7
 
     # États pour la gestion VIP
     WAITING_VIP_USER = 10
@@ -47,7 +48,7 @@ class AdminHandlers:
         self.bot_manager = BotManager(db_manager, config, self.interface)
         self.staff_manager = StaffManager(db_manager, config, self.interface)
 
-        logger.info("AdminHandlers initialisé avec architecture RBAC, support Archives Générales et Orientations.")
+        logger.info("AdminHandlers initialisé avec architecture RBAC, support Archives Générales et Période d'essai.")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou envoie un message texte propre."""
@@ -285,7 +286,7 @@ class AdminHandlers:
             except Exception:
                 await query.answer("❌ Erreur valeur.", show_alert=True)
 
-        # Permissions Staff
+        # Permissions Staff (Réseau, Type, Orientation, Mode à l'essai)
         elif data.startswith("perm_staff_") and privs.get("can_manage_staff", True):
             try:
                 target_id = int(data.replace("perm_staff_", ""))
@@ -318,6 +319,7 @@ class AdminHandlers:
         reseau = perms.get("perm_reseaux", "all")
         typ = perms.get("perm_type", "all")
         ori = perms.get("perm_orientation", "all")
+        is_trial = bool(perms.get("is_trial", False))
 
         b_res_all = "✅ Tous réseaux" if reseau == "all" else "Tous réseaux"
         b_res_insta = "✅ Insta seul" if reseau == "insta" else "Insta seul"
@@ -327,10 +329,11 @@ class AdminHandlers:
         b_typ_prio = "✅ 💎 Payantes" if typ == "prio_only" else "💎 Payantes"
         b_typ_std = "✅ 📝 Gratuites" if typ == "standard_only" else "📝 Gratuites"
 
-        b_ori_all = "✅ Toutes" if ori == "all" else "Toutes"
+        b_ori_all = "✅ 🔄 Tous / Bi" if ori in ("all", "bi") else "🔄 Tous / Bi"
         b_ori_h = "✅ Hétéro" if ori == "hetero" else "Hétéro"
         b_ori_g = "✅ Gay" if ori == "gay" else "Gay"
-        b_ori_bi = "✅ Bi" if ori == "bi" else "Bi"
+
+        trial_btn_label = "🧪 À l'essai : ✅ OUI" if is_trial else "🧪 À l'essai : ❌ NON"
 
         keyboard = [
             [
@@ -344,10 +347,12 @@ class AdminHandlers:
                 InlineKeyboardButton(b_typ_std, callback_data=f"set_permstaff_{staff_id}_type_standard_only"),
             ],
             [
-                InlineKeyboardButton(b_ori_all, callback_data=f"set_permstaff_{staff_id}_orientation_all"),
                 InlineKeyboardButton(b_ori_h, callback_data=f"set_permstaff_{staff_id}_orientation_hetero"),
                 InlineKeyboardButton(b_ori_g, callback_data=f"set_permstaff_{staff_id}_orientation_gay"),
-                InlineKeyboardButton(b_ori_bi, callback_data=f"set_permstaff_{staff_id}_orientation_bi"),
+                InlineKeyboardButton(b_ori_all, callback_data=f"set_permstaff_{staff_id}_orientation_all"),
+            ],
+            [
+                InlineKeyboardButton(trial_btn_label, callback_data=f"set_permstaff_{staff_id}_trial_toggle")
             ],
             [InlineKeyboardButton("🔙 Équipe Staff", callback_data="gerer_staff")]
         ]
@@ -355,7 +360,8 @@ class AdminHandlers:
         text = (
             f"🛡️ <b>Permissions Opérateur : {alias}</b>\n"
             f"🆔 ID : <code>{staff_id}</code>\n\n"
-            "Ajustez les dossiers auxquels ce membre a accès (Réseaux, Type et Orientation cible) :"
+            "Ajustez les dossiers auxquels ce membre a accès (Réseaux, Type, Orientation) "
+            "et activez/désactivez sa <b>période d'essai</b> :"
         )
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -367,7 +373,20 @@ class AdminHandlers:
         try:
             parts = data.split("_")
             staff_id = int(parts[2])
-            cle = f"perm_{parts[3]}"
+            action = parts[3]
+
+            # Bascule de la période d'essai
+            if action == "trial" and len(parts) >= 5 and parts[4] == "toggle":
+                curr_trial = self.db_manager.is_staff_trial(staff_id)
+                new_trial = not curr_trial
+                self.db_manager.set_staff_trial(staff_id, new_trial)
+                status_txt = "activé" if new_trial else "désactivé"
+                await query.answer(f"🧪 Mode à l'essai {status_txt} !")
+                await self.show_staff_permissions_menu(update, context, staff_id)
+                return
+
+            # Permissions classiques (reseaux, type, orientation)
+            cle = f"perm_{action}"
             valeur = "_".join(parts[4:])
 
             self.db_manager.update_staff_permission(staff_id, cle, valeur)
@@ -449,6 +468,10 @@ class AdminHandlers:
 
     async def traiter_staff_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await self.staff_manager.traiter_staff_ajouter(update, context)
+
+    async def handle_recruit_config_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Relais du callback de pré-configuration vers StaffManager."""
+        return await self.staff_manager.handle_recruit_config_callback(update, context)
 
     async def cancel_staff_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await self.staff_manager.cancel_staff_add(update, context)

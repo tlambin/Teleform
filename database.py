@@ -188,6 +188,7 @@ class DatabaseManager:
                 perm_orientation VARCHAR(16) DEFAULT 'all',
                 alias_locked BOOLEAN DEFAULT FALSE,
                 is_paused BOOLEAN DEFAULT FALSE,
+                is_trial BOOLEAN DEFAULT FALSE,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
@@ -302,6 +303,7 @@ class DatabaseManager:
             ("staff", "perm_orientation", "VARCHAR(16) DEFAULT 'all'"),
             ("staff", "alias_locked", "BOOLEAN DEFAULT FALSE"),
             ("staff", "is_paused", "BOOLEAN DEFAULT FALSE"),
+            ("staff", "is_trial", "BOOLEAN DEFAULT FALSE"),
             ("admins", "is_owner", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_manage_staff", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_manage_vips", "BOOLEAN DEFAULT TRUE"),
@@ -832,6 +834,84 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur récupération demandes disponibles staff %s : %s", staff_id, exc)
             return []
+
+    # ==================== GESTION DE LA PÉRIODE D'ESSAI (TRIAL) ====================
+
+    def is_staff_trial(self, user_id: int) -> bool:
+        """Indique si un membre du staff est actuellement en période d'essai."""
+        cache_key = f"staff_trial_{user_id}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT is_trial FROM staff WHERE user_id = %s", (int(user_id),))
+                row = cursor.fetchone()
+                val = bool(row.get("is_trial")) if row else False
+                self._set_cached_value(cache_key, val)
+                return val
+        except Exception as exc:
+            logger.error("Erreur vérification statut essai staff %s : %s", user_id, exc)
+            return False
+
+    def set_staff_trial(self, user_id: int, is_trial: bool) -> bool:
+        """Active ou désactive la période d'essai d'un membre du staff."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute("UPDATE staff SET is_trial = %s WHERE user_id = %s", (bool(is_trial), int(user_id)))
+            self.clear_cache(f"staff_trial_{user_id}")
+            self.clear_cache(f"perm_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur mise à jour statut essai staff %s : %s", user_id, exc)
+            return False
+
+    def get_random_demande_for_trial(self, staff_id: int) -> Optional[Dict[str, Any]]:
+        """Tire une unique demande aléatoire disponible compatible avec les autorisations de l'opérateur à l'essai."""
+        perms = self.get_staff_permissions(staff_id)
+        p_ori = perms.get("perm_orientation", "all")
+        p_res = perms.get("perm_reseaux", "all")
+        p_typ = perms.get("perm_type", "all")
+
+        sql_where = [
+            "d.statut = '📥 Reçue'",
+            "d.admin_en_charge IS NULL",
+            "d.user_id != %s"
+        ]
+        params: List[Any] = [int(staff_id)]
+
+        if p_ori == "hetero":
+            sql_where.append("d.orientation IN ('hetero', 'bi')")
+        elif p_ori == "gay":
+            sql_where.append("d.orientation IN ('gay', 'bi')")
+
+        if p_res == "insta":
+            sql_where.append("d.instagram IS NOT NULL AND d.instagram != ''")
+        elif p_res == "snap":
+            sql_where.append("d.snapchat IS NOT NULL AND d.snapchat != ''")
+
+        if p_typ == "prio_only":
+            sql_where.append("d.prioritaire = 1")
+        elif p_typ == "standard_only":
+            sql_where.append("d.prioritaire = 0")
+
+        query = f"""
+            SELECT d.*, u.username, u.first_name AS user_first_name
+            FROM demandes d
+            LEFT JOIN users u ON d.user_id = u.user_id
+            WHERE {' AND '.join(sql_where)}
+            ORDER BY RAND()
+            LIMIT 1
+        """
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(query, tuple(params))
+                return cursor.fetchone()
+        except Exception as exc:
+            logger.error("Erreur pioche demande aléatoire pour staff à l'essai %s : %s", staff_id, exc)
+            return None
 
     # ==================== GESTION DE L'ANNULATION UNIQUE (ARCHIVAGE) ====================
 
@@ -1395,24 +1475,38 @@ class DatabaseManager:
 
     # ==================== PERMISSIONS OPÉRATIONNELLES (STAFF) ====================
 
-    def get_staff_permissions(self, user_id: int) -> Dict[str, str]:
+    def get_staff_permissions(self, user_id: int) -> Dict[str, Any]:
         if self.is_owner(user_id):
-            return {"perm_reseaux": "all", "perm_type": "all", "perm_orientation": "all"}
+            return {
+                "perm_reseaux": "all",
+                "perm_type": "all",
+                "perm_orientation": "all",
+                "is_trial": False
+            }
 
         cache_key = f"perm_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
             return cached
 
-        default_perms = {"perm_reseaux": "all", "perm_type": "all", "perm_orientation": "all"}
+        default_perms = {
+            "perm_reseaux": "all",
+            "perm_type": "all",
+            "perm_orientation": "all",
+            "is_trial": False
+        }
         try:
             with self.get_cursor() as cursor:
-                cursor.execute("SELECT perm_reseaux, perm_type, perm_orientation FROM staff WHERE user_id = %s", (user_id,))
+                cursor.execute(
+                    "SELECT perm_reseaux, perm_type, perm_orientation, is_trial FROM staff WHERE user_id = %s",
+                    (user_id,)
+                )
                 row = cursor.fetchone()
                 if row:
                     default_perms["perm_reseaux"] = row.get("perm_reseaux") or "all"
                     default_perms["perm_type"] = row.get("perm_type") or "all"
                     default_perms["perm_orientation"] = row.get("perm_orientation") or "all"
+                    default_perms["is_trial"] = bool(row.get("is_trial"))
             self._set_cached_value(cache_key, default_perms)
             return default_perms
         except Exception as exc:
@@ -1421,13 +1515,14 @@ class DatabaseManager:
 
     get_admin_permissions = get_staff_permissions
 
-    def update_staff_permission(self, user_id: int, perm_key: str, perm_value: str) -> bool:
-        if perm_key not in ("perm_reseaux", "perm_type", "perm_orientation"):
+    def update_staff_permission(self, user_id: int, perm_key: str, perm_value: Any) -> bool:
+        if perm_key not in ("perm_reseaux", "perm_type", "perm_orientation", "is_trial"):
             return False
         try:
             with self.transaction() as cursor:
                 cursor.execute(f"UPDATE staff SET {perm_key} = %s WHERE user_id = %s", (perm_value, user_id))
             self.clear_cache(f"perm_{user_id}")
+            self.clear_cache(f"staff_trial_{user_id}")
             return True
         except Exception as exc:
             logger.error("Erreur mise à jour permission %s pour staff %s : %s", perm_key, user_id, exc)
@@ -1671,6 +1766,7 @@ class DatabaseManager:
             "perm_reseaux": "all",
             "perm_type": "all",
             "perm_orientation": "all",
+            "is_trial": False,
             "en_cours": 0,
             "reussies": 0,
             "abandonnees": 0,
@@ -1687,9 +1783,10 @@ class DatabaseManager:
                     stats["perm_reseaux"] = "all"
                     stats["perm_type"] = "all"
                     stats["perm_orientation"] = "all"
+                    stats["is_trial"] = False
                 else:
                     cursor.execute(
-                        "SELECT alias, date_added, perm_reseaux, perm_type, perm_orientation FROM staff WHERE user_id = %s",
+                        "SELECT alias, date_added, perm_reseaux, perm_type, perm_orientation, is_trial FROM staff WHERE user_id = %s",
                         (admin_id,)
                     )
                     staff_row = cursor.fetchone()
@@ -1699,6 +1796,7 @@ class DatabaseManager:
                         stats["perm_reseaux"] = staff_row.get("perm_reseaux") or "all"
                         stats["perm_type"] = staff_row.get("perm_type") or "all"
                         stats["perm_orientation"] = staff_row.get("perm_orientation") or "all"
+                        stats["is_trial"] = bool(staff_row.get("is_trial"))
 
                 cursor.execute(
                     """

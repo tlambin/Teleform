@@ -13,28 +13,26 @@ class StaffManager:
     """Gestionnaire de l'équipe opérationnelle (recrutement, droits et révocation du staff)."""
 
     WAITING_STAFF_ID = 1
-    WAITING_STAFF_REMOVE = 2
-    WAITING_STAFF_CONFIRMATION = 3
+    WAITING_STAFF_CONFIG = 2
+    WAITING_STAFF_REMOVE = 3
+    WAITING_STAFF_CONFIRMATION = 4
 
     def __init__(self, db_manager, config, interface_manager=None):
         self.db_manager = db_manager
         self.config = config
         self.interface = interface_manager
-        logger.info("StaffManager initialisé avec support RBAC")
+        logger.info("StaffManager initialisé avec pré-configuration avant validation")
 
     def set_interface_manager(self, interface_manager):
-        """Injection différée de l'InterfaceManager si nécessaire."""
         self.interface = interface_manager
 
     def _get_interface(self):
-        """Récupère l'InterfaceManager existant ou l'initialise à la volée."""
         if not self.interface:
             from utils.interface_manager import InterfaceManager
             self.interface = InterfaceManager(self.config, self.db_manager)
         return self.interface
 
     def _has_staff_management_perm(self, user_id: int) -> bool:
-        """Contrôle si l'utilisateur possède l'autorisation de gérer les opérateurs."""
         if self.config.is_owner(user_id):
             return True
         if self.config.is_admin(user_id):
@@ -43,7 +41,6 @@ class StaffManager:
         return False
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
-        """Met à jour le message ou supprime la photo existante pour émettre du texte."""
         if query.message and query.message.photo:
             chat_id = query.message.chat_id
             try:
@@ -77,7 +74,6 @@ class StaffManager:
     # ==================== LISTE DU STAFF ====================
 
     async def list_staff(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche la liste complète des membres de l'équipe Staff."""
         user = update.effective_user
         if not user or not self._has_staff_management_perm(user.id):
             if update.message:
@@ -88,7 +84,7 @@ class StaffManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT s.user_id, s.alias, s.date_added, s.perm_reseaux, s.perm_type, s.is_paused,
+                    SELECT s.user_id, s.alias, s.date_added, s.perm_reseaux, s.perm_type, s.is_paused, s.is_trial,
                            u.first_name, u.username,
                            ua.first_name AS nom_ajouteur
                     FROM staff s
@@ -120,9 +116,10 @@ class StaffManager:
 
                 par_qui = html.escape(str(st.get("nom_ajouteur") or "Direction"))
                 status_badge = "⏸️ (En pause)" if st.get("is_paused") else "🟢 (En service)"
+                trial_badge = " 🧪 <b>[À l'essai]</b>" if st.get("is_trial") else ""
 
                 lines.append(
-                    f"• <b>{alias_esc}</b> {status_badge} ({pseudo_esc})\n"
+                    f"• <b>{alias_esc}</b> {status_badge}{trial_badge} ({pseudo_esc})\n"
                     f"  ID : <code>{st['user_id']}</code> | Recruté le {date_str} par {par_qui}\n"
                 )
 
@@ -137,7 +134,6 @@ class StaffManager:
     # ==================== RECRUTEMENT D'UN OPÉRATEUR ====================
 
     async def staff_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Ouvre le formulaire de recrutement d'un opérateur."""
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self._has_staff_management_perm(user.id):
@@ -151,9 +147,8 @@ class StaffManager:
             text = (
                 "👤 <b>Recrutement d'un Opérateur (Staff)</b>\n\n"
                 f"Équipe actuelle : <b>{count}</b> opérateur(s)\n\n"
-                "Envoyez l'<b>ID Telegram</b> (ex: <code>123456789</code>) "
-                "ou le <b>@username</b> de l'utilisateur à recruter.\n\n"
-                "<i>Rappel : Le futur opérateur doit avoir démarré le bot au moins une fois (/start).</i>"
+                "Envoyez l'<b>ID Telegram</b> ou le <b>@username</b> du compte à recruter :\n\n"
+                "<i>(L'utilisateur doit obligatoirement avoir démarré le bot au préalable avec /start)</i>"
             )
             keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton("❌ Annuler", callback_data="cancel_staff_add")
@@ -167,7 +162,7 @@ class StaffManager:
             return ConversationHandler.END
 
     async def traiter_staff_ajouter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Valide l'identifiant et enregistre le nouveau membre du staff."""
+        """Valide l'utilisateur cible et ouvre le panneau de pré-configuration des droits."""
         if not update.message or not update.message.text:
             return self.WAITING_STAFF_ID
 
@@ -205,30 +200,182 @@ class StaffManager:
             base_alias = user_data.get("first_name") or user_data.get("username") or f"Staff{target_id}"
             alias = str(base_alias)[:20]
 
+            # Brouillon temporaire de configuration en session
+            context.user_data["pending_staff_recruit"] = {
+                "target_id": target_id,
+                "alias": alias,
+                "first_name": user_data.get("first_name") or "Utilisateur",
+                "reseaux": "all",
+                "type": "all",
+                "orientation": "all",
+                "is_trial": True
+            }
+
+            await self._render_recruit_config_menu(update, context)
+            return self.WAITING_STAFF_CONFIG
+
+        except Exception as exc:
+            logger.error("Erreur vérification cible staff : %s", exc, exc_info=True)
+            await update.message.reply_text("❌ Erreur technique lors de la vérification.")
+            return ConversationHandler.END
+
+    def _build_recruit_config_keyboard(self, cfg: dict) -> InlineKeyboardMarkup:
+        """Construit les boutons de pré-configuration interactive."""
+        res = cfg.get("reseaux", "all")
+        typ = cfg.get("type", "all")
+        ori = cfg.get("orientation", "all")
+        is_trial = bool(cfg.get("is_trial", True))
+
+        b_res_all = "✅ Tous réseaux" if res == "all" else "Tous réseaux"
+        b_res_insta = "✅ Insta" if res == "insta" else "Insta"
+        b_res_snap = "✅ Snap" if res == "snap" else "Snap"
+
+        b_typ_all = "✅ Tout type" if typ == "all" else "Tout type"
+        b_typ_prio = "✅ 💎 Payantes" if typ == "prio_only" else "💎 Payantes"
+        b_typ_std = "✅ 📝 Gratuites" if typ == "standard_only" else "📝 Gratuites"
+
+        b_ori_all = "✅ 🔄 Tous / Bi" if ori in ("all", "bi") else "🔄 Tous / Bi"
+        b_ori_h = "✅ Hétéro" if ori == "hetero" else "Hétéro"
+        b_ori_g = "✅ Gay" if ori == "gay" else "Gay"
+
+        trial_btn_label = "🧪 À l'essai : ✅ OUI" if is_trial else "🧪 À l'essai : ❌ NON"
+
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(b_res_all, callback_data="cfgadd_res_all"),
+                InlineKeyboardButton(b_res_insta, callback_data="cfgadd_res_insta"),
+                InlineKeyboardButton(b_res_snap, callback_data="cfgadd_res_snap"),
+            ],
+            [
+                InlineKeyboardButton(b_typ_all, callback_data="cfgadd_typ_all"),
+                InlineKeyboardButton(b_typ_prio, callback_data="cfgadd_typ_prio_only"),
+                InlineKeyboardButton(b_typ_std, callback_data="cfgadd_typ_standard_only"),
+            ],
+            [
+                InlineKeyboardButton(b_ori_h, callback_data="cfgadd_ori_hetero"),
+                InlineKeyboardButton(b_ori_g, callback_data="cfgadd_ori_gay"),
+                InlineKeyboardButton(b_ori_all, callback_data="cfgadd_ori_all"),
+            ],
+            [
+                InlineKeyboardButton(trial_btn_label, callback_data="cfgadd_trial_toggle")
+            ],
+            [
+                InlineKeyboardButton("🚀 Valider et recruter", callback_data="cfgadd_confirm_save")
+            ],
+            [
+                InlineKeyboardButton("❌ Annuler", callback_data="cancel_staff_add")
+            ]
+        ])
+
+    async def _render_recruit_config_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche ou met à jour le panneau de pré-configuration."""
+        cfg = context.user_data.get("pending_staff_recruit", {})
+        target_id = cfg.get("target_id")
+        alias_esc = html.escape(str(cfg.get("alias") or ""))
+        nom_esc = html.escape(str(cfg.get("first_name") or ""))
+
+        kb = self._build_recruit_config_keyboard(cfg)
+        text = (
+            f"⚙️ <b>Configuration initiale de l'opérateur</b>\n\n"
+            f"👤 <b>Cible :</b> {nom_esc} (ID: <code>{target_id}</code>)\n"
+            f"🏷️ <b>Alias provisoire :</b> <code>{alias_esc}</code>\n\n"
+            "Ajustez ses autorisations et son mode à l'essai avant d'enregistrer le recrutement :"
+        )
+
+        if update.callback_query:
+            await update.callback_query.answer()
+            await self._safe_edit_or_send(update.callback_query, context, text, reply_markup=kb)
+        elif update.message:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+    async def handle_recruit_config_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Gère les clics sur les filtres de pré-configuration et la confirmation finale."""
+        query = update.callback_query
+        if not query or not query.data:
+            return self.WAITING_STAFF_CONFIG
+
+        data = query.data
+        cfg = context.user_data.get("pending_staff_recruit")
+        if not cfg:
+            await query.answer("❌ Session expirée.", show_alert=True)
+            return ConversationHandler.END
+
+        if data.startswith("cfgadd_res_"):
+            cfg["reseaux"] = data.replace("cfgadd_res_", "")
+            await self._render_recruit_config_menu(update, context)
+            return self.WAITING_STAFF_CONFIG
+
+        elif data.startswith("cfgadd_typ_"):
+            cfg["type"] = data.replace("cfgadd_typ_", "")
+            await self._render_recruit_config_menu(update, context)
+            return self.WAITING_STAFF_CONFIG
+
+        elif data.startswith("cfgadd_ori_"):
+            cfg["orientation"] = data.replace("cfgadd_ori_", "")
+            await self._render_recruit_config_menu(update, context)
+            return self.WAITING_STAFF_CONFIG
+
+        elif data == "cfgadd_trial_toggle":
+            cfg["is_trial"] = not cfg.get("is_trial", True)
+            await self._render_recruit_config_menu(update, context)
+            return self.WAITING_STAFF_CONFIG
+
+        elif data == "cfgadd_confirm_save":
+            await query.answer()
+            return await self._finalize_staff_recruitment(update, context)
+
+        return self.WAITING_STAFF_CONFIG
+
+    async def _finalize_staff_recruitment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Insère définitivement le membre dans la table staff avec les droits validés."""
+        cfg = context.user_data.pop("pending_staff_recruit", None)
+        if not cfg:
+            return ConversationHandler.END
+
+        target_id = cfg["target_id"]
+        alias = cfg["alias"]
+        reseaux = cfg["reseaux"]
+        typ = cfg["type"]
+        orientation = cfg["orientation"]
+        is_trial = cfg["is_trial"]
+        user_id_admin = update.effective_user.id
+
+        try:
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO staff (user_id, alias, added_by, perm_reseaux, perm_type, alias_locked, date_added)
-                    VALUES (%s, %s, %s, 'all', 'all', FALSE, NOW())
+                    INSERT INTO staff (
+                        user_id, alias, added_by, perm_reseaux, perm_type, perm_orientation,
+                        alias_locked, is_trial, date_added
+                    ) VALUES (%s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
                     """,
-                    (target_id, alias, user.id)
+                    (target_id, alias, user_id_admin, reseaux, typ, orientation, is_trial)
                 )
 
             self.config.add_staff(target_id)
-            logger.info("Opérateur Staff ajouté : %s (%s) par %s", target_id, alias, user.id)
+            logger.info("Opérateur Staff recruté : %s (%s) | Reseaux=%s, Type=%s, Ori=%s, Trial=%s",
+                        target_id, alias, reseaux, typ, orientation, is_trial)
 
             alias_esc = html.escape(alias)
-            nom_user_esc = html.escape(str(user_data.get("first_name") or ""))
+            trial_text = "🧪 <b>À l'essai</b> (Demande aléatoire imposée)" if is_trial else "🟢 <b>Confirmé</b> (Accès complet)"
 
-            # Notification au nouvel opérateur
+            # Notification personnalisée envoyée au nouveau membre
             try:
+                trial_notice = (
+                    "🧪 <b>Période probatoire (À l'essai) :</b>\n"
+                    "Vous devez mener à bien <b>une première demande test</b> attribuée au hasard pour débloquer l'accès complet à la plateforme.\n\n"
+                    if is_trial else
+                    "🟢 <b>Accès complet :</b>\n"
+                    "Vous avez accès dès maintenant à l'ensemble des demandes disponibles correspondant à vos autorisations.\n\n"
+                )
+
                 welcome_msg = (
                     "🎉 <b>Bienvenue dans l'équipe opérationnelle (Staff) !</b>\n\n"
-                    "Vous disposez désormais des accès nécessaires pour traiter et suivre les demandes.\n\n"
                     f"🏷️ <b>Votre alias provisoire :</b> <code>{alias_esc}</code>\n\n"
-                    "⚠️ <b>Important :</b> Vous avez la possibilité de choisir votre pseudonyme officiel.\n"
-                    "<i>Attention : vous ne disposez que d'<b>une seule modification</b>. Une fois validé, il sera verrouillé.</i>\n\n"
-                    "Cliquez ci-dessous pour ouvrir vos accès :"
+                    f"{trial_notice}"
+                    "⚠️ <b>Pseudonyme officiel :</b> Vous pouvez définir votre alias dès maintenant.\n"
+                    "<i>Attention : vous ne disposez que d'une seule modification autorisée.</i>\n\n"
+                    "Cliquez ci-dessous pour démarrer :"
                 )
                 welcome_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🏷️ DÉFINIR MON ALIAS", callback_data="modifier_alias")],
@@ -240,33 +387,43 @@ class StaffManager:
                     parse_mode="HTML",
                     reply_markup=welcome_kb
                 )
-                logger.info("Notification envoyée à l'opérateur %s", target_id)
             except Exception as notif_err:
-                logger.warning("Impossible de notifier le nouvel opérateur %s : %s", target_id, notif_err)
+                logger.warning("Impossible de notifier le membre %s : %s", target_id, notif_err)
 
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛡️ Configurer ses droits", callback_data=f"perm_staff_{target_id}")],
+            kb_confirm = InlineKeyboardMarkup([
                 [InlineKeyboardButton("👥 Équipe Staff", callback_data="gerer_staff")],
                 [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ])
 
-            await update.message.reply_text(
-                f"✅ <b>Opérateur ajouté avec succès !</b>\n\n"
-                f"👤 <b>Nom :</b> {nom_user_esc}\n"
-                f"🆔 <b>ID :</b> <code>{target_id}</code>\n"
-                f"🏷️ <b>Alias initial :</b> <code>{alias_esc}</code>",
-                parse_mode="HTML",
-                reply_markup=keyboard
+            res_label = {"all": "Tous", "insta": "Instagram", "snap": "Snapchat"}.get(reseaux, reseaux)
+            typ_label = {"all": "Tous", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(typ, typ)
+            ori_label = {"all": "Tous / Bi", "bi": "Tous / Bi", "hetero": "Hétéro", "gay": "Gay"}.get(orientation, orientation)
+
+            msg_admin = (
+                f"✅ <b>Opérateur recruté et configuré avec succès !</b>\n\n"
+                f"👤 <b>Cible :</b> {html.escape(cfg['first_name'])} (ID: <code>{target_id}</code>)\n"
+                f"🏷️ <b>Alias :</b> <code>{alias_esc}</code>\n"
+                f"🌐 <b>Réseaux :</b> {res_label}\n"
+                f"🎯 <b>Type :</b> {typ_label}\n"
+                f"🧭 <b>Orientation :</b> {ori_label}\n"
+                f"🧪 <b>Statut :</b> {trial_text}"
             )
+
+            if update.callback_query:
+                await self._safe_edit_or_send(update.callback_query, context, msg_admin, reply_markup=kb_confirm)
+            else:
+                await update.message.reply_text(msg_admin, parse_mode="HTML", reply_markup=kb_confirm)
+
             return ConversationHandler.END
 
         except Exception as exc:
-            logger.error("Erreur enregistrement staff : %s", exc, exc_info=True)
-            await update.message.reply_text("❌ Erreur technique lors de l'enregistrement.")
+            logger.error("Erreur enregistrement final staff : %s", exc, exc_info=True)
+            if update.callback_query:
+                await update.callback_query.answer("❌ Erreur technique lors de l'enregistrement.", show_alert=True)
             return ConversationHandler.END
 
     async def cancel_staff_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Interrompt la procédure de recrutement."""
+        context.user_data.pop("pending_staff_recruit", None)
         query = update.callback_query
         if query:
             await query.answer()
@@ -278,7 +435,6 @@ class StaffManager:
     # ==================== RÉVOCATION D'UN OPÉRATEUR ====================
 
     async def staff_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche la liste des opérateurs révocables."""
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self._has_staff_management_perm(user.id):
@@ -300,10 +456,7 @@ class StaffManager:
 
             if not staff_members:
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_staff")]])
-                text = (
-                    "👥 <b>Révocation d'un Opérateur</b>\n\n"
-                    "Aucun opérateur révocable n'est configuré actuellement."
-                )
+                text = "👥 <b>Révocation d'un Opérateur</b>\n\nAucun opérateur révocable n'est configuré actuellement."
                 await self._safe_edit_or_send(query, context, text, reply_markup=kb)
                 return ConversationHandler.END
 
@@ -333,7 +486,6 @@ class StaffManager:
             return ConversationHandler.END
 
     async def traiter_staff_supprimer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Intercepte le choix numérique de l'opérateur à révoquer."""
         if not update.message or not update.message.text:
             return self.WAITING_STAFF_REMOVE
 
@@ -379,7 +531,6 @@ class StaffManager:
         return self.WAITING_STAFF_CONFIRMATION
 
     async def confirmer_staff_suppression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Supprime l'opérateur de la base de données et met à jour le cache."""
         query = update.callback_query
         user = update.effective_user
         if not query or not user or not self._has_staff_management_perm(user.id):
@@ -418,7 +569,6 @@ class StaffManager:
             return ConversationHandler.END
 
     async def cancel_staff_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Annule la révocation et nettoie le contexte."""
         query = update.callback_query
         context.user_data.pop("staff_remove_list", None)
         context.user_data.pop("target_staff_to_remove", None)

@@ -16,7 +16,7 @@ class StatutsManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("StatutsManager initialisé avec support Staff/Admin")
+        logger.info("StatutsManager initialisé avec support Staff/Admin & Dénouement Période d'essai")
 
     async def show_status_change_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Affiche le panneau principal de paramétrage du statut avec interrupteurs et sous-options."""
@@ -226,7 +226,7 @@ class StatutsManager:
         nouveau_statut: str,
         reussie_substatus: str = None
     ):
-        """Met à jour le statut, actualise les suivis, alerte le demandeur et informe le membre."""
+        """Met à jour le statut, actualise les suivis, alerte le demandeur et valide l'essai si réussi."""
         staff_id = query.from_user.id
         staff_alias = self.db_manager.get_staff_alias(staff_id)
 
@@ -254,7 +254,7 @@ class StatutsManager:
         # Enregistrement en base
         self.db_manager.update_demande_statut(demande_id, nouveau_statut, reussie_substatus=reussie_substatus)
 
-        # Maintien dans demandes_suivi en statut 'active' tant que la demande n'est pas archivée
+        # Maintien dans demandes_suivi en statut 'active'
         with self.db_manager.transaction() as cursor:
             if nouveau_statut in ("⏳ En attente", "🔄 En cours", "✅ Réussie"):
                 cursor.execute(
@@ -269,7 +269,25 @@ class StatutsManager:
                     (demande_id, staff_id)
                 )
 
-        # Notification explicative au demandeur
+        # ==================== DÉNOUEMENT PÉRIODE D'ESSAI (SUCCÈS) ====================
+        if nouveau_statut == "✅ Réussie" and self.db_manager.is_staff_trial(staff_id):
+            self.db_manager.set_staff_trial(staff_id, False)
+            logger.info("🎉 Période d'essai validée avec succès pour l'opérateur %s", staff_id)
+            try:
+                congrats_msg = (
+                    "🎉 <b>FÉLICITATIONS ! PÉRIODE D'ESSAI VALIDÉE !</b>\n\n"
+                    f"Votre prise en charge de la demande <b>#{demande.get('request_number', demande_id)}</b> est un succès.\n"
+                    "Votre statut probatoire est désormais levé : vous avez un <b>accès complet</b> à l'ensemble des demandes disponibles !"
+                )
+                await context.bot.send_message(
+                    chat_id=staff_id,
+                    text=congrats_msg,
+                    parse_mode="HTML"
+                )
+            except Exception as notif_trial_err:
+                logger.warning("Impossible d'envoyer les félicitations de fin d'essai à %s : %s", staff_id, notif_trial_err)
+
+        # Notification au demandeur
         new_diff = old_diff if nouveau_statut in ("⏳ En attente", "🔄 En cours") else False
         await self.notifs_manager.send_status_update_notification(
             context=context,
@@ -395,7 +413,7 @@ class StatutsManager:
             await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
 
     async def process_abandon_reason(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enregistre le motif d'abandon fourni au clavier, cumule l'historique et notifie le demandeur."""
+        """Enregistre le motif d'abandon, gère le maintien de l'essai et notifie le demandeur."""
         if not update.message or not update.message.text:
             return
 
@@ -479,12 +497,23 @@ class StatutsManager:
             except Exception as notif_exc:
                 logger.warning("Échec envoi motif abandon à %s : %s", user_id_demande, notif_exc)
 
+            # Précision spécifique si l'opérateur est en période d'essai
+            is_trial = self.db_manager.is_staff_trial(staff_id)
+            trial_feedback = ""
+            if is_trial:
+                trial_feedback = (
+                    "\n\n🧪 <b>Information Période d'essai :</b>\n"
+                    "Ce dossier test ayant été abandonné, votre période d'essai reste active.\n"
+                    "Vous devez retourner dans les demandes disponibles pour qu'un nouveau dossier test vous soit assigné."
+                )
+
             back_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📋 Retour aux demandes suivies", callback_data="demandes_suivies")
+                InlineKeyboardButton("📋 Retour aux demandes suivies", callback_data="demandes_suivies"),
+                InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")
             ]])
             await update.message.reply_text(
                 f"✅ <b>Demande #{req_num} passée en statut ❌ Abandonnée.</b>\n\n"
-                "Le demandeur a été notifié avec votre motif.",
+                f"Le demandeur a été notifié avec votre motif.{trial_feedback}",
                 parse_mode="HTML",
                 reply_markup=back_kb
             )

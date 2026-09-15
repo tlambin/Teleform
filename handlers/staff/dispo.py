@@ -1,4 +1,4 @@
-"""Module de gestion, filtrage dynamique et recherche des demandes disponibles."""
+"""Module de gestion, filtrage dynamique et recherche des demandes disponibles avec support de la période d'essai."""
 
 import html
 import logging
@@ -22,7 +22,7 @@ class DispoManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("DispoManager initialisé avec support Anti-Auto-Prise & Suppression Admin")
+        logger.info("DispoManager initialisé avec support Anti-Auto-Prise, Suppression Admin & Mode Période d'essai")
 
     def _get_active_filters(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les filtres de la session utilisateur."""
@@ -48,6 +48,7 @@ class DispoManager:
 
         filters = self._get_active_filters(context)
         user_id = update.effective_user.id
+        is_trial = self.db_manager.is_staff_trial(user_id)
 
         # 1. Prise en charge d'une demande
         if data.startswith("suivre_demande_"):
@@ -73,6 +74,11 @@ class DispoManager:
                 InlineKeyboardButton("❌ Annuler", callback_data="demandes_disponibles")
             ]])
             await self._render_clean_text(query, context, msg, kb)
+            return
+
+        # Les membres en période d'essai ne peuvent pas manipuler les filtres, la recherche ou la pagination
+        if is_trial and (data.startswith("dispo_") or data == "dispo_filters_menu"):
+            await query.answer("🔒 Période d'essai : vous devez traiter la demande assignée au hasard.", show_alert=True)
             return
 
         # 3. Menu filtres
@@ -248,14 +254,17 @@ class DispoManager:
 
             await query.answer(f"✅ Demande #{req_num} prise en charge !", show_alert=False)
 
+            is_trial = self.db_manager.is_staff_trial(staff_id)
+            trial_notice = "\n\n🧪 <i>Ce dossier constitue votre test d'intégration. Menez-le à bien pour valider votre accès complet !</i>" if is_trial else ""
+
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Aller à mes demandes suivies", callback_data="demandes_suivies")],
-                [InlineKeyboardButton("📮 Continuer dans disponibles", callback_data="demandes_disponibles")]
+                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ])
             success_msg = (
                 f"🎉 <b>Prise en charge validée !</b>\n\n"
                 f"La demande <b>#{req_num}</b> est passée en statut <b>⏳ En attente</b>.\n"
-                "Le demandeur a été notifié de votre attribution."
+                f"Le demandeur a été notifié de votre attribution.{trial_notice}"
             )
             await self._render_clean_text(query, context, success_msg, keyboard)
 
@@ -473,12 +482,62 @@ class DispoManager:
             return cursor.fetchall()
 
     async def show_demandes_disponibles_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-        """Affiche la page courante parmi les demandes filtrées."""
+        """Affiche la page courante ou l'assignation aléatoire unique en cas de période d'essai."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
         user_id = update.effective_user.id
+        is_trial = self.db_manager.is_staff_trial(user_id)
+
+        # ==================== RESTRICTION PÉRIODE D'ESSAI ====================
+        if is_trial:
+            # 1. Vérifier si le membre a déjà une demande test en cours
+            active_demandes = self.db_manager.get_staff_active_demandes(user_id)
+            if active_demandes:
+                d = active_demandes[0]
+                req_num = d.get("request_number", d["id"])
+                msg = (
+                    "🧪 <b>Période d'essai active</b>\n\n"
+                    f"Vous avez déjà un dossier de test en cours de traitement (<b>Dossier #{req_num}</b>).\n"
+                    "Vous devez mener à bien cette demande avant de pouvoir accéder à d'autres dossiers."
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")],
+                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                ])
+                await self._render_clean_text(query, context, msg, kb)
+                return
+
+            # 2. Tirage au sort d'une demande unique compatible
+            demande = self.db_manager.get_random_demande_for_trial(user_id)
+            if not demande:
+                msg = (
+                    "🧪 <b>Période d'essai active</b>\n\n"
+                    "🔍 Aucune demande compatible avec vos autorisations n'est disponible pour le moment pour effectuer votre test.\n"
+                    "Merci de réessayer un peu plus tard."
+                )
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Réessayer", callback_data="demandes_disponibles")],
+                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                ])
+                await self._render_clean_text(query, context, msg, kb)
+                return
+
+            text_card = self._format_trial_demande_card(demande)
+            demande_id = demande["id"]
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❤️ Prendre en charge mon test", callback_data=f"suivre_demande_{demande_id}")],
+                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+            ])
+            photo_id = demande.get("photo_id")
+            if photo_id:
+                await self._render_photo(query, context, photo_id, text_card, keyboard)
+            else:
+                await self._render_clean_text(query, context, text_card, keyboard)
+            return
+
+        # ==================== ACCÈS STANDARD (MEMBRE CONFIRMÉ) ====================
         demandes = self._fetch_filtered_demandes(user_id, context)
 
         if not demandes:
@@ -589,6 +648,47 @@ class DispoManager:
                         disable_web_page_preview=True
                     )
 
+    def _format_trial_demande_card(self, demande: dict) -> str:
+        """Formate la fiche d'une demande assignée au hasard pour un membre à l'essai."""
+        label_map = {"hetero": "👩‍❤️‍👨 Hétéro", "gay": "👨‍❤️‍👨 Gay", "bi": "🔄 Bi"}
+        ori_badge = label_map.get(demande.get("orientation", "hetero"), "👩‍❤️‍👨 Hétéro")
+
+        prenom_esc = html.escape(str(demande.get("prenom") or ""))
+        nom_esc = html.escape(str(demande.get("nom") or ""))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip()
+        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
+        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+
+        priorite_icon = "💎" if demande.get("prioritaire") else "📝"
+        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
+
+        lines = [
+            f"🧪 <b>DOSSIER TEST DE VALIDATION #{req_num}</b>\n",
+            "<i>Cette demande vous a été attribuée aléatoirement par le système. "
+            "Sa réussite débloquera l'accès complet à la liste des demandes disponibles.</i>\n",
+            f"🎯 <b>Orientation :</b> {ori_badge}",
+            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
+            f"📍 <b>Localisation :</b> {loc_esc}",
+            f"🎯 <b>Type :</b> {priorite_icon} {type_str}"
+        ]
+
+        reseaux = []
+        if demande.get("instagram"):
+            ig = html.escape(str(demande["instagram"]))
+            reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
+        if demande.get("snapchat"):
+            snap = html.escape(str(demande["snapchat"]))
+            reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
+        if reseaux:
+            lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
+
+        if demande.get("details"):
+            det = str(demande["details"])
+            det_court = (det[:140] + "...") if len(det) > 140 else det
+            lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
+
+        return "\n".join(lines)
+
     def _format_demande_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
         """Formate la fiche avec échappement HTML strict."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
@@ -683,14 +783,12 @@ class DispoManager:
         action_row = [
             InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
         ]
-        # Bouton visible uniquement pour les administrateurs et propriétaires
         if self.config.is_admin(user_id):
             action_row.append(
                 InlineKeyboardButton("🗑️ Supprimer", callback_data=f"admin_del_dispo_{demande_id}")
             )
         buttons.append(action_row)
 
-        # Pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"dispo_prev_{page}"))

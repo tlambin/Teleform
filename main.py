@@ -400,7 +400,7 @@ class TelegramBot:
             per_user=True,
         )
 
-        # 1. Recrutement Staff (par Admin/Owner)
+        # 1. Recrutement Staff avec pré-configuration interactive (Admin/Owner)
         add_staff_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -411,7 +411,13 @@ class TelegramBot:
             states={
                 self.admin_handlers.WAITING_STAFF_ID: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.admin_handlers.traiter_staff_ajouter)
-                ]
+                ],
+                self.admin_handlers.WAITING_STAFF_CONFIG: [
+                    CallbackQueryHandler(
+                        self.admin_handlers.handle_recruit_config_callback,
+                        pattern=r"^cfgadd_.*$"
+                    )
+                ],
             },
             fallbacks=[
                 CallbackQueryHandler(self.admin_handlers.cancel_staff_add, pattern="^cancel_staff_add$"),
