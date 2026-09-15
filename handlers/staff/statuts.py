@@ -315,20 +315,46 @@ class StatutsManager:
         req_num = html.escape(str(demande.get("request_number", demande_id)))
         prenom_esc = html.escape(str(demande.get("prenom") or "la cible"))
         has_delivered = bool(demande_fresh.get("has_delivered_content", False))
+        is_prio = bool(demande_fresh.get("prioritaire", False))
+        montant = float(demande_fresh.get("montant") or 0.0)
+        p_statut = demande_fresh.get("paiement_statut", "non_requis")
 
+        # Cas 1 : Réussie Active
         if nouveau_statut == "✅ Réussie" and reussie_substatus == "active":
             remind_text = (
-                f"💡 <b>Rappel de livraison (Demande #{req_num})</b>\n\n"
+                f"💡 <b>Rappel de suivi (Demande #{req_num})</b>\n\n"
                 f"Le statut a été passé en <b>Réussie (🟢 Active)</b>.\n"
-                f"Pensez à transmettre dès à présent à l'utilisateur le contenu déjà obtenu sur <b>{prenom_esc}</b> !"
+                f"D'autres contenus peuvent être obtenus sur <b>{prenom_esc}</b>."
             )
             remind_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💬 Transmettre le contenu obtenu", callback_data=f"contacter_{demande_id}")]
+                [InlineKeyboardButton("💬 Contacter le demandeur", callback_data=f"contacter_{demande_id}")],
+                [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")]
             ])
             await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
 
+        # Cas 2 : Réussie Terminée
         elif nouveau_statut == "✅ Réussie" and reussie_substatus == "terminee":
-            if not has_delivered:
+            # Sous-cas A : Demande prioritaire en attente de paiement
+            if is_prio and montant > 0 and p_statut == "en_attente":
+                prio_wait_text = (
+                    f"💎 <b>Demande prioritaire #{req_num} réussie !</b>\n\n"
+                    f"Montant alloué : <b>{montant:.2f} €</b>\n\n"
+                    "⏳ <b>En attente du règlement du client :</b>\n"
+                    "Le demandeur a reçu les options de paiement (Stars Telegram ou contact direct).\n\n"
+                    "• Si le client règle par Stars, vous serez notifié instantanément.\n"
+                    "• S'il vous contacte pour un autre moyen de paiement (PayPal, virement, etc.), "
+                    "vous pourrez valider la réception des fonds via le bouton <b>« 💳 Confirmer la réception du paiement »</b> sur votre fiche de suivi.\n\n"
+                    "<i>Conservez vos fichiers : vous pourrez les envoyer dès que le paiement sera validé.</i>"
+                )
+                prio_wait_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Échanger avec le client", callback_data=f"contacter_{demande_id}")],
+                    [InlineKeyboardButton("📄 Ouvrir la fiche du dossier", callback_data=f"retour_texte_{demande_id}")],
+                    [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
+                ])
+                await context.bot.send_message(chat_id=staff_id, text=prio_wait_text, parse_mode="HTML", reply_markup=prio_wait_kb)
+
+            # Sous-cas B : Demande standard ou déjà payée, sans contenu livré
+            elif not has_delivered:
                 remind_text = (
                     f"⚠️ <b>Action requise (Demande #{req_num})</b>\n\n"
                     f"La demande a été déclarée <b>Réussie (❎ Terminée)</b>.\n\n"
@@ -336,9 +362,12 @@ class StatutsManager:
                     "<i>Le bouton d'archivage sera débloqué dès votre premier envoi (et la demande s'auto-archivera sous 72h).</i>"
                 )
                 remind_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Transmettre le contenu maintenant", callback_data=f"contacter_{demande_id}")]
+                    [InlineKeyboardButton("💬 Transmettre le contenu maintenant", callback_data=f"contacter_{demande_id}")],
+                    [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
                 ])
                 await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
+
+            # Sous-cas C : Déjà livrée, prête pour l'archivage
             else:
                 remind_text = (
                     f"📦 <b>Dossier #{req_num} prêt pour l'archivage</b>\n\n"
@@ -346,7 +375,8 @@ class StatutsManager:
                     "ou le laisser s'archiver automatiquement dans 72h."
                 )
                 remind_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📦 Archiver le dossier maintenant", callback_data=f"status_archive_now_{demande_id}")]
+                    [InlineKeyboardButton("📦 Archiver le dossier maintenant", callback_data=f"status_archive_now_{demande_id}")],
+                    [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
                 ])
                 await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
 
@@ -528,6 +558,8 @@ class StatutsManager:
         is_reussie = (demande.get("statut") == "✅ Réussie")
         sub_status = demande.get("reussie_substatus")
         has_delivered = bool(demande.get("has_delivered_content", False))
+        is_prio = bool(demande.get("prioritaire"))
+        paiement_statut = demande.get("paiement_statut", "non_requis")
 
         keyboard = [
             [
@@ -539,15 +571,24 @@ class StatutsManager:
             ]
         ]
 
+        # Si le paiement est requis et toujours en attente, afficher le bouton de confirmation manuelle
+        if is_prio and is_reussie and paiement_statut == "en_attente":
+            keyboard.insert(0, [
+                InlineKeyboardButton("💳 Confirmer la réception du paiement", callback_data=f"confirm_payment_prio_{demande_id}")
+            ])
+
+        # Clôture & Archivage
         if is_reussie and sub_status == "terminee":
-            if has_delivered:
-                keyboard.insert(1, [
-                    InlineKeyboardButton("📦 Archiver le dossier", callback_data=f"status_archive_now_{demande_id}")
-                ])
-            else:
-                keyboard.insert(1, [
-                    InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
-                ])
+            # Ne débloquer l'archivage ou l'injonction de livraison que si la demande est réglée (ou non payante)
+            if not is_prio or paiement_statut == "paye":
+                if has_delivered:
+                    keyboard.insert(1, [
+                        InlineKeyboardButton("📦 Archiver le dossier", callback_data=f"status_archive_now_{demande_id}")
+                    ])
+                else:
+                    keyboard.insert(1, [
+                        InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
+                    ])
 
         keyboard.append([InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")])
         return InlineKeyboardMarkup(keyboard)
@@ -589,6 +630,13 @@ class StatutsManager:
             f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
             f"🙋 <b>Demandeur :</b> {user_display}",
         ]
+
+        if demande.get("prioritaire"):
+            p_statut = demande.get("paiement_statut", "non_requis")
+            if p_statut == "paye":
+                lines.append("💳 <b>Paiement :</b> 🟢 <i>Réglé et validé</i>")
+            elif p_statut == "en_attente":
+                lines.append(f"💳 <b>Paiement :</b> 🟡 <i>En attente de règlement ({montant_val:.2f} €)</i>")
 
         if demande.get("raison_abandon"):
             lines.append(
@@ -646,6 +694,13 @@ class StatutsManager:
             f"🎯 {priorite_icon} {type_str}{montant_str}",
             f"📊 Statut : <code>{statut_esc}</code>"
         ]
+
+        if demande.get("prioritaire"):
+            p_statut = demande.get("paiement_statut", "non_requis")
+            if p_statut == "paye":
+                caption_lines.append("💳 Paiement : 🟢 Réglé et validé")
+            elif p_statut == "en_attente":
+                caption_lines.append(f"💳 Paiement : 🟡 En attente de règlement ({montant_val:.2f} €)")
 
         if demande.get("raison_abandon"):
             caption_lines.append(

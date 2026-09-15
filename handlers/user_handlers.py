@@ -143,6 +143,117 @@ class UserHandlers:
                 )
                 return
 
+            # ==================== RÈGLEMENT DEMANDES PRIORITAIRES ====================
+            elif data.startswith("pay_stars_prio_"):
+                await query.answer()
+                demande_id = int(data.replace("pay_stars_prio_", ""))
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id, request_number, prenom, montant, paiement_statut FROM demandes WHERE id = %s AND user_id = %s",
+                        (demande_id, user_id)
+                    )
+                    dem = cursor.fetchone()
+
+                if not dem:
+                    await query.answer("❌ Demande introuvable.", show_alert=True)
+                    return
+
+                if dem.get("paiement_statut") == "paye":
+                    await query.answer("✅ Cette demande a déjà été réglée.", show_alert=True)
+                    return
+
+                montant = float(dem.get("montant") or 0.0)
+                if montant <= 0:
+                    await query.answer("❌ Aucun montant n'est associé à cette demande.", show_alert=True)
+                    return
+
+                stars_amount = max(1, int(montant * 50))
+                req_num = dem.get("request_number", demande_id)
+                title = f"Règlement Demande #{req_num}"
+                desc = f"Paiement de la prestation prioritaire pour {dem.get('prenom', 'la cible')} ({montant:.2f} €)."
+                payload = f"prio_pay_{demande_id}_{user_id}"
+
+                await context.bot.send_invoice(
+                    chat_id=query.message.chat_id,
+                    title=title,
+                    description=desc,
+                    payload=payload,
+                    currency="XTR",
+                    prices=[LabeledPrice(label=f"Prestation prioritaire #{req_num}", amount=stars_amount)],
+                    provider_token="",
+                )
+                return
+
+            elif data.startswith("pay_contact_prio_"):
+                await query.answer()
+                demande_id = int(data.replace("pay_contact_prio_", ""))
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id, request_number, admin_en_charge, montant, prenom FROM demandes WHERE id = %s AND user_id = %s",
+                        (demande_id, user_id)
+                    )
+                    dem = cursor.fetchone()
+
+                if not dem or not dem.get("admin_en_charge"):
+                    await query.answer("❌ Aucun opérateur n'est assigné à cette demande.", show_alert=True)
+                    return
+
+                admin_id = dem["admin_en_charge"]
+                req_num = dem.get("request_number", demande_id)
+                montant = float(dem.get("montant") or 0.0)
+                alias = self.db_manager.get_staff_alias(admin_id)
+
+                context.user_data["replying_to_admin"] = {
+                    "demande_id": demande_id,
+                    "admin_id": admin_id,
+                }
+
+                # Notification d'information envoyée à l'opérateur
+                try:
+                    user = update.effective_user
+                    u_label = f"@{user.username}" if user.username else user.first_name
+                    admin_alert = (
+                        f"💳 <b>Paiement hors-Stars demandé (Dossier #{req_num})</b>\n\n"
+                        f"Le client <b>{html.escape(u_label)}</b> souhaite convenir d'un autre moyen de paiement "
+                        f"pour le dossier de <b>{html.escape(str(dem.get('prenom') or ''))}</b> (Montant : <b>{montant:.2f} €</b>).\n\n"
+                        "Une fois les fonds reçus, validez l'encaissement via le bouton dédié sur votre fiche de suivi."
+                    )
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=admin_alert,
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📄 Ouvrir la fiche du dossier", callback_data=f"retour_texte_{demande_id}")]
+                        ])
+                    )
+                except Exception as notif_err:
+                    logger.warning("Impossible d'avertir l'opérateur pour paiement alternatif : %s", notif_err)
+
+                contact_text = (
+                    f"💬 <b>Paiement avec votre référent ({html.escape(str(alias))}) — Dossier #{req_num}</b>\n\n"
+                    f"Montant convenu : <b>{montant:.2f} €</b>\n\n"
+                    "Envoyez votre message ci-dessous pour convenir du moyen de règlement souhaité (PayPal, virement, etc.) :\n"
+                    "<i>Dès réception des fonds, votre référent validera le paiement et vous transmettra les fichiers.</i>"
+                )
+                contact_kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_reply")
+                ]])
+
+                if query.message and query.message.photo:
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=contact_text,
+                        parse_mode="HTML",
+                        reply_markup=contact_kb
+                    )
+                else:
+                    await query.edit_message_text(contact_text, parse_mode="HTML", reply_markup=contact_kb)
+                return
+
             # 6. Relance hebdomadaire gratuite
             elif data.startswith("remind_admin_free_"):
                 demande_id = int(data.replace("remind_admin_free_", ""))

@@ -92,11 +92,11 @@ class StaffHandlers:
                 demande_id = int(data.replace("suivre_demande_", ""))
                 await self.dispo.assign_demande_to_admin(update, context, demande_id)
 
-            # 3. Demandes suivies
+            # 3. Demandes suivies et confirmation de paiement
             elif data == "demandes_suivies":
                 await self.suivi.show_demandes_suivies(update, context)
 
-            elif data.startswith("suivi_"):
+            elif data.startswith("suivi_") or data.startswith("confirm_payment_prio_"):
                 await self.suivi.handle_callback_routing(update, context, data)
 
             # 4. Préférences de notifications et rappels
@@ -298,7 +298,7 @@ class StaffHandlers:
             prenom_esc = html.escape(str(row.get("prenom") or ""))
 
             text = (
-                f"💬 <b>Contacter {prenom_esc}</b> (Demande #{req_num})\n\n"
+                f"💬 <b>Contacter le demandeur</b> (Dossier #{req_num} - {prenom_esc})\n\n"
                 "Souhaitez-vous autoriser le demandeur à répondre à cet envoi ?"
             )
             keyboard = InlineKeyboardMarkup([
@@ -343,7 +343,7 @@ class StaffHandlers:
 
         mode_str = "💬 Réponse autorisée (1 fois)" if allow_reply else "🔒 Message informatif (réponse bloquée)"
         text = (
-            f"📦 <b>Session d'envoi vers {prenom_esc} (Demande #{req_num})</b>\n"
+            f"📦 <b>Session d'envoi (Demande #{req_num} - {prenom_esc})</b>\n"
             f"Mode : <b>{mode_str}</b>\n\n"
             "Envoyez vos photos, vidéos, documents ou messages texte (en un seul envoi ou plusieurs).\n\n"
             "<i>Tous vos éléments seront conservés et transmis en groupe quand vous validerez.</i>"

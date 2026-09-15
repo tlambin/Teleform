@@ -46,7 +46,7 @@ class NotifsManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("NotifsManager initialisé avec support Staff/Admin")
+        logger.info("NotifsManager initialisé avec support Staff/Admin & Paiement Prio")
 
     # ==================== NOTIFICATIONS UTILISATEURS ====================
 
@@ -64,7 +64,7 @@ class NotifsManager:
         admin_alias: Optional[str] = None,
         raison_abandon: Optional[str] = None,
     ) -> bool:
-        """Transmet une alerte explicative au demandeur lors de chaque transition d'état."""
+        """Transmet une alerte explicative au demandeur avec options de règlement pour les demandes prioritaires."""
         try:
             num_str = f"#{request_number}" if request_number else f"ID-{demande_id}"
             prenom_esc = html.escape(str(prenom_cible or "votre contact"))
@@ -75,6 +75,22 @@ class NotifsManager:
             new_esc = html.escape(nouveau_libelle)
             explication_esc = html.escape(get_statut_explication(new_status, is_difficile, reussie_substatus))
 
+            # Contrôle du statut de paiement pour les demandes prioritaires
+            is_prio = False
+            montant = 0.0
+            paiement_statut = "non_requis"
+
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT prioritaire, montant, paiement_statut FROM demandes WHERE id = %s",
+                    (demande_id,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    is_prio = bool(row.get("prioritaire"))
+                    montant = float(row.get("montant") or 0.0)
+                    paiement_statut = str(row.get("paiement_statut") or "non_requis")
+
             lignes = [
                 f"📢 <b>Mise à jour de votre demande {num_str}</b>\n",
                 f"👤 Cible : <b>{prenom_esc}</b>",
@@ -84,20 +100,39 @@ class NotifsManager:
                 f"« <i>{explication_esc}</i> »\n",
             ]
 
+            keyboard_buttons = []
+
+            # Cas particulier : Demande Prioritaire réussie en attente de paiement
+            needs_payment = (new_status == "✅ Réussie" and is_prio and montant > 0 and paiement_statut == "en_attente")
+
+            if needs_payment:
+                stars_amount = int(montant * 50)
+                lignes.append(
+                    "💰 <b>Règlement requis pour la livraison :</b>\n"
+                    f"Votre demande prioritaire a abouti. Le montant alloué est de <b>{montant:.2f} €</b> ({stars_amount} ⭐).\n"
+                    "Veuillez procéder au règlement pour débloquer l'envoi immédiat de vos contenus par votre référent :\n"
+                )
+                keyboard_buttons.append([
+                    InlineKeyboardButton(f"⭐ Régler en Stars ({stars_amount} ⭐)", callback_data=f"pay_stars_prio_{demande_id}")
+                ])
+                keyboard_buttons.append([
+                    InlineKeyboardButton("💬 Autre moyen (Contacter mon référent)", callback_data=f"pay_contact_prio_{demande_id}")
+                ])
+
             if new_status == "❌ Abandonnée" and raison_abandon:
                 lignes.append(f"📝 <b>Motif :</b> {html.escape(str(raison_abandon))}\n")
 
             lignes.append(f"👨‍💼 <b>Référent :</b> {alias_esc}")
 
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🗂️ Consulter mes demandes", callback_data="voir_demandes")]
+            keyboard_buttons.append([
+                InlineKeyboardButton("🗂️ Consulter mes demandes", callback_data="voir_demandes")
             ])
 
             await context.bot.send_message(
                 chat_id=int(user_id),
                 text="\n".join(lignes),
                 parse_mode="HTML",
-                reply_markup=keyboard,
+                reply_markup=InlineKeyboardMarkup(keyboard_buttons),
                 disable_web_page_preview=True,
             )
             logger.info("Notification de statut envoyée à %s pour la demande %s (%s)", user_id, demande_id, nouveau_libelle)

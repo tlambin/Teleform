@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 class SuiviManager:
-    """Gestionnaire des demandes prises en charge avec tri multicritère et recherche."""
+    """Gestionnaire des demandes prises en charge avec tri multicritère et confirmation de paiement."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("SuiviManager initialisé avec support Staff/Admin")
+        logger.info("SuiviManager initialisé avec confirmation de paiement prioritaire")
 
     def _get_sort_settings(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les réglages de tri et filtre de suivi."""
@@ -62,19 +62,31 @@ class SuiviManager:
         await self.show_demandes_suivies_page(update, context, page=0)
 
     async def handle_callback_routing(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        """Routeur des callbacks internes au suivi (pagination, tris, recherche)."""
+        """Routeur des callbacks internes au suivi (pagination, tris, recherche, validation paiement)."""
         query = update.callback_query
         if not query:
             return
 
         settings = self._get_sort_settings(context)
 
-        # 1. Menu de tri
-        if data == "suivi_sort_menu":
+        # 1. Fenêtre de confirmation d'encaissement (Prompt)
+        if data.startswith("confirm_payment_prio_") and not data.startswith("confirm_payment_prio_exec_"):
+            demande_id = int(data.replace("confirm_payment_prio_", ""))
+            await self._prompt_confirm_payment(query, context, demande_id)
+            return
+
+        # 2. Exécution confirmée du paiement
+        elif data.startswith("confirm_payment_prio_exec_"):
+            demande_id = int(data.replace("confirm_payment_prio_exec_", ""))
+            await self._execute_confirm_payment(update, context, demande_id)
+            return
+
+        # 3. Menu de tri
+        elif data == "suivi_sort_menu":
             await self.show_sort_menu(update, context)
             return
 
-        # 2. Changement de critère de tri
+        # 4. Changement de critère de tri
         elif data.startswith("suivi_set_sort_"):
             critere = data.replace("suivi_set_sort_", "")
             if settings["sort_by"] == critere:
@@ -85,7 +97,7 @@ class SuiviManager:
             await self.show_sort_menu(update, context)
             return
 
-        # 3. Réinitialisation
+        # 5. Réinitialisation
         elif data == "suivi_sort_reset":
             context.user_data["suivi_settings"] = {
                 "sort_by": "date_suivi",
@@ -95,7 +107,7 @@ class SuiviManager:
             await self.show_sort_menu(update, context)
             return
 
-        # 4. Recherche
+        # 6. Recherche
         elif data == "suivi_search_prompt":
             context.user_data["waiting_suivi_search"] = True
             msg = (
@@ -118,12 +130,127 @@ class SuiviManager:
             await self.show_demandes_suivies_page(update, context, page=0)
             return
 
-        # 5. Pagination
+        # 7. Pagination
         elif data.startswith("suivi_prev_") or data.startswith("suivi_next_"):
             parts = data.split("_")
             curr = int(parts[2])
             page = max(0, curr - 1) if "prev" in data else curr + 1
             await self.show_demandes_suivies_page(update, context, page=page)
+
+    async def _prompt_confirm_payment(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
+        """Affiche la fenêtre intermédiaire de confirmation avant validation définitive."""
+        try:
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, request_number, prenom, nom, montant, user_id
+                    FROM demandes WHERE id = %s
+                    """,
+                    (demande_id,)
+                )
+                dem = cursor.fetchone()
+
+            if not dem:
+                await query.answer("❌ Demande introuvable.", show_alert=True)
+                return
+
+            req_num = html.escape(str(dem.get("request_number", demande_id)))
+            prenom_esc = html.escape(str(dem.get("prenom") or ""))
+            montant_val = float(dem.get("montant") or 0.0)
+
+            prompt_text = (
+                f"⚠️ <b>Confirmation d'encaissement (Dossier #{req_num})</b>\n\n"
+                f"👤 <b>Cible :</b> {prenom_esc}\n"
+                f"💰 <b>Montant à valider :</b> {montant_val:.2f} €\n\n"
+                "Êtes-vous sûr d'avoir <b>bien reçu l'intégralité du paiement</b> de la part du client ?\n\n"
+                "<i>Cette action avertira le client de la validation de son paiement et débloquera l'envoi des contenus.</i>"
+            )
+
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚠️ Oui, confirmer l'encaissement", callback_data=f"confirm_payment_prio_exec_{demande_id}")],
+                [InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")]
+            ])
+
+            # Edition universelle : supporte les messages avec photo ou texte brut
+            if query.message and query.message.photo:
+                try:
+                    await query.edit_message_caption(
+                        caption=prompt_text,
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+                except Exception:
+                    await query.message.reply_text(
+                        text=prompt_text,
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+            else:
+                try:
+                    await query.edit_message_text(
+                        text=prompt_text,
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+                except Exception:
+                    if query.message:
+                        await query.message.reply_text(
+                            text=prompt_text,
+                            parse_mode="HTML",
+                            reply_markup=kb
+                        )
+
+        except Exception as exc:
+            logger.error("Erreur affichage prompt confirmation paiement : %s", exc, exc_info=True)
+            await query.answer("❌ Erreur technique.", show_alert=True)
+
+    async def _execute_confirm_payment(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
+        """Valide la réception des fonds hors Stars et notifie le client."""
+        query = update.callback_query
+        staff_id = update.effective_user.id
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, user_id, request_number, prenom, montant, admin_en_charge 
+                FROM demandes WHERE id = %s
+                """,
+                (demande_id,)
+            )
+            dem = cursor.fetchone()
+
+        if not dem:
+            await query.answer("❌ Demande introuvable.", show_alert=True)
+            return
+
+        if dem.get("admin_en_charge") and int(dem["admin_en_charge"]) != int(staff_id) and not self.config.is_owner(staff_id):
+            await query.answer("❌ Seul l'opérateur en charge peut valider ce paiement.", show_alert=True)
+            return
+
+        ok = self.db_manager.set_demande_paiement_statut(demande_id, "paye")
+        if ok:
+            req_num = dem.get("request_number", demande_id)
+            alias = self.db_manager.get_staff_alias(staff_id)
+            await query.answer(f"✅ Paiement de la demande #{req_num} validé !", show_alert=True)
+
+            # Notification envoyée au client
+            try:
+                msg_client = (
+                    f"💳 <b>Paiement confirmé (Dossier #{req_num})</b>\n\n"
+                    f"Votre référent <b>{html.escape(str(alias))}</b> a validé la bonne réception de votre règlement.\n"
+                    "L'envoi de vos contenus est désormais débloqué !"
+                )
+                await context.bot.send_message(
+                    chat_id=dem["user_id"],
+                    text=msg_client,
+                    parse_mode="HTML"
+                )
+            except Exception as e_notif:
+                logger.warning("Impossible de notifier le client %s de la validation paiement : %s", dem["user_id"], e_notif)
+
+            await self.show_demandes_suivies_page(update, context, page=0)
+        else:
+            await query.answer("❌ Erreur technique lors de la validation du paiement.", show_alert=True)
 
     async def handle_search_text_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Récupère la saisie textuelle pour filtrer les suivis."""
@@ -388,7 +515,7 @@ class SuiviManager:
                     )
 
     def _format_suivi_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche avec échappement HTML strict et indicateur de compte à rebours d'archivage."""
+        """Formate la fiche avec état du paiement et compte à rebours d'archivage."""
         priorite_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_val = float(demande.get("montant") or 0.0)
@@ -425,6 +552,13 @@ class SuiviManager:
             f"🙋 <b>Demandeur :</b> {demandeur}"
         ]
 
+        if demande.get("prioritaire"):
+            p_statut = demande.get("paiement_statut", "non_requis")
+            if p_statut == "paye":
+                lines.append("💳 <b>Paiement :</b> 🟢 <i>Réglé et validé</i>")
+            elif p_statut == "en_attente":
+                lines.append(f"💳 <b>Paiement :</b> 🟡 <i>En attente de règlement ({montant_val:.2f} €)</i>")
+
         if demande.get("ancien_admin_alias") and demande.get("raison_abandon"):
             anc_alias = html.escape(str(demande["ancien_admin_alias"]))
             motif = html.escape(str(demande["raison_abandon"]))
@@ -449,7 +583,6 @@ class SuiviManager:
             det_court = (det[:140] + "...") if len(det) > 140 else det
             lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
 
-        # Indicateur visuel d'auto-archivage / clôture
         archive_badge = self._format_archive_countdown(demande)
         if archive_badge:
             lines.append(f"\n{archive_badge}")
@@ -473,11 +606,13 @@ class SuiviManager:
         return "\n".join(lines)
 
     def _build_suivi_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Clavier avec actions directes, profil demandeur, bouton archivage conditionnel et pagination."""
+        """Clavier avec actions directes, bouton confirmation paiement, bouton archivage et pagination."""
         demande_id = demande["id"]
         is_reussie = (demande.get("statut") == "✅ Réussie")
         sub_status = demande.get("reussie_substatus")
         has_delivered = bool(demande.get("has_delivered_content", False))
+        is_prio = bool(demande.get("prioritaire"))
+        paiement_statut = demande.get("paiement_statut", "non_requis")
 
         buttons = [
             [
@@ -489,15 +624,23 @@ class SuiviManager:
             ]
         ]
 
+        # Bouton d'action prioritaire : Déclenche la fenêtre de confirmation
+        if is_prio and is_reussie and paiement_statut == "en_attente":
+            buttons.insert(0, [
+                InlineKeyboardButton("💳 Confirmer la réception du paiement", callback_data=f"confirm_payment_prio_{demande_id}")
+            ])
+
+        # Clôture & Archivage
         if is_reussie and sub_status == "terminee":
-            if has_delivered:
-                buttons.insert(1, [
-                    InlineKeyboardButton("📦 Archiver le dossier", callback_data=f"status_archive_now_{demande_id}")
-                ])
-            else:
-                buttons.insert(1, [
-                    InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
-                ])
+            if not is_prio or paiement_statut == "paye":
+                if has_delivered:
+                    buttons.insert(1, [
+                        InlineKeyboardButton("📦 Archiver le dossier", callback_data=f"status_archive_now_{demande_id}")
+                    ])
+                else:
+                    buttons.insert(1, [
+                        InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
+                    ])
 
         nav_row = []
         if page > 0:

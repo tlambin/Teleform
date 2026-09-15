@@ -224,21 +224,63 @@ async def check_and_send_delivery_reminders(context: ContextTypes.DEFAULT_TYPE):
         logger.error("Erreur lors de la vérification des rappels de livraison : %s", exc)
 
 
+async def check_and_send_paid_delivery_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Rappel quotidien aux opérateurs pour les demandes prioritaires payées dont les contenus ne sont pas livrés."""
+    db_manager = context.application.bot_data.get("db_manager")
+    if not db_manager:
+        return
+
+    try:
+        paid_undelivered = db_manager.get_paid_undelivered_demandes_for_reminder()
+        for dem in paid_undelivered:
+            admin_id = dem["admin_id"]
+            dem_id = dem["id"]
+            req_num = html.escape(str(dem.get("request_number") or dem_id))
+            prenom = html.escape(str(dem.get("prenom") or "la cible"))
+            montant = float(dem.get("montant") or 0.0)
+
+            msg = (
+                f"🚨 <b>RAPPEL QUOTIDIEN : Paiement reçu sans livraison (#{req_num})</b>\n\n"
+                f"Le client a validé le règlement de sa demande prioritaire pour <b>{prenom}</b> ({montant:.2f} €).\n\n"
+                "👉 <b>Le contenu obtenu n'a toujours pas été transmis au client.</b>\n"
+                "Merci de lui envoyer les fichiers sans attendre pour clore la prestation."
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 Transmettre les fichiers maintenant", callback_data=f"contacter_{dem_id}")],
+                [InlineKeyboardButton("📋 Ouvrir mes suivis", callback_data="demandes_suivies")]
+            ])
+
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=msg,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+                db_manager.mark_payment_delivery_reminder_sent(dem_id)
+                logger.info("Relance quotidienne livraison post-paiement envoyée à %s pour #%s", admin_id, req_num)
+            except Exception as err:
+                logger.warning("Erreur relance livraison payée à %s : %s", admin_id, err)
+
+    except Exception as exc:
+        logger.error("Erreur lors de la vérification des rappels de livraison payée : %s", exc)
+
+
 # ==================== HANDLERS TELEGRAM STARS ====================
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Valide les commandes Stars (abonnements VIP ou relances)."""
+    """Valide les commandes Stars (abonnements VIP, relances ou paiements prioritaires)."""
     query = update.pre_checkout_query
     payload = query.invoice_payload
 
-    if payload.startswith("vip_sub_") or payload.startswith("remind_pay_"):
+    if payload.startswith(("vip_sub_", "remind_pay_", "prio_pay_")):
         await query.answer(ok=True)
     else:
         await query.answer(ok=False, error_message="Erreur de validation de la transaction.")
 
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Active le VIP 30 jours ou valide le rappel payé dès confirmation Stars."""
+    """Gère l'activation des achats Stars confirmés (VIP, Relances, Prestations prioritaires)."""
     payment = update.message.successful_payment
     payload = payment.invoice_payload
     user_id = update.effective_user.id
@@ -279,6 +321,61 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
             logger.info("Rappel payant validé pour la demande #%s par l'utilisateur %s", demande_id, user_id)
         else:
             logger.error("UserHandlers non trouvé dans bot_data.")
+
+    # Cas 3 : Règlement de la prestation prioritaire
+    elif payload.startswith("prio_pay_"):
+        parts = payload.split("_")
+        demande_id = int(parts[2])
+
+        db_manager.set_demande_paiement_statut(demande_id, "paye")
+
+        with db_manager.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT request_number, prenom, admin_en_charge, montant FROM demandes WHERE id = %s",
+                (demande_id,)
+            )
+            dem = cursor.fetchone()
+
+        req_num = dem.get("request_number", demande_id) if dem else demande_id
+        prenom_cible = dem.get("prenom", "") if dem else ""
+
+        merci_msg = (
+            f"🎉 <b>Paiement reçu avec succès pour la demande #{req_num} !</b>\n\n"
+            "Votre règlement en Stars a été validé. Votre référent a été averti et va procéder "
+            "à la transmission de vos contenus dans les plus brefs délais."
+        )
+        await update.message.reply_text(
+            merci_msg,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Consulter mes demandes", callback_data="voir_demandes")
+            ]])
+        )
+
+        # Notification envoyée à l'opérateur
+        if dem and dem.get("admin_en_charge"):
+            admin_id = dem["admin_en_charge"]
+            montant = float(dem.get("montant") or 0.0)
+            admin_alert = (
+                f"💰 <b>RÈGLEMENT CONFIRMÉ (Demande #{req_num})</b>\n\n"
+                f"Le client a réglé la prestation prioritaire pour <b>{html.escape(str(prenom_cible))}</b> ({montant:.2f} €) via Stars Telegram.\n\n"
+                "👉 Vous pouvez désormais transmettre les fichiers obtenus au client."
+            )
+            alert_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 Transmettre le contenu maintenant", callback_data=f"contacter_{demande_id}")],
+                [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")]
+            ])
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=admin_alert,
+                    parse_mode="HTML",
+                    reply_markup=alert_kb
+                )
+            except Exception as notif_err:
+                logger.warning("Impossible d'avertir l'opérateur %s du paiement Stars : %s", admin_id, notif_err)
+
+        logger.info("Prestation prioritaire #%s payée via Stars par l'utilisateur %s", demande_id, user_id)
 
 
 class TelegramBot:
@@ -594,7 +691,7 @@ class TelegramBot:
         # Aiguillage Traitement opérationnel des dossiers (Staff)
         app.add_handler(CallbackQueryHandler(
             self.staff_handlers.handle_staff_callbacks,
-            pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
+            pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|admin_pause_.*|admin_resume)$",
         ))
 
         # Menus d'interface et navigation
@@ -606,7 +703,7 @@ class TelegramBot:
         # Callbacks utilisateurs / clients (mis à jour avec annulation et contact)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
-            pattern=r"^(nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*)$",
+            pattern=r"^(nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|pay_stars_prio_.*|pay_contact_prio_.*)$",
         ))
 
         # Réception des messages & médias (formulaires + batch envoi staff + saisie motif)
@@ -640,6 +737,14 @@ class TelegramBot:
                 first=45,
             )
             logger.info("⏰ JobQueue activée : vérification des rappels de livraison toutes les 6h.")
+
+            # 4. Rappel quotidien pour les demandes payées non livrées
+            app.job_queue.run_repeating(
+                check_and_send_paid_delivery_reminders,
+                interval=86400,
+                first=60,
+            )
+            logger.info("⏰ JobQueue activée : vérification quotidienne des livraisons payées en attente.")
 
         async def post_init(application: Application):
             await self.setup_bot_commands(application)

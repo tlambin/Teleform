@@ -224,9 +224,11 @@ class DatabaseManager:
                 statut VARCHAR(32) DEFAULT '📥 Reçue',
                 is_difficile BOOLEAN NOT NULL DEFAULT FALSE,
                 reussie_substatus VARCHAR(20) DEFAULT NULL,
+                paiement_statut VARCHAR(20) DEFAULT 'non_requis',
                 has_delivered_content BOOLEAN NOT NULL DEFAULT FALSE,
                 date_livraison DATETIME DEFAULT NULL,
                 last_delivery_reminder DATETIME DEFAULT NULL,
+                last_payment_delivery_reminder DATETIME DEFAULT NULL,
                 admin_en_charge BIGINT DEFAULT NULL,
                 ancien_admin_alias VARCHAR(64) DEFAULT NULL,
                 raison_abandon TEXT DEFAULT NULL,
@@ -273,6 +275,7 @@ class DatabaseManager:
                 statut VARCHAR(32),
                 is_difficile BOOLEAN NOT NULL DEFAULT FALSE,
                 reussie_substatus VARCHAR(20) DEFAULT NULL,
+                paiement_statut VARCHAR(20) DEFAULT 'non_requis',
                 has_delivered_content BOOLEAN NOT NULL DEFAULT FALSE,
                 date_livraison DATETIME DEFAULT NULL,
                 date_creation DATETIME,
@@ -313,9 +316,11 @@ class DatabaseManager:
             ("demandes", "orientation", "VARCHAR(16) DEFAULT 'hetero'"),
             ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
+            ("demandes", "paiement_statut", "VARCHAR(20) DEFAULT 'non_requis'"),
             ("demandes", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "date_livraison", "DATETIME DEFAULT NULL"),
             ("demandes", "last_delivery_reminder", "DATETIME DEFAULT NULL"),
+            ("demandes", "last_payment_delivery_reminder", "DATETIME DEFAULT NULL"),
             ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
             ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
             ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
@@ -326,6 +331,7 @@ class DatabaseManager:
             ("archives", "orientation", "VARCHAR(16) DEFAULT 'hetero'"),
             ("archives", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("archives", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
+            ("archives", "paiement_statut", "VARCHAR(20) DEFAULT 'non_requis'"),
             ("archives", "has_delivered_content", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("archives", "date_livraison", "DATETIME DEFAULT NULL"),
             ("admin_preferences", "notif_new_mode", "VARCHAR(16) DEFAULT 'sound'"),
@@ -913,6 +919,85 @@ class DatabaseManager:
             logger.error("Erreur pioche demande aléatoire pour staff à l'essai %s : %s", staff_id, exc)
             return None
 
+    # ==================== SUIVI DU PAIEMENT DES DEMANDES ====================
+
+    def set_demande_paiement_statut(self, demande_id: int, statut_paiement: str) -> bool:
+        """Définit l'état de paiement d'une demande ('non_requis', 'en_attente', 'paye')."""
+        valid_statuts = ("non_requis", "en_attente", "paye")
+        if statut_paiement not in valid_statuts:
+            logger.error("Statut paiement invalide : %s", statut_paiement)
+            return False
+
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET paiement_statut = %s,
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (statut_paiement, int(demande_id))
+                )
+            logger.info("Statut paiement demande #%s défini à '%s'", demande_id, statut_paiement)
+            return True
+        except Exception as exc:
+            logger.error("Erreur mise à jour statut paiement demande %s : %s", demande_id, exc)
+            return False
+
+    def is_demande_paid(self, demande_id: int) -> bool:
+        """Vérifie si une demande est réglée ou ne requiert pas de paiement."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT prioritaire, paiement_statut FROM demandes WHERE id = %s",
+                    (int(demande_id),)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return False
+                if not row.get("prioritaire"):
+                    return True
+                return row.get("paiement_statut") == "paye"
+        except Exception as exc:
+            logger.error("Erreur vérification statut paiement demande %s : %s", demande_id, exc)
+            return False
+
+    def get_paid_undelivered_demandes_for_reminder(self) -> List[Dict[str, Any]]:
+        """Extrait les demandes prioritaires réussies payées dont les contenus n'ont pas encore été livrés (relance quotidienne)."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT d.id, d.request_number, d.prenom, d.nom, d.montant, ds.admin_id
+                    FROM demandes d
+                    JOIN demandes_suivi ds ON d.id = ds.demande_id
+                    WHERE d.statut = '✅ Réussie'
+                      AND d.prioritaire = TRUE
+                      AND d.paiement_statut = 'paye'
+                      AND d.has_delivered_content = FALSE
+                      AND (
+                          d.last_payment_delivery_reminder IS NULL
+                          OR TIMESTAMPDIFF(HOUR, d.last_payment_delivery_reminder, NOW()) >= 24
+                      )
+                    """
+                )
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur extraction demandes payées non livrées pour rappel : %s", exc)
+            return []
+
+    def mark_payment_delivery_reminder_sent(self, demande_id: int):
+        """Horodate le rappel quotidien de livraison post-paiement envoyé à l'opérateur."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE demandes SET last_payment_delivery_reminder = NOW() WHERE id = %s",
+                    (int(demande_id),)
+                )
+        except Exception as exc:
+            logger.error("Erreur horodatage rappel livraison post-paiement demande %s : %s", demande_id, exc)
+
     # ==================== GESTION DE L'ANNULATION UNIQUE (ARCHIVAGE) ====================
 
     def archiver_demande_annulee(self, demande_id: int, raison: str, archive_par_user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -933,10 +1018,10 @@ class DatabaseManager:
                     INSERT INTO archives (
                         original_id, user_id, admin_en_charge, orientation, prenom, nom, age, localisation,
                         photo_id, instagram, snapchat, details, prioritaire,
-                        montant, statut, is_difficile, reussie_substatus,
+                        montant, statut, is_difficile, reussie_substatus, paiement_statut,
                         has_delivered_content, date_livraison, date_creation, date_archivage
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                     )
                     """,
                     (
@@ -957,6 +1042,7 @@ class DatabaseManager:
                         "❌ Annulée",
                         False,
                         None,
+                        demande.get("paiement_statut", "non_requis"),
                         False,
                         None,
                         demande.get("date_creation"),
@@ -1123,10 +1209,10 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT d.id, d.user_id, d.request_number, d.orientation, d.prenom, d.nom, d.statut, d.is_difficile, d.reussie_substatus
+                    SELECT d.id, d.user_id, d.request_number, d.orientation, d.prenom, d.nom, d.statut, d.is_difficile, d.reussie_substatus, d.prioritaire, d.paiement_statut
                     FROM demandes d
                     JOIN demandes_suivi ds ON d.id = ds.demande_id
-                    WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours')
+                    WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours', '✅ Réussie')
                     """,
                     (int(staff_id),)
                 )
@@ -1205,18 +1291,29 @@ class DatabaseManager:
     def update_demande_statut(self, demande_id: int, nouveau_statut: str, reussie_substatus: Optional[str] = None) -> bool:
         try:
             with self.transaction() as cursor:
+                cursor.execute("SELECT prioritaire, montant FROM demandes WHERE id = %s", (int(demande_id),))
+                current_d = cursor.fetchone()
+                is_prio = bool(current_d.get("prioritaire")) if current_d else False
+                montant = float(current_d.get("montant") or 0.0) if current_d else 0.0
+
                 if nouveau_statut == "✅ Réussie":
                     sub = reussie_substatus if reussie_substatus in ("active", "terminee") else "active"
+                    # Initialisation du paiement pour les demandes prioritaires avec montant
+                    init_paiement = "en_attente" if (is_prio and montant > 0) else "non_requis"
                     cursor.execute(
                         """
                         UPDATE demandes
                         SET statut = %s,
                             is_difficile = FALSE,
                             reussie_substatus = %s,
+                            paiement_statut = CASE 
+                                WHEN paiement_statut = 'paye' THEN 'paye'
+                                ELSE %s
+                            END,
                             date_modification = NOW()
                         WHERE id = %s
                         """,
-                        (nouveau_statut, sub, int(demande_id))
+                        (nouveau_statut, sub, init_paiement, int(demande_id))
                     )
                 elif nouveau_statut in ("⏳ En attente", "🔄 En cours"):
                     cursor.execute(
@@ -1275,10 +1372,10 @@ class DatabaseManager:
                     INSERT INTO archives (
                         original_id, user_id, admin_en_charge, orientation, prenom, nom, age, localisation,
                         photo_id, instagram, snapchat, details, prioritaire,
-                        montant, statut, is_difficile, reussie_substatus,
+                        montant, statut, is_difficile, reussie_substatus, paiement_statut,
                         has_delivered_content, date_livraison, date_creation, date_archivage
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                     )
                     """,
                     (
@@ -1299,6 +1396,7 @@ class DatabaseManager:
                         demande.get("statut"),
                         demande.get("is_difficile", False),
                         demande.get("reussie_substatus"),
+                        demande.get("paiement_statut", "non_requis"),
                         demande.get("has_delivered_content", False),
                         demande.get("date_livraison"),
                         demande.get("date_creation")
@@ -1429,7 +1527,7 @@ class DatabaseManager:
         query = """
             SELECT id, original_id, user_id, admin_en_charge, orientation, prenom, nom, age, localisation,
                    photo_id, instagram, snapchat, details, prioritaire,
-                   montant, statut, is_difficile, reussie_substatus,
+                   montant, statut, is_difficile, reussie_substatus, paiement_statut,
                    has_delivered_content, date_livraison, date_creation, date_archivage
             FROM archives
             WHERE 1=1
