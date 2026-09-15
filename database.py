@@ -174,6 +174,7 @@ class DatabaseManager:
                 first_name VARCHAR(64),
                 is_vip BOOLEAN DEFAULT FALSE,
                 vip_until DATETIME DEFAULT NULL,
+                vip_auto_assign VARCHAR(32) DEFAULT 'prompt',
                 derniere_activite DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 date_inscription DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -343,6 +344,7 @@ class DatabaseManager:
             ("admin_preferences", "last_rappel_date", "DATE DEFAULT NULL"),
             ("users", "is_vip", "BOOLEAN DEFAULT FALSE"),
             ("users", "vip_until", "DATETIME DEFAULT NULL"),
+            ("users", "vip_auto_assign", "VARCHAR(32) DEFAULT 'prompt'"),
         ]
 
         try:
@@ -430,7 +432,7 @@ class DatabaseManager:
 
     def check_social_duplicate(self, instagram: Optional[str] = None, snapchat: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """Vérifie si un compte Instagram ou Snapchat existe déjà sur une demande active."""
-        active_statuses = ("📥 Reçue", "⏳ En attente", "🔄 En cours")
+        active_statuses = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours")
         placeholders = ", ".join(["%s"] * len(active_statuses))
 
         try:
@@ -771,7 +773,7 @@ class DatabaseManager:
 
     def get_channel_combination_active_count(self, orientation: str, reseau: str) -> int:
         """Compte les demandes en cours pour une combinaison précise."""
-        active_statuses = ("📥 Reçue", "⏳ En attente", "🔄 En cours")
+        active_statuses = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours")
         placeholders = ", ".join(["%s"] * len(active_statuses))
         res_col = "instagram" if "insta" in reseau.lower() else "snapchat"
 
@@ -803,7 +805,7 @@ class DatabaseManager:
         reseau_filter: Optional[str] = None,
         type_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Récupère les demandes disponibles en excluant celles créées par le staff lui-même."""
+        """Récupère les demandes disponibles sous le statut '📥 Reçue' en excluant celles créées par le staff lui-même."""
         query = """
             SELECT id, request_number, user_id, prenom, nom, age, localisation,
                    photo_id, instagram, snapchat, details, prioritaire, montant,
@@ -874,7 +876,7 @@ class DatabaseManager:
             return False
 
     def get_random_demande_for_trial(self, staff_id: int) -> Optional[Dict[str, Any]]:
-        """Tire une unique demande aléatoire disponible compatible avec les autorisations de l'opérateur à l'essai."""
+        """Tire une unique demande aléatoire disponible sous le statut '📥 Reçue' pour un opérateur à l'essai."""
         perms = self.get_staff_permissions(staff_id)
         p_ori = perms.get("perm_orientation", "all")
         p_res = perms.get("perm_reseaux", "all")
@@ -918,6 +920,92 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur pioche demande aléatoire pour staff à l'essai %s : %s", staff_id, exc)
             return None
+
+    # ==================== GESTION DU STATUT VIP ASSIGNÉE ====================
+
+    def accept_vip_assigned_demande(self, demande_id: int, staff_id: int) -> bool:
+        """Accepte une demande assignée VIP : la passe en '⏳ En attente' et l'inscrit dans les suivis."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET statut = '⏳ En attente',
+                        admin_en_charge = %s,
+                        date_modification = NOW()
+                    WHERE id = %s AND (statut = '🎯 Assignée (VIP)' OR statut = '📥 Reçue')
+                    """,
+                    (int(staff_id), int(demande_id))
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                    VALUES (%s, %s, NOW(), NOW(), 'active')
+                    ON DUPLICATE KEY UPDATE 
+                        admin_id = VALUES(admin_id),
+                        derniere_action = NOW(),
+                        statut_suivi = 'active'
+                    """,
+                    (int(demande_id), int(staff_id))
+                )
+            return True
+        except Exception as exc:
+            logger.error("Erreur acceptation demande assignée VIP #%s par staff %s : %s", demande_id, staff_id, exc)
+            return False
+
+    def decline_vip_assigned_demande(self, demande_id: int) -> bool:
+        """Décline une demande assignée VIP : retire l'assignation et la replace en '📥 Reçue' pour l'équipe."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET statut = '📥 Reçue',
+                        admin_en_charge = NULL,
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (int(demande_id),)
+                )
+                cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (int(demande_id),))
+            return True
+        except Exception as exc:
+            logger.error("Erreur refus demande assignée VIP #%s : %s", demande_id, exc)
+            return False
+
+    # ==================== PRÉFÉRENCES ASSIGNATION VIP ====================
+
+    def get_user_vip_auto_assign(self, user_id: int) -> str:
+        """Retourne le mode d'assignation automatique du VIP ('prompt', 'none', ou str(staff_id))."""
+        cache_key = f"vip_auto_assign_{user_id}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT vip_auto_assign FROM users WHERE user_id = %s", (int(user_id),))
+                row = cursor.fetchone()
+                val = str(row.get("vip_auto_assign") or "prompt") if row else "prompt"
+                self._set_cached_value(cache_key, val)
+                return val
+        except Exception as exc:
+            logger.error("Erreur lecture vip_auto_assign pour %s : %s", user_id, exc)
+            return "prompt"
+
+    def set_user_vip_auto_assign(self, user_id: int, setting: str) -> bool:
+        """Enregistre le choix d'assignation automatique pour un client VIP."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE users SET vip_auto_assign = %s WHERE user_id = %s",
+                    (str(setting), int(user_id))
+                )
+            self.clear_cache(f"vip_auto_assign_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur écriture vip_auto_assign (%s) pour %s : %s", setting, user_id, exc)
+            return False
 
     # ==================== SUIVI DU PAIEMENT DES DEMANDES ====================
 
@@ -964,7 +1052,7 @@ class DatabaseManager:
             return False
 
     def get_paid_undelivered_demandes_for_reminder(self) -> List[Dict[str, Any]]:
-        """Extrait les demandes prioritaires réussies payées dont les contenus n'ont pas encore été livrés (relance quotidienne)."""
+        """Extrait les demandes prioritaires réussies payées dont les contenus n'ont pas encore été livrés."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -1298,7 +1386,6 @@ class DatabaseManager:
 
                 if nouveau_statut == "✅ Réussie":
                     sub = reussie_substatus if reussie_substatus in ("active", "terminee") else "active"
-                    # Initialisation du paiement pour les demandes prioritaires avec montant
                     init_paiement = "en_attente" if (is_prio and montant > 0) else "non_requis"
                     cursor.execute(
                         """
@@ -1315,7 +1402,7 @@ class DatabaseManager:
                         """,
                         (nouveau_statut, sub, init_paiement, int(demande_id))
                     )
-                elif nouveau_statut in ("⏳ En attente", "🔄 En cours"):
+                elif nouveau_statut in ("⏳ En attente", "🔄 En cours", "🎯 Assignée (VIP)"):
                     cursor.execute(
                         """
                         UPDATE demandes
@@ -1465,6 +1552,9 @@ class DatabaseManager:
     @staticmethod
     def format_statut_display(statut: str, is_difficile: bool = False, reussie_substatus: Optional[str] = None) -> str:
         clean_statut = str(statut or "").strip()
+        if clean_statut == "🎯 Assignée (VIP)":
+            return "🎯 Assignée (VIP)"
+
         if clean_statut in ("⏳ En attente", "🔄 En cours"):
             if is_difficile:
                 return f"{clean_statut} ⚠️ (Difficile)"
@@ -1989,7 +2079,7 @@ class DatabaseManager:
                     SELECT
                         COUNT(*) AS total,
                         SUM(CASE WHEN statut = '🔄 En cours' THEN 1 ELSE 0 END) AS en_cours,
-                        SUM(CASE WHEN statut IN ('📥 Reçue', '⏳ En attente') THEN 1 ELSE 0 END) AS en_attente,
+                        SUM(CASE WHEN statut IN ('📥 Reçue', '⏳ En attente', '🎯 Assignée (VIP)') THEN 1 ELSE 0 END) AS en_attente,
                         SUM(CASE WHEN statut = '✅ Réussie' THEN 1 ELSE 0 END) AS reussies,
                         SUM(CASE WHEN statut = '❌ Abandonnée' THEN 1 ELSE 0 END) AS abandonnees,
                         SUM(CASE WHEN prioritaire = 1 THEN 1 ELSE 0 END) AS total_prio,

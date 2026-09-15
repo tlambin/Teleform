@@ -80,8 +80,19 @@ class StaffHandlers:
             return
 
         try:
+            # 0. Décision sur mission assignée VIP (Accepter / Décliner)
+            if data.startswith("vip_accept_"):
+                demande_id = int(data.replace("vip_accept_", ""))
+                await self._handle_vip_accept(query, context, demande_id, user_id)
+                return
+
+            elif data.startswith("vip_decline_"):
+                demande_id = int(data.replace("vip_decline_", ""))
+                await self._handle_vip_decline(query, context, demande_id, user_id)
+                return
+
             # 1. Demandes disponibles et filtres
-            if data == "demandes_disponibles":
+            elif data == "demandes_disponibles":
                 await self.dispo.show_demandes_disponibles(update, context)
 
             elif data.startswith("dispo_"):
@@ -174,6 +185,143 @@ class StaffHandlers:
 
     # Alias rétrocompatible
     handle_admin_callbacks = handle_staff_callbacks
+
+    # ==================== GESTION DE L'ACCEPTATION / REFUS VIP ====================
+
+    async def _handle_vip_accept(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int, staff_id: int):
+        """Valide la mission assignée par un client VIP."""
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, user_id, request_number, prenom, statut FROM demandes WHERE id = %s",
+                (demande_id,)
+            )
+            dem = cursor.fetchone()
+
+        if not dem:
+            await query.answer("❌ Demande introuvable.", show_alert=True)
+            return
+
+        if dem.get("statut") != "🎯 Assignée (VIP)":
+            await query.answer("ℹ️ Ce dossier a déjà été traité ou réattribué.", show_alert=True)
+            return
+
+        ok = self.db_manager.accept_vip_assigned_demande(demande_id, staff_id)
+        if ok:
+            req_num = dem.get("request_number", demande_id)
+            alias = self.db_manager.get_staff_alias(staff_id)
+            prenom_cible = dem.get("prenom", "")
+
+            await query.answer(f"✅ Demande #{req_num} acceptée !", show_alert=False)
+
+            # Mise à jour du message du piégeur
+            confirm_msg = (
+                f"✅ <b>Mission VIP acceptée (Dossier #{req_num})</b>\n\n"
+                f"Vous avez pris en charge le dossier de <b>{html.escape(str(prenom_cible))}</b>.\n"
+                "Le dossier est désormais actif sous le statut <b>⏳ En attente</b>."
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📄 Ouvrir la fiche", callback_data=f"retour_texte_{demande_id}")],
+                [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
+            ])
+            await self._safe_edit_or_reply(query, confirm_msg, reply_markup=kb)
+
+            # Notification au client VIP
+            try:
+                vip_user_id = dem["user_id"]
+                notif_vip = (
+                    f"🌟 <b>Votre demande #{req_num} a été acceptée !</b>\n\n"
+                    f"Votre référent <b>{html.escape(str(alias))}</b> a validé la prise en charge de votre dossier "
+                    f"pour <b>{html.escape(str(prenom_cible))}</b>.\n\n"
+                    "Le statut passe en <b>⏳ En attente</b> (premier contact en cours)."
+                )
+                await context.bot.send_message(
+                    chat_id=vip_user_id,
+                    text=notif_vip,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("📋 Suivre ma demande", callback_data="voir_demandes")
+                    ]])
+                )
+            except Exception as e_notif:
+                logger.warning("Impossible de notifier le client VIP %s : %s", dem.get("user_id"), e_notif)
+        else:
+            await query.answer("❌ Erreur technique lors de l'acceptation.", show_alert=True)
+
+    async def _handle_vip_decline(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int, staff_id: int):
+        """Décline la mission assignée par un client VIP et la replace dans les disponibles."""
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, user_id, request_number, prenom, nom, age, localisation, prioritaire, montant, orientation, photo_id, statut FROM demandes WHERE id = %s",
+                (demande_id,)
+            )
+            dem = cursor.fetchone()
+
+        if not dem:
+            await query.answer("❌ Demande introuvable.", show_alert=True)
+            return
+
+        if dem.get("statut") != "🎯 Assignée (VIP)":
+            await query.answer("ℹ️ Ce dossier n'est plus en attente d'assignation.", show_alert=True)
+            return
+
+        ok = self.db_manager.decline_vip_assigned_demande(demande_id)
+        if ok:
+            req_num = dem.get("request_number", demande_id)
+            alias = self.db_manager.get_staff_alias(staff_id)
+            prenom_cible = dem.get("prenom", "")
+
+            await query.answer("Demande déclinée.", show_alert=False)
+
+            decline_msg = (
+                f"ℹ️ <b>Demande #{req_num} déclinée</b>\n\n"
+                "Le dossier a été replacé dans les <b>demandes disponibles</b> pour le reste de l'équipe."
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")],
+                [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
+            ])
+            await self._safe_edit_or_reply(query, decline_msg, reply_markup=kb)
+
+            # Notification bienveillante au client VIP
+            try:
+                vip_user_id = dem["user_id"]
+                notif_vip = (
+                    f"ℹ️ <b>Mise à jour de votre demande VIP #{req_num}</b>\n\n"
+                    f"Votre référent sollicité ({html.escape(str(alias))}) n'est malheureusement pas disponible actuellement "
+                    f"pour prendre en charge le dossier de <b>{html.escape(str(prenom_cible))}</b>.\n\n"
+                    "Votre demande a été immédiatement transmise à l'ensemble de l'équipe avec priorité absolue !"
+                )
+                await context.bot.send_message(
+                    chat_id=vip_user_id,
+                    text=notif_vip,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("📋 Suivre ma demande", callback_data="voir_demandes")
+                    ]])
+                )
+            except Exception as e_notif:
+                logger.warning("Impossible de notifier le client VIP %s du refus : %s", dem.get("user_id"), e_notif)
+
+            # Alerte aux autres membres de l'équipe
+            try:
+                prenom_esc = html.escape(dem.get("prenom") or "")
+                nom_esc = html.escape(dem.get("nom") or "")
+                nom_complet = f"{prenom_esc} {nom_esc}".strip()
+                from handlers.user.formulaire import FormulaireManager
+                form_manager = FormulaireManager(self.db_manager, self.config, None)
+                await form_manager._broadcast_new_demande_alert(
+                    context=context,
+                    demande_id=demande_id,
+                    req_num=req_num,
+                    nom_complet=nom_complet,
+                    demande=dem,
+                    creator_id=dem["user_id"],
+                    is_vip=True
+                )
+            except Exception as e_bc:
+                logger.warning("Impossible de diffuser la demande déclinée au reste du staff : %s", e_bc)
+        else:
+            await query.answer("❌ Erreur technique lors du refus.", show_alert=True)
 
     async def _handle_admin_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Gère les transitions du mode pause de l'opérateur."""
@@ -506,7 +654,7 @@ class StaffHandlers:
                     reply_markup=user_keyboard
                 )
 
-            # ⚡ Marquer le contenu comme livré dans la base et horodater date_livraison
+            # Marquer le contenu comme livré dans la base et horodater date_livraison
             self.db_manager.mark_content_delivered(demande_id)
 
             total_items = len(visuals) + len(docs) + len(texts)

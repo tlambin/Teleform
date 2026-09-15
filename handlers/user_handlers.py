@@ -117,11 +117,24 @@ class UserHandlers:
                 await self.demande.handle_navigation(update, context, data)
                 return
 
-            # 5. Boutique VIP Telegram Stars
+            # 5. Boutique VIP Telegram Stars & Réglages VIP
             elif data == "menu_vip_shop":
                 await query.answer()
                 msg, kb = self.interface.get_vip_shop_menu()
+                # Si l'utilisateur est déjà VIP, on ajoute un bouton vers les préférences d'assignation
+                if self.db_manager.is_user_vip(user_id):
+                    new_kb_buttons = list(kb.inline_keyboard)
+                    new_kb_buttons.insert(0, [InlineKeyboardButton("⚙️ Préférences d'assignation", callback_data="menu_vip_settings")])
+                    kb = InlineKeyboardMarkup(new_kb_buttons)
+
                 await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
+                return
+
+            elif data == "menu_vip_settings" or data.startswith("vip_set_assign_") or data == "vip_pick_auto_staff":
+                if data == "menu_vip_settings":
+                    await self.compte.show_vip_settings_menu(update, context)
+                else:
+                    await self.compte.handle_callback_routing(update, context, data)
                 return
 
             elif data == "buy_vip_month":
@@ -208,7 +221,6 @@ class UserHandlers:
                     "admin_id": admin_id,
                 }
 
-                # Notification d'information envoyée à l'opérateur
                 try:
                     user = update.effective_user
                     u_label = f"@{user.username}" if user.username else user.first_name
@@ -375,8 +387,7 @@ class UserHandlers:
                     await query.edit_message_text(contact_text, parse_mode="HTML", reply_markup=contact_kb)
                 return
 
-            elif data.startswith("vip_assign_admin_"):
-                await query.answer()
+            elif data.startswith("vip_assign_admin_") or data.startswith("vip_opt_"):
                 await self.formulaire.handle_vip_admin_choice(update, context)
                 return
 

@@ -61,14 +61,16 @@ class InterfaceManager:
                 InlineKeyboardButton("⭐ DEVENIR VIP (Telegram Stars)", callback_data="menu_vip_shop")
             ])
 
-        # Tous les rôles Staff, Admin et Owner accèdent à la gestion des demandes et aux paramètres
+        # Tous les rôles opérationnels ont accès à la gestion des dossiers
         if user_role in ["staff", "admin", "owner"]:
             keyboard.append([
                 InlineKeyboardButton("📋 GÉRER LES DEMANDES", callback_data="gerer_demandes")
             ])
-            keyboard.append([
-                InlineKeyboardButton("⚙️ PARAMÈTRES", callback_data="parametres")
-            ])
+
+        # Le bouton PARAMÈTRES est disponible pour tous (Clients, VIP, Staff, Admin, Owner)
+        keyboard.append([
+            InlineKeyboardButton("⚙️ PARAMÈTRES", callback_data="parametres")
+        ])
 
         return welcome_msg, InlineKeyboardMarkup(keyboard)
 
@@ -90,6 +92,7 @@ class InterfaceManager:
     def get_parametres_menu(self, user_id: int):
         """Construit le panneau de configuration selon les privilèges RBAC."""
         user_role = self._get_user_role(user_id)
+        is_vip = self.db_manager.is_user_vip(user_id)
 
         # 1. Menu Super-Admin / Propriétaire
         if user_role == "owner":
@@ -101,10 +104,12 @@ class InterfaceManager:
                 [InlineKeyboardButton("⭐ GESTION DES CLIENTS VIP", callback_data="gerer_vips")],
                 [InlineKeyboardButton("📦 ARCHIVES GÉNÉRALES", callback_data="admin_global_archives")],
                 [InlineKeyboardButton("📊 STATISTIQUES GLOBALES", callback_data="bot_stats")],
-                [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
+                [InlineKeyboardButton("🔔 NOTIFICATIONS STAFF & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
-                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ]
+            if is_vip:
+                keyboard.append([InlineKeyboardButton("⭐ MES PRÉFÉRENCES VIP (Attribution)", callback_data="menu_vip_settings")])
+            keyboard.append([InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")])
 
         # 2. Menu Administrateur / Manager
         elif user_role == "admin":
@@ -125,13 +130,15 @@ class InterfaceManager:
                 keyboard.append([InlineKeyboardButton("📊 STATISTIQUES GLOBALES", callback_data="bot_stats")])
 
             keyboard.extend([
-                [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
+                [InlineKeyboardButton("🔔 NOTIFICATIONS STAFF & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
-                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ])
+            if is_vip:
+                keyboard.append([InlineKeyboardButton("⭐ MES PRÉFÉRENCES VIP (Attribution)", callback_data="menu_vip_settings")])
+            keyboard.append([InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")])
 
         # 3. Menu Staff / Opérateur
-        else:
+        elif user_role == "staff":
             is_paused = self.db_manager.is_staff_paused(user_id)
             pause_badge = "⏸️ EN PAUSE" if is_paused else "🟢 EN SERVICE"
             pause_btn_text = "▶️ REPRENDRE LE SERVICE" if is_paused else "⏸️ ME METTRE EN PAUSE"
@@ -145,11 +152,26 @@ class InterfaceManager:
             keyboard = [
                 [InlineKeyboardButton("📊 MON PROFIL & PERFORMANCES", callback_data=f"profil_admin_{user_id}")],
                 [InlineKeyboardButton(pause_btn_text, callback_data=pause_cb)],
-                [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
+                [InlineKeyboardButton("🔔 NOTIFICATIONS STAFF & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
                 [InlineKeyboardButton("👑 CONTACTER L'ADMINISTRATION", callback_data="contacter_owner")],
-                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
             ]
+            if is_vip:
+                keyboard.append([InlineKeyboardButton("⭐ MES PRÉFÉRENCES VIP (Attribution)", callback_data="menu_vip_settings")])
+            keyboard.append([InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")])
+
+        # 4. Menu Utilisateur / Demandeur (Standard ou VIP)
+        else:
+            vip_mention = " <i>(Membre VIP)</i>" if is_vip else ""
+            message = (
+                f"⚙️ <b>Mes Paramètres{vip_mention}</b>\n\n"
+                "Gérez vos alertes de réception et vos options de compte :"
+            )
+            keyboard = []
+            if is_vip:
+                keyboard.append([InlineKeyboardButton("🎯 GÉRER MON ATTRIBUTION VIP", callback_data="menu_vip_settings")])
+            keyboard.append([InlineKeyboardButton("🔔 NOTIFICATIONS & ALERTES", callback_data="menu_user_notifs")])
+            keyboard.append([InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")])
 
         return message, InlineKeyboardMarkup(keyboard)
 
@@ -456,7 +478,7 @@ class InterfaceManager:
 
     # ========== SOUS-MENU BOUTIQUE VIP (Telegram Stars) ==========
 
-    def get_vip_shop_menu(self):
+    def get_vip_shop_menu(self, is_vip: bool = False):
         """Affiche l'offre d'abonnement VIP mensuel payable en Telegram Stars."""
         message = (
             "⭐ <b>Devenez Membre VIP via Telegram Stars !</b>\n\n"
@@ -467,10 +489,17 @@ class InterfaceManager:
             "• 🔔 <b>Relance hebdomadaire gratuite :</b> Relancez votre référent une fois par semaine.\n\n"
             "<i>Paiement sécurisé via Telegram Stars. Activation immédiate pour 30 jours.</i>"
         )
-        keyboard = [
+        keyboard = []
+
+        if is_vip:
+            keyboard.append([
+                InlineKeyboardButton("⚙️ Mes Préférences d'Attribution", callback_data="menu_vip_settings")
+            ])
+
+        keyboard.extend([
             [InlineKeyboardButton("⭐ S'abonner 1 Mois (250 ⭐️)", callback_data="buy_vip_month")],
             [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
-        ]
+        ])
         return message, InlineKeyboardMarkup(keyboard)
 
     # ========== RÔLE UTILISATEUR ==========
@@ -494,6 +523,8 @@ class InterfaceManager:
 
     def route_callback(self, callback_data: str, user_id: int, first_name: str):
         """Aiguillage des callbacks d'interface vers le bon générateur de vue."""
+        is_vip = self.db_manager.is_user_vip(user_id)
+
         routing_map = {
             "start_menu": lambda: self.get_start_interface(user_id, first_name),
             "gerer_demandes": self.get_gerer_demandes_menu,
@@ -501,7 +532,7 @@ class InterfaceManager:
             "gerer_staff": self.get_gerer_staff_menu,
             "gerer_admins": self.get_gerer_admins_menu,
             "gerer_vips": self.get_gerer_vips_menu,
-            "menu_vip_shop": self.get_vip_shop_menu,
+            "menu_vip_shop": lambda: self.get_vip_shop_menu(is_vip=is_vip),
             "gerer_bot": self.get_gerer_bot_menu,
             "menu_channels": self.get_channels_menu,
             "menu_limits": self.get_limits_menu,

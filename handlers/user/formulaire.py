@@ -23,14 +23,14 @@ CONTACT_BOT_URL = "https://t.me/Teleform_contact_bot"
 class FormulaireManager:
     """Gestionnaire du formulaire guidé de création de demande."""
 
-    ACTIVE_STATUSES = ("📥 Reçue", "⏳ En attente", "🔄 En cours")
+    ACTIVE_STATUSES = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours")
 
     def __init__(self, db_manager, config, account_manager):
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
 
-        # Constantes d'états (ORIENTATION devient la première étape)
+        # Constantes d'états
         self.ORIENTATION = 0
         self.PRENOM = 1
         self.NOM = 2
@@ -65,7 +65,7 @@ class FormulaireManager:
         }
 
         self.navigation = NavigationManager(self)
-        logger.info("FormulaireManager initialisé avec support Matrice Canaux & Doublons")
+        logger.info("FormulaireManager initialisé avec support VIP Assignée & Auto-Assign")
 
     def get_conversation_handler(self):
         """Retourne le ConversationHandler complet du formulaire."""
@@ -125,7 +125,7 @@ class FormulaireManager:
                     CallbackQueryHandler(self.navigation.handle_form_navigation, pattern=nav_pattern),
                 ],
                 self.CHOIX_ADMIN: [
-                    CallbackQueryHandler(self.handle_vip_admin_choice, pattern=r"^vip_assign_admin_\d+$"),
+                    CallbackQueryHandler(self.handle_vip_admin_choice, pattern=r"^(vip_opt_choose|vip_opt_none|vip_assign_admin_\d+)$"),
                     CallbackQueryHandler(self.navigation.handle_form_navigation, pattern=nav_pattern),
                 ],
             },
@@ -202,7 +202,6 @@ class FormulaireManager:
         placeholders = ", ".join(["%s"] * len(self.ACTIVE_STATUSES))
         status_filter = f"statut IN ({placeholders})"
 
-        # 1. Quota global
         max_total = self.config.get_max_total_demandes()
         if max_total > 0:
             with self.db_manager.get_cursor() as cursor:
@@ -229,7 +228,6 @@ class FormulaireManager:
                 await self._edit_or_send(update, context, msg, reply_markup=kb)
                 return False
 
-        # 2. Quota individuel
         max_user = self.config.get_max_demandes_per_user()
         if max_user > 0:
             with self.db_manager.get_cursor() as cursor:
@@ -509,7 +507,6 @@ class FormulaireManager:
         demande = context.user_data.get("demande", {})
         orientation = demande.get("orientation", "hetero")
 
-        # 1. Vérification activation combinaison
         if not self.db_manager.is_channel_combination_allowed(orientation, "insta"):
             await update.message.reply_text(
                 f"🚫 Les demandes Instagram pour le profil <b>{orientation.capitalize()}</b> sont actuellement désactivées.\n\n"
@@ -519,7 +516,6 @@ class FormulaireManager:
             )
             return self.INSTAGRAM
 
-        # 2. Vérification quota combinaison (contourné pour VIP)
         if orientation in ("hetero", "gay"):
             max_quota = int(self.db_manager.get_config_value(f"max_{orientation}_insta", "0") or 0)
             if max_quota > 0 and not self.db_manager.is_user_vip(update.effective_user.id):
@@ -539,7 +535,6 @@ class FormulaireManager:
             if val is None:
                 return await self.skip_instagram(update, context)
 
-            # 3. Vérification unicité / détection des doublons
             is_duplicate, matched_value = self.db_manager.check_social_duplicate(instagram=val)
             if is_duplicate:
                 kb = InlineKeyboardMarkup([
@@ -591,7 +586,6 @@ class FormulaireManager:
         orientation = demande.get("orientation", "hetero")
         has_insta = bool(demande.get("instagram"))
 
-        # 1. Vérification activation combinaison
         if not self.db_manager.is_channel_combination_allowed(orientation, "snap"):
             if not has_insta:
                 await update.message.reply_text(
@@ -606,7 +600,6 @@ class FormulaireManager:
                 return self.SNAPCHAT
             return await self.skip_snapchat(update, context)
 
-        # 2. Vérification quota combinaison (contourné pour VIP)
         if orientation in ("hetero", "gay"):
             max_quota = int(self.db_manager.get_config_value(f"max_{orientation}_snap", "0") or 0)
             if max_quota > 0 and not self.db_manager.is_user_vip(update.effective_user.id):
@@ -631,7 +624,6 @@ class FormulaireManager:
             if val is None:
                 return await self.skip_snapchat(update, context)
 
-            # 3. Vérification unicité / détection des doublons
             is_duplicate, matched_value = self.db_manager.check_social_duplicate(snapchat=val)
             if is_duplicate:
                 kb = InlineKeyboardMarkup([
@@ -782,68 +774,126 @@ class FormulaireManager:
             return self.MONTANT
 
     async def prompt_admin_selection_or_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Si l'utilisateur est VIP, propose le choix d'un référent Staff compatible. Sinon, enregistre directement."""
+        """Gère le choix du piégeur VIP en tenant compte du réglage automatique ou affiche le choix initial."""
         user = update.effective_user
         if not user:
             return ConversationHandler.END
 
         if self.db_manager.is_user_vip(user.id):
-            equipe = self.db_manager.get_available_staff()
-            demande = context.user_data.get("demande", {})
-            target_ori = demande.get("orientation", "hetero")
-            kb_rows = []
+            auto_pref = self.db_manager.get_user_vip_auto_assign(user.id)
 
-            for member in equipe:
-                # Un membre VIP ne peut pas choisir sa propre personne comme référent
-                if int(member["user_id"]) == int(user.id):
-                    continue
+            # Option A : Le VIP a choisi de ne jamais choisir
+            if auto_pref == "none":
+                context.user_data.setdefault("demande", {})["target_admin_id"] = None
+                await self.save_demande(update, context)
+                return ConversationHandler.END
 
-                alias = member.get("alias", f"Staff_{member['user_id']}")
-                perms = self.db_manager.get_staff_permissions(member["user_id"])
-                p_ori = perms.get("perm_orientation", "all")
+            # Option B : Le VIP a défini un piégeur automatique par défaut
+            elif auto_pref != "prompt" and auto_pref.isdigit():
+                auto_staff_id = int(auto_pref)
+                # On vérifie que ce staff existe toujours et n'est pas en pause
+                if not self.db_manager.is_staff_paused(auto_staff_id) and auto_staff_id != user.id:
+                    context.user_data.setdefault("demande", {})["target_admin_id"] = auto_staff_id
+                    await self.save_demande(update, context)
+                    return ConversationHandler.END
 
-                # Filtrage de compatibilité pour le choix du VIP
-                is_compatible = (
-                    p_ori in ("all", "bi")
-                    or p_ori == target_ori
-                    or (target_ori == "bi" and p_ori in ("hetero", "gay"))
-                )
-
-                if is_compatible:
-                    kb_rows.append([
-                        InlineKeyboardButton(
-                            f"🦈 {alias}",
-                            callback_data=f"vip_assign_admin_{member['user_id']}"
-                        )
-                    ])
-
-            kb_rows.append([InlineKeyboardButton("🎲 Premier disponible (Aléatoire)", callback_data="vip_assign_admin_0")])
-            kb_rows.append([InlineKeyboardButton("⬅️ Retour", callback_data=f"form_back_{self.CHOIX_ADMIN}")])
-            kb_rows.append([InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")])
-
-            msg = (
-                "⭐ <b>Avantage Membre VIP : Choix du Référent</b>\n\n"
-                "Sélectionnez le membre de l'équipe qui prendra personnellement en charge votre demande :"
+            # Option C (par défaut : prompt) : Choix initial : Choisir ou Ne pas choisir
+            text = (
+                "⭐ <b>Avantage Membre VIP : Attribution du dossier</b>\n\n"
+                "Souhaitez-vous confier cette demande à un membre précis de l'équipe, "
+                "ou la rendre immédiatement disponible pour l'ensemble des piégeurs ?"
             )
-            await self._edit_or_send(update, context, msg, reply_markup=InlineKeyboardMarkup(kb_rows))
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎯 Choisir mon piégeur", callback_data="vip_opt_choose")],
+                [InlineKeyboardButton("🎲 Ne pas choisir (Toute l'équipe)", callback_data="vip_opt_none")],
+                [InlineKeyboardButton("⬅️ Retour", callback_data=f"form_back_{self.CHOIX_ADMIN}")],
+                [InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")]
+            ])
+            await self._edit_or_send(update, context, text, reply_markup=kb)
             return self.CHOIX_ADMIN
 
+        # Utilisateur standard : enregistrement direct
         await self.save_demande(update, context)
         return ConversationHandler.END
 
+    async def _show_vip_staff_picker(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche la liste des piégeurs disponibles pour sélection par le VIP."""
+        user = update.effective_user
+        equipe = self.db_manager.get_available_staff()
+        demande = context.user_data.get("demande", {})
+        target_ori = demande.get("orientation", "hetero")
+        kb_rows = []
+
+        for member in equipe:
+            if int(member["user_id"]) == int(user.id):
+                continue
+
+            alias = member.get("alias", f"Staff_{member['user_id']}")
+            perms = self.db_manager.get_staff_permissions(member["user_id"])
+            p_ori = perms.get("perm_orientation", "all")
+
+            is_compatible = (
+                p_ori in ("all", "bi")
+                or p_ori == target_ori
+                or (target_ori == "bi" and p_ori in ("hetero", "gay"))
+            )
+
+            if is_compatible:
+                kb_rows.append([
+                    InlineKeyboardButton(
+                        f"🦈 {alias}",
+                        callback_data=f"vip_assign_admin_{member['user_id']}"
+                    )
+                ])
+
+        kb_rows.append([InlineKeyboardButton("🎲 Ne pas choisir (Toute l'équipe)", callback_data="vip_assign_admin_0")])
+        kb_rows.append([InlineKeyboardButton("⬅️ Retour", callback_data="vip_opt_back")])
+        kb_rows.append([InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")])
+
+        msg = (
+            "🎯 <b>Sélection de votre piégeur</b>\n\n"
+            "Cliquez sur le membre de l'équipe à qui vous souhaitez soumettre ce dossier :"
+        )
+        await self._edit_or_send(update, context, msg, reply_markup=InlineKeyboardMarkup(kb_rows))
+
     async def handle_vip_admin_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Intercepte le choix de l'opérateur référent par le membre VIP."""
+        """Intercepte le choix (Choisir vs Ne pas choisir, puis sélection de l'alias)."""
         query = update.callback_query
         if not query or not query.data:
             return self.CHOIX_ADMIN
 
-        await query.answer()
-        admin_selected_id = int(query.data.replace("vip_assign_admin_", ""))
-        demande = context.user_data.setdefault("demande", {})
-        demande["target_admin_id"] = admin_selected_id if admin_selected_id > 0 else None
+        data = query.data
 
-        await self.save_demande(update, context)
-        return ConversationHandler.END
+        # 1. Le VIP clique sur "Ne pas choisir"
+        if data in ("vip_opt_none", "vip_assign_admin_0"):
+            await query.answer()
+            demande = context.user_data.setdefault("demande", {})
+            demande["target_admin_id"] = None
+            await self.save_demande(update, context)
+            return ConversationHandler.END
+
+        # 2. Le VIP clique sur "Choisir mon piégeur"
+        elif data == "vip_opt_choose":
+            await query.answer()
+            await self._show_vip_staff_picker(update, context)
+            return self.CHOIX_ADMIN
+
+        # 3. Retour au menu à 2 choix
+        elif data == "vip_opt_back":
+            await query.answer()
+            return await self.prompt_admin_selection_or_save(update, context)
+
+        # 4. Le VIP a sélectionné un membre précis dans la liste
+        elif data.startswith("vip_assign_admin_"):
+            await query.answer()
+            admin_selected_id = int(data.replace("vip_assign_admin_", ""))
+            demande = context.user_data.setdefault("demande", {})
+            demande["target_admin_id"] = admin_selected_id if admin_selected_id > 0 else None
+
+            await self.save_demande(update, context)
+            return ConversationHandler.END
+
+        return self.CHOIX_ADMIN
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("demande", None)
@@ -854,7 +904,7 @@ class FormulaireManager:
         return ConversationHandler.END
 
     async def save_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enregistre définitivement la demande dans MySQL avec commit transactionnel."""
+        """Enregistre la demande dans MySQL : '🎯 Assignée (VIP)' si piégeur ciblé, sinon '📥 Reçue'."""
         demande = context.user_data.get("demande", {})
         user_id = update.effective_user.id if update.effective_user else None
 
@@ -863,7 +913,14 @@ class FormulaireManager:
             return
 
         target_admin_id = demande.get("target_admin_id")
-        statut_initial = "⏳ En attente" if target_admin_id else "📥 Reçue"
+        is_vip = self.db_manager.is_user_vip(user_id)
+
+        # Statut initial : si un membre VIP choisit un piégeur, la demande est '🎯 Assignée (VIP)'
+        if is_vip and target_admin_id:
+            statut_initial = "🎯 Assignée (VIP)"
+        else:
+            statut_initial = "📥 Reçue"
+
         orientation = demande.get("orientation", "hetero")
 
         try:
@@ -903,22 +960,9 @@ class FormulaireManager:
                 )
                 demande_id = cursor.lastrowid
 
-                if target_admin_id:
-                    cursor.execute(
-                        """
-                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                        VALUES (%s, %s, NOW(), NOW(), 'active')
-                        ON DUPLICATE KEY UPDATE 
-                            admin_id = VALUES(admin_id),
-                            derniere_action = NOW(),
-                            statut_suivi = 'active'
-                        """,
-                        (demande_id, target_admin_id)
-                    )
-
             context.user_data.pop("demande", None)
-            logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s (Orientation: %s, Assigné: %s)",
-                        next_num, demande_id, user_id, orientation, target_admin_id)
+            logger.info("Demande #%s créée (ID: %s) pour l'utilisateur %s (Orientation: %s, Statut: %s, Cible Staff: %s)",
+                        next_num, demande_id, user_id, orientation, statut_initial, target_admin_id)
 
             type_txt = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
             montant_txt = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -926,7 +970,7 @@ class FormulaireManager:
             referent_txt = ""
             if target_admin_id:
                 alias = self.db_manager.get_staff_alias(target_admin_id)
-                referent_txt = f"\n👨‍💼 <b>Référent assigné :</b> {html.escape(alias or 'Opérateur')}"
+                referent_txt = f"\n🎯 <b>Piégeur sollicité :</b> {html.escape(alias or 'Opérateur')} (<i>En attente d'acceptation</i>)"
 
             label_map = {"hetero": "👩‍❤️‍👨 Hétéro", "gay": "👨‍❤️‍👨 Gay", "bi": "🔄 Bi"}
             ori_badge = label_map.get(orientation, orientation.capitalize())
@@ -948,20 +992,21 @@ class FormulaireManager:
 
             await self._edit_or_send(update, context, recap)
 
-            if target_admin_id:
-                await self._send_targeted_admin_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
+            # Notifications
+            if target_admin_id and statut_initial == "🎯 Assignée (VIP)":
+                await self._send_vip_assignment_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
             else:
-                await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet_esc, demande, user_id)
+                await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet_esc, demande, user_id, is_vip=is_vip)
 
         except Exception as exc:
             logger.error("Erreur lors de la sauvegarde de la demande : %s", exc, exc_info=True)
             err_msg = "❌ Erreur technique lors de la sauvegarde. Veuillez contacter un administrateur."
             await self._edit_or_send(update, context, err_msg)
 
-    async def _send_targeted_admin_alert(
+    async def _send_vip_assignment_alert(
         self, context: ContextTypes.DEFAULT_TYPE, admin_id: int, demande_id: int, req_num: int, nom_complet: str, demande: dict
     ):
-        """Envoie une alerte directe à l'opérateur choisi par le client VIP."""
+        """Envoie l'alerte au piégeur sélectionné par un VIP avec boutons d'acceptation ou de refus."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -972,16 +1017,16 @@ class FormulaireManager:
 
         alert_text = (
             f"👑 <b>NOUVELLE DEMANDE VIP ASSIGNÉE (#{req_num})</b>\n\n"
-            f"Un client VIP vous a sélectionné comme référent pour traiter sa demande :\n\n"
+            f"Un client VIP vous a spécifiquement choisi comme référent pour traiter sa demande :\n\n"
             f"🎯 <b>Cible :</b> {ori_str}\n"
             f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
             f"📍 <b>Localisation :</b> {loc_esc}\n"
             f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}\n\n"
-            "<i>La demande a été ajoutée directement à vos suivis.</i>"
+            "<i>Acceptez-vous cette prise en charge ?</i>"
         )
         alert_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")],
-            [InlineKeyboardButton("💬 Contacter le client", callback_data=f"contacter_{demande_id}")]
+            [InlineKeyboardButton("✅ Accepter la mission", callback_data=f"vip_accept_{demande_id}")],
+            [InlineKeyboardButton("❌ Décliner la demande", callback_data=f"vip_decline_{demande_id}")]
         ])
 
         try:
@@ -1002,12 +1047,12 @@ class FormulaireManager:
                     reply_markup=alert_kb
                 )
         except Exception as err:
-            logger.warning("Impossible de notifier l'opérateur assigné %s : %s", admin_id, err)
+            logger.warning("Impossible de notifier le piégeur assigné VIP %s : %s", admin_id, err)
 
     async def _broadcast_new_demande_alert(
-        self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict, creator_id: int
+        self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict, creator_id: int, is_vip: bool = False
     ):
-        """Avertit l'équipe Staff en excluant le créateur de la demande."""
+        """Avertit toute l'équipe Staff d'une nouvelle demande disponible."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -1017,8 +1062,10 @@ class FormulaireManager:
         target_ori = demande.get("orientation", "hetero")
         ori_str = label_map.get(target_ori, "Hétéro")
 
+        titre = f"🌟 <b>Nouvelle demande VIP disponible #{req_num}</b>" if is_vip else f"🔔 <b>Nouvelle demande disponible #{req_num}</b>"
+
         alert_text = (
-            f"🔔 <b>Nouvelle demande disponible #{req_num}</b>\n\n"
+            f"{titre}\n\n"
             f"🎯 <b>Orientation cible :</b> {ori_str}\n"
             f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
             f"📍 <b>Localisation :</b> {loc_esc}\n"
@@ -1035,7 +1082,6 @@ class FormulaireManager:
             try:
                 sid = int(staff_id)
 
-                # Règle anti-notification de sa propre demande
                 if sid == int(creator_id):
                     continue
 
