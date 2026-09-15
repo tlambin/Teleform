@@ -1,4 +1,4 @@
-"""Module principal de gestion des interactions utilisateurs et demandeurs."""
+"""Module principal de gestion de l'affichage des interactions utilisateurs et demandeurs."""
 
 import html
 import logging
@@ -120,13 +120,8 @@ class UserHandlers:
             # 5. Boutique VIP Telegram Stars & Réglages VIP
             elif data == "menu_vip_shop":
                 await query.answer()
-                msg, kb = self.interface.get_vip_shop_menu()
-                # Si l'utilisateur est déjà VIP, on ajoute un bouton vers les préférences d'assignation
-                if self.db_manager.is_user_vip(user_id):
-                    new_kb_buttons = list(kb.inline_keyboard)
-                    new_kb_buttons.insert(0, [InlineKeyboardButton("⚙️ Préférences d'assignation", callback_data="menu_vip_settings")])
-                    kb = InlineKeyboardMarkup(new_kb_buttons)
-
+                is_vip_user = self.db_manager.is_user_vip(user_id)
+                msg, kb = self.interface.get_vip_shop_menu(is_vip=is_vip_user)
                 await query.edit_message_text(msg, parse_mode="HTML", reply_markup=kb)
                 return
 
@@ -663,7 +658,7 @@ class UserHandlers:
 
         staff_actions = {
             "gerer_demandes", "demandes_disponibles", "demandes_suivies",
-            "parametres", "modifier_alias", "menu_notifs"
+            "modifier_alias", "menu_notifs"
         }
         if data in staff_actions and not self.config.is_staff(user_id):
             await query.answer("❌ Accès réservé à l'équipe opérationnelle.", show_alert=True)

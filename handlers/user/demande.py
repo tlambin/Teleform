@@ -18,7 +18,7 @@ class DemandeManager:
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
-        logger.info("DemandeManager initialisé avec support Annulation & Archives")
+        logger.info("DemandeManager initialisé avec support Annulation, Archives et Rehausse Tarif")
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
         """Contrôle les plafonds global et individuel avant création (contourné pour VIP)."""
@@ -250,19 +250,24 @@ class DemandeManager:
         statut_raw = str(demande.get("statut") or "").strip()
         is_prio = bool(demande.get("prioritaire"))
         is_vip = self.db_manager.is_user_vip(user_id)
+        montant = float(demande.get("montant") or 0.0)
 
-        # 1. Boutons de modification / annulation selon le statut opérationnel
+        # 1. Actions sur le dossier selon le statut
         if not admin_en_charge and ("reçue" in statut_raw.lower() or "recue" in statut_raw.lower()):
-            # Demande NON prise en charge : Modification et Suppression directe disponibles
+            # Demande NON prise en charge : Modification complète et Suppression
             buttons.append([
                 InlineKeyboardButton("✏️ Modifier", callback_data=f"modify_{demande_id}"),
                 InlineKeyboardButton("🗑️ Supprimer", callback_data=f"delete_{demande_id}")
             ])
         elif statut_raw not in ["✅ Réussie", "❌ Annulée", "❌ Abandonnée"]:
-            # Demande PRISE EN CHARGE : Le bouton modifier DISPARAÎT, seul le bouton d'annulation soumis à validation apparaît
-            buttons.append([
+            # Demande PRISE EN CHARGE (en attente ou en cours)
+            action_row = [
                 InlineKeyboardButton("❌ Demander l'annulation", callback_data=f"ask_cancel_demande_{demande_id}")
-            ])
+            ]
+            # Si la demande est prioritaire, possibilité de rehausser le montant même en cours de traitement
+            if is_prio:
+                action_row.insert(0, InlineKeyboardButton(f"💰 Rehausser le tarif ({montant:.2f} €)", callback_data=f"modify_{demande_id}"))
+            buttons.append(action_row)
 
         # 2. Boutons de contact et de relance si un opérateur est assigné
         if admin_en_charge:

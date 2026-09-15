@@ -165,12 +165,11 @@ class InterfaceManager:
             vip_mention = " <i>(Membre VIP)</i>" if is_vip else ""
             message = (
                 f"⚙️ <b>Mes Paramètres{vip_mention}</b>\n\n"
-                "Gérez vos alertes de réception et vos options de compte :"
+                "Gérez vos options de compte :"
             )
             keyboard = []
             if is_vip:
                 keyboard.append([InlineKeyboardButton("🎯 GÉRER MON ATTRIBUTION VIP", callback_data="menu_vip_settings")])
-            keyboard.append([InlineKeyboardButton("🔔 NOTIFICATIONS & ALERTES", callback_data="menu_user_notifs")])
             keyboard.append([InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")])
 
         return message, InlineKeyboardMarkup(keyboard)

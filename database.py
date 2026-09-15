@@ -198,6 +198,7 @@ class DatabaseManager:
                 user_id BIGINT PRIMARY KEY,
                 alias VARCHAR(64) NOT NULL,
                 is_owner BOOLEAN DEFAULT FALSE,
+                is_vip BOOLEAN DEFAULT FALSE,
                 can_manage_staff BOOLEAN DEFAULT TRUE,
                 can_manage_vips BOOLEAN DEFAULT TRUE,
                 can_view_stats BOOLEAN DEFAULT TRUE,
@@ -298,6 +299,14 @@ class DatabaseManager:
                 rappel_jour_mois INT DEFAULT 1,
                 last_rappel_date DATE DEFAULT NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                user_id BIGINT PRIMARY KEY,
+                notif_status_mode VARCHAR(16) DEFAULT 'sound',
+                notif_prise_en_charge VARCHAR(16) DEFAULT 'sound',
+                notif_messages VARCHAR(16) DEFAULT 'sound'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """
         ]
 
@@ -309,6 +318,7 @@ class DatabaseManager:
             ("staff", "is_paused", "BOOLEAN DEFAULT FALSE"),
             ("staff", "is_trial", "BOOLEAN DEFAULT FALSE"),
             ("admins", "is_owner", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "is_vip", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_manage_staff", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_manage_vips", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_view_stats", "BOOLEAN DEFAULT TRUE"),
@@ -345,6 +355,9 @@ class DatabaseManager:
             ("users", "is_vip", "BOOLEAN DEFAULT FALSE"),
             ("users", "vip_until", "DATETIME DEFAULT NULL"),
             ("users", "vip_auto_assign", "VARCHAR(32) DEFAULT 'prompt'"),
+            ("user_preferences", "notif_status_mode", "VARCHAR(16) DEFAULT 'sound'"),
+            ("user_preferences", "notif_prise_en_charge", "VARCHAR(16) DEFAULT 'sound'"),
+            ("user_preferences", "notif_messages", "VARCHAR(16) DEFAULT 'sound'"),
         ]
 
         try:
@@ -416,9 +429,9 @@ class DatabaseManager:
                     owner_alias = self.get_config_value("owner_alias", "Propriétaire")
                     cursor.execute(
                         """
-                        INSERT INTO admins (user_id, alias, is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives)
-                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
-                        ON DUPLICATE KEY UPDATE is_owner = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE
+                        INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives)
+                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+                        ON DUPLICATE KEY UPDATE is_owner = TRUE, is_vip = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE
                         """,
                         (owner_id, owner_alias)
                     )
@@ -569,10 +582,11 @@ class DatabaseManager:
             return False
 
     def get_admin_privileges(self, user_id: int) -> Dict[str, bool]:
-        """Retourne les permissions granulaires d'un administrateur."""
+        """Retourne les permissions granulaires d'un administrateur (incluant le flag is_vip)."""
         if self.is_owner(user_id):
             return {
                 "is_owner": True,
+                "is_vip": True,
                 "can_manage_staff": True,
                 "can_manage_vips": True,
                 "can_view_stats": True,
@@ -584,7 +598,7 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives
+                    SELECT is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives
                     FROM admins WHERE user_id = %s
                     """,
                     (int(user_id),)
@@ -593,6 +607,7 @@ class DatabaseManager:
                 if row:
                     return {
                         "is_owner": bool(row["is_owner"]),
+                        "is_vip": bool(row.get("is_vip", False)),
                         "can_manage_staff": bool(row["can_manage_staff"]),
                         "can_manage_vips": bool(row["can_manage_vips"]),
                         "can_view_stats": bool(row["can_view_stats"]),
@@ -604,6 +619,7 @@ class DatabaseManager:
 
         return {
             "is_owner": False,
+            "is_vip": False,
             "can_manage_staff": False,
             "can_manage_vips": False,
             "can_view_stats": False,
@@ -612,10 +628,10 @@ class DatabaseManager:
         }
 
     def update_admin_privilege(self, user_id: int, priv_key: str, value: bool) -> bool:
-        """Met à jour un privilège granulaire d'un administrateur."""
+        """Met à jour un privilège granulaire d'un administrateur (y compris is_vip)."""
         allowed_keys = {
             "can_manage_staff", "can_manage_vips", "can_view_stats",
-            "can_manage_delais", "can_view_archives"
+            "can_manage_delais", "can_view_archives", "is_vip"
         }
         if priv_key not in allowed_keys:
             return False
@@ -624,6 +640,7 @@ class DatabaseManager:
             with self.transaction() as cursor:
                 cursor.execute(f"UPDATE admins SET {priv_key} = %s WHERE user_id = %s", (value, int(user_id)))
             self.clear_cache(f"is_admin_{user_id}")
+            self.clear_cache(f"vip_{user_id}")
             return True
         except Exception as exc:
             logger.error("Erreur mise à jour privilège admin %s (%s) : %s", user_id, priv_key, exc)
@@ -1051,6 +1068,54 @@ class DatabaseManager:
             logger.error("Erreur vérification statut paiement demande %s : %s", demande_id, exc)
             return False
 
+    def update_demande_montant(self, demande_id: int, nouveau_montant: float) -> Tuple[bool, str]:
+        """Met à jour le montant d'une demande prioritaire.
+        
+        - Si la demande est '📥 Reçue' ou '🎯 Assignée (VIP)' : modification libre (> 0).
+        - Si la demande est '⏳ En attente' ou '🔄 En cours' : augmentation stricte (prix plancher).
+        """
+        try:
+            nouveau_montant = round(float(nouveau_montant), 2)
+            if nouveau_montant <= 0:
+                return False, "Le montant doit être strictement supérieur à 0."
+
+            with self.transaction() as cursor:
+                cursor.execute(
+                    "SELECT prioritaire, montant, statut FROM demandes WHERE id = %s",
+                    (int(demande_id),)
+                )
+                dem = cursor.fetchone()
+                if not dem:
+                    return False, "Demande introuvable."
+
+                if not dem.get("prioritaire"):
+                    return False, "Cette demande n'est pas prioritaire."
+
+                statut_actuel = dem.get("statut")
+                statuts_autorises = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours")
+                if statut_actuel not in statuts_autorises:
+                    return False, f"Impossible de modifier le montant pour une demande avec le statut '{statut_actuel}'."
+
+                montant_actuel = float(dem.get("montant") or 0.0)
+
+                # Règle de prix plancher : uniquement si la demande est déjà prise en charge
+                if statut_actuel in ("⏳ En attente", "🔄 En cours") and nouveau_montant <= montant_actuel:
+                    return False, f"La demande est déjà prise en charge : vous ne pouvez qu'augmenter le tarif (minimum : {montant_actuel:.2f} €)."
+
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET montant = %s,
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (nouveau_montant, int(demande_id))
+                )
+            return True, f"Montant mis à jour à {nouveau_montant:.2f} €."
+        except Exception as exc:
+            logger.error("Erreur modification montant demande %s : %s", demande_id, exc)
+            return False, "Erreur technique lors de la mise à jour."
+
     def get_paid_undelivered_demandes_for_reminder(self) -> List[Dict[str, Any]]:
         """Extrait les demandes prioritaires réussies payées dont les contenus n'ont pas encore été livrés."""
         try:
@@ -1312,7 +1377,7 @@ class DatabaseManager:
     get_admin_active_demandes = get_staff_active_demandes
 
     def abandon_staff_demandes_for_pause(self, staff_id: int) -> List[Dict[str, Any]]:
-        alias = self.get_staff_alias(staff_id)
+        alias = self.db_manager.get_staff_alias(staff_id)
         reason = f"Opérateur ({alias}) actuellement en pause."
 
         try:
@@ -1800,19 +1865,95 @@ class DatabaseManager:
             logger.error("Erreur lecture globale préférences : %s", exc)
             return []
 
-    # ==================== GESTION CLIENTS VIP ====================
+    # ==================== PRÉFÉRENCES NOTIFICATIONS CLIENTS ====================
 
-    def is_user_vip(self, user_id: int) -> bool:
-        cache_key = f"vip_{user_id}"
+    def get_user_preferences(self, user_id: int) -> Dict[str, Any]:
+        """Retourne les préférences de notification d'un demandeur (client/VIP)."""
+        default_prefs = {
+            "user_id": int(user_id),
+            "notif_status_mode": "sound",
+            "notif_prise_en_charge": "sound",
+            "notif_messages": "sound",
+        }
+        cache_key = f"user_prefs_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
             return cached
 
         try:
             with self.get_cursor() as cursor:
+                cursor.execute("SELECT * FROM user_preferences WHERE user_id = %s", (int(user_id),))
+                row = cursor.fetchone()
+                if row:
+                    default_prefs.update(row)
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO user_preferences (user_id, notif_status_mode, notif_prise_en_charge, notif_messages)
+                        VALUES (%s, 'sound', 'sound', 'sound')
+                        ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
+                        """,
+                        (int(user_id),)
+                    )
+            self._set_cached_value(cache_key, default_prefs)
+            return default_prefs
+        except Exception as exc:
+            logger.error("Erreur récupération préférences client %s : %s", user_id, exc)
+            return default_prefs
+
+    def update_user_preference(self, user_id: int, key: str, value: str) -> bool:
+        """Met à jour un paramètre de notification client ('sound', 'silent', 'off')."""
+        allowed_keys = {"notif_status_mode", "notif_prise_en_charge", "notif_messages"}
+        if key not in allowed_keys or value not in ("sound", "silent", "off"):
+            return False
+
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    f"""
+                    INSERT INTO user_preferences (user_id, {key})
+                    VALUES (%s, %s)
+                    ON DUPLICATE KEY UPDATE {key} = VALUES({key})
+                    """,
+                    (int(user_id), value)
+                )
+            self.clear_cache(f"user_prefs_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur mise à jour préférence client %s (%s=%s) : %s", user_id, key, value, exc)
+            return False
+
+    # ==================== GESTION CLIENTS VIP ====================
+
+    def is_user_vip(self, user_id: int) -> bool:
+        """Vérifie si l'utilisateur est VIP (Owner à vie, Admin avec droit VIP, ou Client abonné/à vie)."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        # RÈGLE 1 : L'Owner est obligatoirement VIP
+        if self.is_owner(uid):
+            return True
+
+        cache_key = f"vip_{uid}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                # RÈGLE 2 : Si l'utilisateur est un Admin avec le privilège is_vip actif
+                cursor.execute("SELECT is_vip FROM admins WHERE user_id = %s", (uid,))
+                admin_row = cursor.fetchone()
+                if admin_row and bool(admin_row.get("is_vip")):
+                    self._set_cached_value(cache_key, True)
+                    return True
+
+                # RÈGLE 3 : Vérification table users standard
                 cursor.execute(
                     "SELECT is_vip, vip_until FROM users WHERE user_id = %s",
-                    (int(user_id),)
+                    (uid,)
                 )
                 row = cursor.fetchone()
                 if not row or not row.get("is_vip"):

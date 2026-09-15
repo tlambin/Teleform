@@ -413,6 +413,7 @@ class AdminHandlers:
         st_stats = "✅ OUI" if privs.get("can_view_stats") else "❌ NON"
         st_delais = "✅ OUI" if privs.get("can_manage_delais") else "❌ NON"
         st_archives = "✅ OUI" if privs.get("can_view_archives") else "❌ NON"
+        st_vip_status = "✅ OUI" if privs.get("is_vip") else "❌ NON"
         st_owner = "👑 CO-GÉRANT" if privs.get("is_owner") else "🛡️ MANAGER"
 
         keyboard = [
@@ -426,6 +427,7 @@ class AdminHandlers:
             ],
             [
                 InlineKeyboardButton(f"Archives Générales : {st_archives}", callback_data=f"set_permadmin_{admin_id}_can_view_archives"),
+                InlineKeyboardButton(f"⭐ Accès VIP : {st_vip_status}", callback_data=f"set_permadmin_{admin_id}_is_vip"),
             ],
             [
                 InlineKeyboardButton(f"Rôle Suprême : {st_owner}", callback_data=f"set_permadmin_{admin_id}_is_owner"),
@@ -436,7 +438,7 @@ class AdminHandlers:
         text = (
             f"⚙️ <b>Droits Administrateur : {alias}</b>\n"
             f"🆔 ID : <code>{admin_id}</code>\n\n"
-            "Activez ou désactivez les responsabilités de ce compte :"
+            "Activez ou désactivez les responsabilités et privilèges de ce compte :"
         )
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -455,7 +457,8 @@ class AdminHandlers:
                 cursor.execute(f"UPDATE admins SET {flag} = NOT {flag} WHERE user_id = %s", (admin_id,))
 
             self.config.reload_roles()
-            await query.answer("✅ Permission admin mise à jour !")
+            self.db_manager.clear_cache(f"vip_{admin_id}")
+            await query.answer("✅ Droits admin mis à jour !")
             await self.show_admin_permissions_menu(update, context, admin_id)
         except Exception as exc:
             logger.error("Erreur bascule droit admin : %s", exc)
@@ -538,8 +541,8 @@ class AdminHandlers:
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO admins (user_id, alias, is_owner, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, added_by, date_added)
-                    VALUES (%s, %s, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, %s, NOW())
+                    INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, added_by, date_added)
+                    VALUES (%s, %s, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, %s, NOW())
                     """,
                     (target_id, alias, user_id)
                 )
