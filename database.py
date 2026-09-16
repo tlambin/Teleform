@@ -948,30 +948,40 @@ class DatabaseManager:
     # ==================== MODES DE PAIEMENT DU STAFF ====================
 
     def get_staff_payment_methods(self, staff_id: int) -> Dict[str, bool]:
-        """Retourne les modes de paiement acceptés par un membre de l'équipe."""
-        try:
-            with self.get_cursor() as cursor:
-                cursor.execute(
-                    "SELECT accept_stars, accept_direct FROM staff WHERE user_id = %s",
-                    (int(staff_id),)
-                )
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        "accept_stars": bool(row.get("accept_stars", True)),
-                        "accept_direct": bool(row.get("accept_direct", True)),
-                    }
-        except Exception as exc:
-            logger.error("Erreur lecture modes paiement staff %s : %s", staff_id, exc)
+            """Retourne les modes de paiement acceptés (table config pour l'owner, table staff pour les autres)."""
+            uid = int(staff_id)
 
-        return {"accept_stars": True, "accept_direct": True}
+            # Cas spécifique : Owner principal (stocké dans config)
+            if self.is_owner(uid):
+                stars = str(self.get_config_value("owner_accept_stars", "true")).lower() in ("true", "1", "yes")
+                direct = str(self.get_config_value("owner_accept_direct", "true")).lower() in ("true", "1", "yes")
+                return {"accept_stars": stars, "accept_direct": direct}
+
+            # Cas général : Staff, Admins et Co-Owners
+            try:
+                with self.get_cursor() as cursor:
+                    cursor.execute(
+                        "SELECT accept_stars, accept_direct FROM staff WHERE user_id = %s",
+                        (uid,)
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            "accept_stars": bool(row.get("accept_stars", True)),
+                            "accept_direct": bool(row.get("accept_direct", True)),
+                        }
+            except Exception as exc:
+                logger.error("Erreur lecture modes paiement staff %s : %s", uid, exc)
+
+            return {"accept_stars": True, "accept_direct": True}
 
     def toggle_staff_payment_method(self, staff_id: int, method: str) -> Tuple[bool, str]:
-        """Active/désactive un mode de paiement staff en garantissant qu'au moins l'un des deux reste actif."""
+        """Active/désactive un mode de paiement staff avec conservation d'au moins une méthode active."""
         if method not in ("accept_stars", "accept_direct"):
             return False, "Méthode de paiement invalide."
 
-        current = self.get_staff_payment_methods(staff_id)
+        uid = int(staff_id)
+        current = self.get_staff_payment_methods(uid)
         stars = current["accept_stars"]
         direct = current["accept_direct"]
 
@@ -984,15 +994,23 @@ class DatabaseManager:
             if not new_val and not stars:
                 return False, "Vous devez conserver au moins un moyen de paiement actif."
 
+        # Cas spécifique : Owner principal -> écriture dans config
+        if self.is_owner(uid):
+            cfg_key = f"owner_{method}"
+            val_str = "true" if new_val else "false"
+            ok = self.set_config_value(cfg_key, val_str)
+            return (True, "Mode de paiement mis à jour.") if ok else (False, "Erreur technique.")
+
+        # Cas général : Staff, Admins et Co-Owners -> mise à jour de la table staff
         try:
             with self.transaction() as cursor:
                 cursor.execute(
                     f"UPDATE staff SET {method} = %s WHERE user_id = %s",
-                    (new_val, int(staff_id))
+                    (new_val, uid)
                 )
             return True, "Mode de paiement mis à jour."
         except Exception as exc:
-            logger.error("Erreur modification mode paiement staff %s : %s", staff_id, exc)
+            logger.error("Erreur modification mode paiement staff %s : %s", uid, exc)
             return False, "Erreur technique."
 
     # ==================== ADHÉSION OBLIGATOIRE (GROUPE) ====================
