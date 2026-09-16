@@ -234,6 +234,7 @@ class InterfaceManager:
             [InlineKeyboardButton("⚙️ LIMITES & QUOTAS", callback_data="menu_limits")],
             [InlineKeyboardButton("⏱️ DÉLAIS & ARCHIVAGE", callback_data="menu_delais")],
             [InlineKeyboardButton("📢 ADHÉSION OBLIGATOIRE (GROUPE)", callback_data="menu_cfg_group")],
+            [InlineKeyboardButton("🎧 CONTACT SUPPORT", callback_data="menu_cfg_support")],
             [InlineKeyboardButton("🛠️ MAINTENANCE SYSTÈME", callback_data="maintenance")],
             [InlineKeyboardButton("🔙 Retour", callback_data="parametres")]
         ]
@@ -263,6 +264,22 @@ class InterfaceManager:
             [InlineKeyboardButton(toggle_btn_label, callback_data="toggle_cfg_group_enabled")],
             [InlineKeyboardButton("🆔 Modifier l'ID du groupe", callback_data="set_cfg_group_id")],
             [InlineKeyboardButton("🔗 Modifier le Lien / Bot", callback_data="set_cfg_group_link")],
+            [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU CONTACT SUPPORT (Owner Only) ==========
+
+    def get_support_config_menu(self):
+        """Menu de configuration du contact support."""
+        contact = self.db_manager.get_support_contact()
+        text = (
+            "🎧 <b>Configuration du Contact Support</b>\n\n"
+            f"• <b>Contact actuel :</b> <code>{html.escape(contact)}</code>\n\n"
+            "Ce contact est affiché lorsqu'un doublon est détecté ou pour toute demande d'assistance directe."
+        )
+        keyboard = [
+            [InlineKeyboardButton("✏️ Modifier le contact support", callback_data="set_cfg_support_contact")],
             [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
         ]
         return text, InlineKeyboardMarkup(keyboard)
@@ -588,6 +605,7 @@ class InterfaceManager:
             "menu_vip_shop": lambda: self.get_vip_shop_menu(is_vip=is_vip),
             "gerer_bot": self.get_gerer_bot_menu,
             "menu_cfg_group": self.get_group_subscription_config_menu,
+            "menu_cfg_support": self.get_support_config_menu,
             "menu_channels": self.get_channels_menu,
             "menu_limits": self.get_limits_menu,
         }

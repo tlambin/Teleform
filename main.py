@@ -685,7 +685,7 @@ class TelegramBot:
         # Aiguillage Gouvernance & Administration (Admin/Owner + Modes Paiement Staff)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|toggle_pay_staff_.*)$",
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|toggle_pay_staff_.*)$",
         ))
 
         # Aiguillage Traitement opérationnel des dossiers (Staff)
@@ -697,7 +697,7 @@ class TelegramBot:
         # Menus d'interface et navigation (avec Paramètres Modes Paiement Staff)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_interface_callbacks,
-            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_channels|menu_limits|limit_.*)$",
+            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|limit_.*)$",
         ))
 
         # Callbacks utilisateurs / clients (mis à jour avec check_subscription et préférences VIP)

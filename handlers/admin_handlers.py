@@ -274,6 +274,21 @@ class AdminHandlers:
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_cfg_group")]])
             )
 
+        # Contact Support (Owner only)
+        elif data == "menu_cfg_support" and is_owner:
+            await query.answer()
+            msg, kb = self.interface.get_support_config_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+
+        elif data == "set_cfg_support_contact" and is_owner:
+            await query.answer()
+            context.user_data["waiting_owner_input"] = "support_contact"
+            await query.edit_message_text(
+                "🎧 <b>Entrez le @username ou le lien du support</b> (ex: <code>@ContactParaBot</code> ou <code>https://t.me/ContactParaBot</code>) :",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_cfg_support")]])
+            )
+
         # Statistiques
         elif data == "bot_stats" and privs.get("can_view_stats", True):
             await self.stats_manager.show_general_stats(update, context)

@@ -16,9 +16,6 @@ from .navigation import NavigationManager
 
 logger = logging.getLogger(__name__)
 
-# URL du bot de contact en cas de doublon
-CONTACT_BOT_URL = "https://t.me/Teleform_contact_bot"
-
 
 class FormulaireManager:
     """Gestionnaire du formulaire guidé de création de demande."""
@@ -67,6 +64,15 @@ class FormulaireManager:
         self.navigation = NavigationManager(self)
         logger.info("FormulaireManager initialisé avec support VIP Assignée & Auto-Assign")
 
+    def _get_support_url(self) -> str:
+        """Génère l'URL directe vers le contact support configuré en base."""
+        contact = self.db_manager.get_support_contact()
+        if contact.startswith("@"):
+            return f"https://t.me/{contact.lstrip('@')}"
+        elif contact.startswith(("http://", "https://")):
+            return contact
+        return f"https://t.me/{contact}"
+
     def get_conversation_handler(self):
         """Retourne le ConversationHandler complet du formulaire."""
         nav_pattern = "^form_(back|skip|cancel)($|_.*)"
@@ -104,11 +110,13 @@ class FormulaireManager:
                 self.INSTAGRAM: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.instagram),
                     CommandHandler("skip", self.skip_instagram),
+                    CallbackQueryHandler(self.retry_instagram, pattern="^form_retry_instagram$"),
                     CallbackQueryHandler(self.navigation.handle_form_navigation, pattern=nav_pattern),
                 ],
                 self.SNAPCHAT: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.snapchat),
                     CommandHandler("skip", self.skip_snapchat),
+                    CallbackQueryHandler(self.retry_snapchat, pattern="^form_retry_snapchat$"),
                     CallbackQueryHandler(self.navigation.handle_form_navigation, pattern=nav_pattern),
                 ],
                 self.DETAILS: [
@@ -500,6 +508,28 @@ class FormulaireManager:
             )
             return self.PHOTO
 
+    async def retry_instagram(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Permet de recommencer la saisie Instagram suite à un doublon."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+        text = "👤 Indiquez à nouveau le profil <b>Instagram</b> de la cible (ou passez) :"
+        kb = self.navigation.create_navigation_keyboard(self.INSTAGRAM, include_skip=True)
+        await self._edit_or_send(update, context, text, reply_markup=kb)
+        return self.INSTAGRAM
+
+    async def retry_snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Permet de recommencer la saisie Snapchat suite à un doublon."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+        demande = context.user_data.get("demande", {})
+        has_insta = bool(demande.get("instagram"))
+        text = "👻 Indiquez à nouveau le nom d'utilisateur <b>Snapchat</b> de la cible" + (" (ou passez) :" if has_insta else " :")
+        kb = self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=has_insta)
+        await self._edit_or_send(update, context, text, reply_markup=kb)
+        return self.SNAPCHAT
+
     async def instagram(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message or not update.message.text:
             return self.INSTAGRAM
@@ -537,15 +567,17 @@ class FormulaireManager:
 
             is_duplicate, matched_value = self.db_manager.check_social_duplicate(instagram=val)
             if is_duplicate:
+                support_url = self._get_support_url()
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Contacter le Support", url=CONTACT_BOT_URL)],
+                    [InlineKeyboardButton("💬 Contacter le Support", url=support_url)],
+                    [InlineKeyboardButton("↩️ Modifier ma saisie", callback_data="form_retry_instagram")],
                     [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
                 ])
                 await update.message.reply_text(
                     f"⚠️ <b>Dossier déjà existant !</b>\n\n"
-                    f"Une demande active concerne déjà ce profil Instagram (<code>{html.escape(matched_value)}</code>).\n"
-                    "Pour éviter les doublons de traitement, cette cible ne peut être soumise à nouveau.\n\n"
-                    "Si vous pensez qu'il s'agit d'une erreur, contactez notre équipe :",
+                    f"Une demande active concerne déjà ce profil Instagram (<code>{html.escape(matched_value)}</code>).\n\n"
+                    "• Si vous vous êtes trompé, cliquez sur <b>Modifier ma saisie</b> pour rectifier le compte.\n"
+                    "• Si vous pensez qu'il s'agit d'une erreur, contactez directement notre support :",
                     parse_mode="HTML",
                     reply_markup=kb
                 )
@@ -626,15 +658,17 @@ class FormulaireManager:
 
             is_duplicate, matched_value = self.db_manager.check_social_duplicate(snapchat=val)
             if is_duplicate:
+                support_url = self._get_support_url()
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Contacter le Support", url=CONTACT_BOT_URL)],
+                    [InlineKeyboardButton("💬 Contacter le Support", url=support_url)],
+                    [InlineKeyboardButton("↩️ Modifier ma saisie", callback_data="form_retry_snapchat")],
                     [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
                 ])
                 await update.message.reply_text(
                     f"⚠️ <b>Dossier déjà existant !</b>\n\n"
-                    f"Une demande active concerne déjà ce profil Snapchat (<code>{html.escape(matched_value)}</code>).\n"
-                    "Pour éviter les doublons de traitement, cette cible ne peut être soumise à nouveau.\n\n"
-                    "Si vous pensez qu'il s'agit d'une erreur, contactez notre équipe :",
+                    f"Une demande active concerne déjà ce profil Snapchat (<code>{html.escape(matched_value)}</code>).\n\n"
+                    "• Si vous vous êtes trompé, cliquez sur <b>Modifier ma saisie</b> pour rectifier le compte.\n"
+                    "• Si vous pensez qu'il s'agit d'une erreur, contactez directement notre support :",
                     parse_mode="HTML",
                     reply_markup=kb
                 )
@@ -791,13 +825,12 @@ class FormulaireManager:
             # Option B : Le VIP a défini un piégeur automatique par défaut
             elif auto_pref != "prompt" and auto_pref.isdigit():
                 auto_staff_id = int(auto_pref)
-                # On vérifie que ce staff existe toujours et n'est pas en pause
                 if not self.db_manager.is_staff_paused(auto_staff_id) and auto_staff_id != user.id:
                     context.user_data.setdefault("demande", {})["target_admin_id"] = auto_staff_id
                     await self.save_demande(update, context)
                     return ConversationHandler.END
 
-            # Option C (par défaut : prompt) : Choix initial : Choisir ou Ne pas choisir
+            # Option C : Choix initial
             text = (
                 "⭐ <b>Avantage Membre VIP : Attribution du dossier</b>\n\n"
                 "Souhaitez-vous confier cette demande à un membre précis de l'équipe, "
@@ -915,7 +948,6 @@ class FormulaireManager:
         target_admin_id = demande.get("target_admin_id")
         is_vip = self.db_manager.is_user_vip(user_id)
 
-        # Statut initial : si un membre VIP choisit un piégeur, la demande est '🎯 Assignée (VIP)'
         if is_vip and target_admin_id:
             statut_initial = "🎯 Assignée (VIP)"
         else:
@@ -992,7 +1024,6 @@ class FormulaireManager:
 
             await self._edit_or_send(update, context, recap)
 
-            # Notifications
             if target_admin_id and statut_initial == "🎯 Assignée (VIP)":
                 await self._send_vip_assignment_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
             else:

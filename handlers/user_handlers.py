@@ -738,7 +738,8 @@ class UserHandlers:
             "gerer_staff", "staff_ajouter", "staff_supprimer",
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance",
             "menu_channels", "menu_limits", "gerer_vips", "owner_add_vip", "owner_remove_vip",
-            "menu_cfg_group", "toggle_cfg_group_enabled", "set_cfg_group_id", "set_cfg_group_link"
+            "menu_cfg_group", "toggle_cfg_group_enabled", "set_cfg_group_id", "set_cfg_group_link",
+            "menu_cfg_support", "set_cfg_support_contact"
         }
         if (data in owner_actions or data.startswith("limit_")) and not self.config.is_admin(user_id):
             await query.answer("❌ Accès réservé aux administrateurs.", show_alert=True)
@@ -864,7 +865,7 @@ class UserHandlers:
         if not update.message:
             return
 
-        # Saisie d'une configuration Owner (Groupe obligatoire ou Lien)
+        # Saisie d'une configuration Owner (Groupe obligatoire, Lien, ou Contact Support)
         if update.message.text and context.user_data and context.user_data.get("waiting_owner_input"):
             if self.config.is_owner(update.effective_user.id):
                 mode = context.user_data.pop("waiting_owner_input")
@@ -876,13 +877,23 @@ class UserHandlers:
                         await update.message.reply_text(f"✅ ID du groupe configuré sur : <code>{gid}</code>", parse_mode="HTML")
                     except ValueError:
                         await update.message.reply_text("❌ L'ID doit être un nombre entier relatif (ex: <code>-1001234567890</code>).")
+                    msg, kb = self.interface.get_group_subscription_config_menu()
+                    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+                    return
+
                 elif mode == "group_subscription_link":
                     self.db_manager.set_group_subscription_link(txt)
                     await update.message.reply_text(f"✅ Lien/Bot d'inscription configuré sur : <code>{html.escape(txt)}</code>", parse_mode="HTML")
+                    msg, kb = self.interface.get_group_subscription_config_menu()
+                    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+                    return
 
-                msg, kb = self.interface.get_group_subscription_config_menu()
-                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
-                return
+                elif mode == "support_contact":
+                    self.db_manager.set_support_contact(txt)
+                    await update.message.reply_text(f"✅ Contact support mis à jour : <code>{html.escape(txt)}</code>", parse_mode="HTML")
+                    msg, kb = self.interface.get_support_config_menu()
+                    await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+                    return
 
         # 1. Saisie d'un quota par le propriétaire
         if update.message.text and context.user_data and context.user_data.get("waiting_limit_input"):

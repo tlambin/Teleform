@@ -417,6 +417,7 @@ class DatabaseManager:
                         ('required_group_enabled', 'false'),
                         ('required_group_id', '0'),
                         ('group_subscription_link', '@parascriptionbot'),
+                        ('support_contact', '@ContactParaBot'),
                     ]
                     for k, v in default_configs:
                         cursor.execute(
@@ -948,32 +949,32 @@ class DatabaseManager:
     # ==================== MODES DE PAIEMENT DU STAFF ====================
 
     def get_staff_payment_methods(self, staff_id: int) -> Dict[str, bool]:
-            """Retourne les modes de paiement acceptés (table config pour l'owner, table staff pour les autres)."""
-            uid = int(staff_id)
+        """Retourne les modes de paiement acceptés (table config pour l'owner, table staff pour les autres)."""
+        uid = int(staff_id)
 
-            # Cas spécifique : Owner principal (stocké dans config)
-            if self.is_owner(uid):
-                stars = str(self.get_config_value("owner_accept_stars", "true")).lower() in ("true", "1", "yes")
-                direct = str(self.get_config_value("owner_accept_direct", "true")).lower() in ("true", "1", "yes")
-                return {"accept_stars": stars, "accept_direct": direct}
+        # Cas spécifique : Owner principal (stocké dans config)
+        if self.is_owner(uid):
+            stars = str(self.get_config_value("owner_accept_stars", "true")).lower() in ("true", "1", "yes")
+            direct = str(self.get_config_value("owner_accept_direct", "true")).lower() in ("true", "1", "yes")
+            return {"accept_stars": stars, "accept_direct": direct}
 
-            # Cas général : Staff, Admins et Co-Owners
-            try:
-                with self.get_cursor() as cursor:
-                    cursor.execute(
-                        "SELECT accept_stars, accept_direct FROM staff WHERE user_id = %s",
-                        (uid,)
-                    )
-                    row = cursor.fetchone()
-                    if row:
-                        return {
-                            "accept_stars": bool(row.get("accept_stars", True)),
-                            "accept_direct": bool(row.get("accept_direct", True)),
-                        }
-            except Exception as exc:
-                logger.error("Erreur lecture modes paiement staff %s : %s", uid, exc)
+        # Cas général : Staff, Admins et Co-Owners
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT accept_stars, accept_direct FROM staff WHERE user_id = %s",
+                    (uid,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "accept_stars": bool(row.get("accept_stars", True)),
+                        "accept_direct": bool(row.get("accept_direct", True)),
+                    }
+        except Exception as exc:
+            logger.error("Erreur lecture modes paiement staff %s : %s", uid, exc)
 
-            return {"accept_stars": True, "accept_direct": True}
+        return {"accept_stars": True, "accept_direct": True}
 
     def toggle_staff_payment_method(self, staff_id: int, method: str) -> Tuple[bool, str]:
         """Active/désactive un mode de paiement staff avec conservation d'au moins une méthode active."""
@@ -1041,6 +1042,16 @@ class DatabaseManager:
 
     def set_group_subscription_link(self, link: str) -> bool:
         return self.set_config_value("group_subscription_link", str(link).strip())
+
+    # ==================== CONTACT SUPPORT ====================
+
+    def get_support_contact(self) -> str:
+        """Retourne le lien ou le @pseudo du support configuré (par défaut @ContactParaBot)."""
+        return self.get_config_value("support_contact", "@ContactParaBot")
+
+    def set_support_contact(self, contact: str) -> bool:
+        """Définit le contact support (URL ou @pseudo)."""
+        return self.set_config_value("support_contact", str(contact).strip())
 
     # ==================== GESTION DU STATUT VIP ASSIGNÉE ====================
 
