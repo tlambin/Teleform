@@ -35,6 +35,59 @@ class UserHandlers:
             self._staff_handlers = StaffHandlers(self.config, self.db_manager)
         return self._staff_handlers
 
+    async def _check_required_membership(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Vérifie si l'utilisateur est membre du groupe obligatoire configuré par l'Owner."""
+        user = update.effective_user
+        if not user:
+            return False
+
+        # Exemptions pour l'équipe opérationnelle et la direction
+        if self.config.is_staff(user.id) or self.config.is_admin(user.id) or self.config.is_owner(user.id):
+            return True
+
+        # Vérifie si le module d'adhésion obligatoire est activé
+        if not self.db_manager.is_required_group_enabled():
+            return True
+
+        group_id = self.db_manager.get_required_group_id()
+        if not group_id or group_id == 0:
+            return True
+
+        try:
+            member = await context.bot.get_chat_member(chat_id=group_id, user_id=user.id)
+            if member.status in ("member", "administrator", "creator"):
+                return True
+        except Exception as exc:
+            logger.warning("Erreur vérification adhésion groupe %s pour %s : %s", group_id, user.id, exc)
+
+        raw_link = self.db_manager.get_group_subscription_link()
+        if raw_link.startswith("@"):
+            sub_url = f"https://t.me/{raw_link.lstrip('@')}"
+        elif raw_link.startswith("http://") or raw_link.startswith("https://"):
+            sub_url = raw_link
+        else:
+            sub_url = f"https://t.me/{raw_link}"
+
+        msg_text = (
+            "📢 <b>Adhésion requise</b>\n\n"
+            "Pour accéder aux services du bot et déposer vos demandes, vous devez obligatoirement rejoindre notre groupe.\n\n"
+            "Cliquez sur le bouton ci-dessous pour vous inscrire via le bot dédié, puis cliquez sur <b>Vérifier mon adhésion</b> :"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✍️ S'inscrire au groupe", url=sub_url)],
+            [InlineKeyboardButton("🔄 Vérifier mon adhésion", callback_data="check_subscription")]
+        ])
+
+        if update.callback_query:
+            try:
+                await update.callback_query.message.edit_text(msg_text, parse_mode="HTML", reply_markup=keyboard)
+            except Exception:
+                await update.callback_query.message.reply_text(msg_text, parse_mode="HTML", reply_markup=keyboard)
+        elif update.message:
+            await update.message.reply_text(msg_text, parse_mode="HTML", reply_markup=keyboard)
+
+        return False
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Point d'entrée commande /start."""
         if not update.effective_user or not update.message:
@@ -47,6 +100,9 @@ class UserHandlers:
         try:
             await self.compte.ensure_user_registered(update)
             logger.info("👤 Utilisateur %s vérifié/enregistré en base", user_id)
+
+            if not await self._check_required_membership(update, context):
+                return
 
             welcome_msg, reply_markup = self.interface.get_start_interface(user_id, first_name)
 
@@ -74,6 +130,25 @@ class UserHandlers:
 
         data = query.data
         user_id = query.from_user.id
+
+        # Vérification d'adhésion interactive
+        if data == "check_subscription":
+            await query.answer()
+            if await self._check_required_membership(update, context):
+                await query.answer("✅ Merci pour votre adhésion !", show_alert=True)
+                welcome_msg, reply_markup = self.interface.get_start_interface(user_id, query.from_user.first_name)
+                try:
+                    await query.edit_message_text(welcome_msg, parse_mode="HTML", reply_markup=reply_markup)
+                except Exception:
+                    await query.message.reply_text(welcome_msg, parse_mode="HTML", reply_markup=reply_markup)
+            else:
+                await query.answer("❌ Vous n'avez pas encore rejoint le groupe requis.", show_alert=True)
+            return
+
+        # Contrôle préalable d'adhésion obligatoire
+        if not await self._check_required_membership(update, context):
+            await query.answer("❌ Adhésion obligatoire non validée.", show_alert=True)
+            return
 
         # 1. Contrôle global du service
         if data.startswith(("form_", "nav_", "new_demande")) and not self.config.are_demandes_enabled():
@@ -157,7 +232,7 @@ class UserHandlers:
                 demande_id = int(data.replace("pay_stars_prio_", ""))
                 with self.db_manager.get_cursor() as cursor:
                     cursor.execute(
-                        "SELECT id, request_number, prenom, montant, paiement_statut FROM demandes WHERE id = %s AND user_id = %s",
+                        "SELECT id, request_number, prenom, montant, paiement_statut, admin_en_charge FROM demandes WHERE id = %s AND user_id = %s",
                         (demande_id, user_id)
                     )
                     dem = cursor.fetchone()
@@ -165,6 +240,13 @@ class UserHandlers:
                 if not dem:
                     await query.answer("❌ Demande introuvable.", show_alert=True)
                     return
+
+                admin_id = dem.get("admin_en_charge")
+                if admin_id:
+                    p_methods = self.db_manager.get_staff_payment_methods(admin_id)
+                    if not p_methods.get("accept_stars", True):
+                        await query.answer("⚠️ Votre piégeur n'accepte pas le règlement en Stars. Utilisez le paiement direct.", show_alert=True)
+                        return
 
                 if dem.get("paiement_statut") == "paye":
                     await query.answer("✅ Cette demande a déjà été réglée.", show_alert=True)
@@ -207,6 +289,11 @@ class UserHandlers:
                     return
 
                 admin_id = dem["admin_en_charge"]
+                p_methods = self.db_manager.get_staff_payment_methods(admin_id)
+                if not p_methods.get("accept_direct", True):
+                    await query.answer("⚠️ Votre piégeur n'accepte pas le règlement direct. Réglez par Telegram Stars.", show_alert=True)
+                    return
+
                 req_num = dem.get("request_number", demande_id)
                 montant = float(dem.get("montant") or 0.0)
                 alias = self.db_manager.get_staff_alias(admin_id)
@@ -220,8 +307,8 @@ class UserHandlers:
                     user = update.effective_user
                     u_label = f"@{user.username}" if user.username else user.first_name
                     admin_alert = (
-                        f"💳 <b>Paiement hors-Stars demandé (Dossier #{req_num})</b>\n\n"
-                        f"Le client <b>{html.escape(u_label)}</b> souhaite convenir d'un autre moyen de paiement "
+                        f"💳 <b>Paiement direct demandé (Dossier #{req_num})</b>\n\n"
+                        f"Le client <b>{html.escape(u_label)}</b> souhaite convenir du mode de paiement "
                         f"pour le dossier de <b>{html.escape(str(dem.get('prenom') or ''))}</b> (Montant : <b>{montant:.2f} €</b>).\n\n"
                         "Une fois les fonds reçus, validez l'encaissement via le bouton dédié sur votre fiche de suivi."
                     )
@@ -650,7 +737,8 @@ class UserHandlers:
             "gerer_admins", "admin_ajouter", "admin_supprimer",
             "gerer_staff", "staff_ajouter", "staff_supprimer",
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance",
-            "menu_channels", "menu_limits", "gerer_vips", "owner_add_vip", "owner_remove_vip"
+            "menu_channels", "menu_limits", "gerer_vips", "owner_add_vip", "owner_remove_vip",
+            "menu_cfg_group", "toggle_cfg_group_enabled", "set_cfg_group_id", "set_cfg_group_link"
         }
         if (data in owner_actions or data.startswith("limit_")) and not self.config.is_admin(user_id):
             await query.answer("❌ Accès réservé aux administrateurs.", show_alert=True)
@@ -775,6 +863,26 @@ class UserHandlers:
         """Aiguillage central des messages texte et médias hors commandes."""
         if not update.message:
             return
+
+        # Saisie d'une configuration Owner (Groupe obligatoire ou Lien)
+        if update.message.text and context.user_data and context.user_data.get("waiting_owner_input"):
+            if self.config.is_owner(update.effective_user.id):
+                mode = context.user_data.pop("waiting_owner_input")
+                txt = update.message.text.strip()
+                if mode == "required_group_id":
+                    try:
+                        gid = int(txt)
+                        self.db_manager.set_required_group_id(gid)
+                        await update.message.reply_text(f"✅ ID du groupe configuré sur : <code>{gid}</code>", parse_mode="HTML")
+                    except ValueError:
+                        await update.message.reply_text("❌ L'ID doit être un nombre entier relatif (ex: <code>-1001234567890</code>).")
+                elif mode == "group_subscription_link":
+                    self.db_manager.set_group_subscription_link(txt)
+                    await update.message.reply_text(f"✅ Lien/Bot d'inscription configuré sur : <code>{html.escape(txt)}</code>", parse_mode="HTML")
+
+                msg, kb = self.interface.get_group_subscription_config_menu()
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+                return
 
         # 1. Saisie d'un quota par le propriétaire
         if update.message.text and context.user_data and context.user_data.get("waiting_limit_input"):

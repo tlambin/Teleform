@@ -18,7 +18,7 @@ class DemandeManager:
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
-        logger.info("DemandeManager initialisé avec support Annulation, Archives et Rehausse Tarif")
+        logger.info("DemandeManager initialisé avec support Annulation, Archives, Rehausse Tarif et Filtrage Paiements")
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
         """Contrôle les plafonds global et individuel avant création (contourné pour VIP)."""
@@ -133,7 +133,7 @@ class DemandeManager:
                            photo_id, statut, is_difficile, reussie_substatus,
                            prioritaire, montant, date_creation,
                            date_modification, instagram, snapchat, details,
-                           admin_en_charge, last_vip_reminder
+                           admin_en_charge, last_vip_reminder, paiement_statut
                     FROM demandes
                     WHERE user_id = %s
                     ORDER BY id DESC
@@ -243,7 +243,7 @@ class DemandeManager:
         return "\n".join(lignes)
 
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
-        """Génère les boutons d'actions selon que la demande est reçue ou déjà prise en charge."""
+        """Génère les boutons d'actions selon le statut et les méthodes de paiement configurées."""
         buttons = []
         demande_id = demande["id"]
         admin_en_charge = demande.get("admin_en_charge")
@@ -251,10 +251,27 @@ class DemandeManager:
         is_prio = bool(demande.get("prioritaire"))
         is_vip = self.db_manager.is_user_vip(user_id)
         montant = float(demande.get("montant") or 0.0)
+        paiement_statut = demande.get("paiement_statut")
 
-        # 1. Actions sur le dossier selon le statut
+        # 1. Demande terminée en attente de règlement : options selon les préférences du piégeur
+        if statut_raw == "✅ Réussie" and is_prio and paiement_statut == "en_attente":
+            methods = (
+                self.db_manager.get_staff_payment_methods(admin_en_charge)
+                if admin_en_charge
+                else {"accept_stars": True, "accept_direct": True}
+            )
+            pay_row = []
+            if methods.get("accept_stars", True):
+                pay_row.append(InlineKeyboardButton("⭐ Payer en Stars", callback_data=f"pay_stars_prio_{demande_id}"))
+            if methods.get("accept_direct", True):
+                pay_row.append(InlineKeyboardButton("💬 Convenir du règlement", callback_data=f"pay_contact_prio_{demande_id}"))
+
+            if pay_row:
+                buttons.append(pay_row)
+
+        # 2. Actions sur le dossier selon son avancement
         if not admin_en_charge and ("reçue" in statut_raw.lower() or "recue" in statut_raw.lower()):
-            # Demande NON prise en charge : Modification complète et Suppression
+            # Demande NON prise en charge : Modification complète et Suppression directe
             buttons.append([
                 InlineKeyboardButton("✏️ Modifier", callback_data=f"modify_{demande_id}"),
                 InlineKeyboardButton("🗑️ Supprimer", callback_data=f"delete_{demande_id}")
@@ -264,12 +281,11 @@ class DemandeManager:
             action_row = [
                 InlineKeyboardButton("❌ Demander l'annulation", callback_data=f"ask_cancel_demande_{demande_id}")
             ]
-            # Si la demande est prioritaire, possibilité de rehausser le montant même en cours de traitement
             if is_prio:
                 action_row.insert(0, InlineKeyboardButton(f"💰 Rehausser le tarif ({montant:.2f} €)", callback_data=f"modify_{demande_id}"))
             buttons.append(action_row)
 
-        # 2. Boutons de contact et de relance si un opérateur est assigné
+        # 3. Boutons de contact et de relance si un opérateur est assigné
         if admin_en_charge:
             contact_btn = InlineKeyboardButton("💬 Contacter mon référent", callback_data=f"vip_contact_admin_{demande_id}")
             if is_vip or is_prio:
@@ -278,7 +294,7 @@ class DemandeManager:
                 relance_btn = InlineKeyboardButton("🔔 Relancer (1 €)", callback_data=f"remind_admin_pay_{demande_id}")
             buttons.append([contact_btn, relance_btn])
 
-        # 3. Pagination
+        # 4. Pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"nav_page_{page - 1}"))
@@ -288,7 +304,7 @@ class DemandeManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # 4. Actions complémentaires
+        # 5. Actions complémentaires
         can_create, _ = self.check_creation_quota(user_id)
         btn_creation = (
             InlineKeyboardButton("➕ Nouvelle demande", callback_data="new_demande")

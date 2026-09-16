@@ -190,6 +190,8 @@ class DatabaseManager:
                 alias_locked BOOLEAN DEFAULT FALSE,
                 is_paused BOOLEAN DEFAULT FALSE,
                 is_trial BOOLEAN DEFAULT FALSE,
+                accept_stars BOOLEAN DEFAULT TRUE,
+                accept_direct BOOLEAN DEFAULT TRUE,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
@@ -317,6 +319,8 @@ class DatabaseManager:
             ("staff", "alias_locked", "BOOLEAN DEFAULT FALSE"),
             ("staff", "is_paused", "BOOLEAN DEFAULT FALSE"),
             ("staff", "is_trial", "BOOLEAN DEFAULT FALSE"),
+            ("staff", "accept_stars", "BOOLEAN DEFAULT TRUE"),
+            ("staff", "accept_direct", "BOOLEAN DEFAULT TRUE"),
             ("admins", "is_owner", "BOOLEAN DEFAULT FALSE"),
             ("admins", "is_vip", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_manage_staff", "BOOLEAN DEFAULT TRUE"),
@@ -410,6 +414,9 @@ class DatabaseManager:
                         ('max_hetero_snap', '0'),
                         ('max_gay_insta', '0'),
                         ('max_gay_snap', '0'),
+                        ('required_group_enabled', 'false'),
+                        ('required_group_id', '0'),
+                        ('group_subscription_link', '@parascriptionbot'),
                     ]
                     for k, v in default_configs:
                         cursor.execute(
@@ -938,6 +945,85 @@ class DatabaseManager:
             logger.error("Erreur pioche demande aléatoire pour staff à l'essai %s : %s", staff_id, exc)
             return None
 
+    # ==================== MODES DE PAIEMENT DU STAFF ====================
+
+    def get_staff_payment_methods(self, staff_id: int) -> Dict[str, bool]:
+        """Retourne les modes de paiement acceptés par un membre de l'équipe."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT accept_stars, accept_direct FROM staff WHERE user_id = %s",
+                    (int(staff_id),)
+                )
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "accept_stars": bool(row.get("accept_stars", True)),
+                        "accept_direct": bool(row.get("accept_direct", True)),
+                    }
+        except Exception as exc:
+            logger.error("Erreur lecture modes paiement staff %s : %s", staff_id, exc)
+
+        return {"accept_stars": True, "accept_direct": True}
+
+    def toggle_staff_payment_method(self, staff_id: int, method: str) -> Tuple[bool, str]:
+        """Active/désactive un mode de paiement staff en garantissant qu'au moins l'un des deux reste actif."""
+        if method not in ("accept_stars", "accept_direct"):
+            return False, "Méthode de paiement invalide."
+
+        current = self.get_staff_payment_methods(staff_id)
+        stars = current["accept_stars"]
+        direct = current["accept_direct"]
+
+        if method == "accept_stars":
+            new_val = not stars
+            if not new_val and not direct:
+                return False, "Vous devez conserver au moins un moyen de paiement actif."
+        else:
+            new_val = not direct
+            if not new_val and not stars:
+                return False, "Vous devez conserver au moins un moyen de paiement actif."
+
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    f"UPDATE staff SET {method} = %s WHERE user_id = %s",
+                    (new_val, int(staff_id))
+                )
+            return True, "Mode de paiement mis à jour."
+        except Exception as exc:
+            logger.error("Erreur modification mode paiement staff %s : %s", staff_id, exc)
+            return False, "Erreur technique."
+
+    # ==================== ADHÉSION OBLIGATOIRE (GROUPE) ====================
+
+    def is_required_group_enabled(self) -> bool:
+        """Indique si le contrôle d'adhésion obligatoire est actif."""
+        val = str(self.get_config_value("required_group_enabled", "false")).lower()
+        return val in ("true", "1", "yes")
+
+    def toggle_required_group_enabled(self) -> bool:
+        """Bascule l'activation de l'adhésion obligatoire."""
+        new_val = not self.is_required_group_enabled()
+        self.set_config_value("required_group_enabled", "true" if new_val else "false")
+        return new_val
+
+    def get_required_group_id(self) -> int:
+        val = self.get_config_value("required_group_id", "0")
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return 0
+
+    def set_required_group_id(self, group_id: int) -> bool:
+        return self.set_config_value("required_group_id", str(group_id))
+
+    def get_group_subscription_link(self) -> str:
+        return self.get_config_value("group_subscription_link", "@parascriptionbot")
+
+    def set_group_subscription_link(self, link: str) -> bool:
+        return self.set_config_value("group_subscription_link", str(link).strip())
+
     # ==================== GESTION DU STATUT VIP ASSIGNÉE ====================
 
     def accept_vip_assigned_demande(self, demande_id: int, staff_id: int) -> bool:
@@ -958,7 +1044,7 @@ class DatabaseManager:
                     """
                     INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
                     VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE 
+                    ON DUPLICATE KEY UPDATE
                         admin_id = VALUES(admin_id),
                         derniere_action = NOW(),
                         statut_suivi = 'active'
@@ -1070,7 +1156,7 @@ class DatabaseManager:
 
     def update_demande_montant(self, demande_id: int, nouveau_montant: float) -> Tuple[bool, str]:
         """Met à jour le montant d'une demande prioritaire.
-        
+
         - Si la demande est '📥 Reçue' ou '🎯 Assignée (VIP)' : modification libre (> 0).
         - Si la demande est '⏳ En attente' ou '🔄 En cours' : augmentation stricte (prix plancher).
         """
@@ -1377,7 +1463,7 @@ class DatabaseManager:
     get_admin_active_demandes = get_staff_active_demandes
 
     def abandon_staff_demandes_for_pause(self, staff_id: int) -> List[Dict[str, Any]]:
-        alias = self.db_manager.get_staff_alias(staff_id)
+        alias = self.get_staff_alias(staff_id)
         reason = f"Opérateur ({alias}) actuellement en pause."
 
         try:
@@ -1458,7 +1544,7 @@ class DatabaseManager:
                         SET statut = %s,
                             is_difficile = FALSE,
                             reussie_substatus = %s,
-                            paiement_statut = CASE 
+                            paiement_statut = CASE
                                 WHEN paiement_statut = 'paye' THEN 'paye'
                                 ELSE %s
                             END,

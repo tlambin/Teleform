@@ -202,11 +202,31 @@ class AdminHandlers:
             return
 
         user_id = update.effective_user.id
+        data = query.data or ""
+
+        # 1. Gestion des modes de paiement acceptés (accessible à tout rôle opérationnel : Staff, Admin, Owner)
+        if data == "staff_payment_settings" and (self.config.is_staff(user_id) or self.config.is_admin(user_id) or self.config.is_owner(user_id)):
+            await query.answer()
+            text_menu, kb_menu = self.interface.get_staff_payment_settings_menu(user_id)
+            await self._safe_edit_or_send(query, context, text_menu, reply_markup=kb_menu)
+            return
+
+        if data.startswith("toggle_pay_staff_") and (self.config.is_staff(user_id) or self.config.is_admin(user_id) or self.config.is_owner(user_id)):
+            method = data.replace("toggle_pay_staff_", "")
+            ok, msg_err = self.db_manager.toggle_staff_payment_method(user_id, method)
+            if not ok:
+                await query.answer(f"⚠️ {msg_err}", show_alert=True)
+                return
+            await query.answer("✅ Option mise à jour !")
+            text_menu, kb_menu = self.interface.get_staff_payment_settings_menu(user_id)
+            await self._safe_edit_or_send(query, context, text_menu, reply_markup=kb_menu)
+            return
+
+        # 2. Vérification des droits administrateur pour le reste
         if not self.config.is_admin(user_id):
             await query.answer("❌ Accès non autorisé.", show_alert=True)
             return
 
-        data = query.data or ""
         privs = self.db_manager.get_admin_privileges(user_id)
         is_owner = privs.get("is_owner", False) or self.config.is_owner(user_id)
 
@@ -221,6 +241,38 @@ class AdminHandlers:
             await self.cancel_bot_off(update, context)
         elif data == "maintenance" and is_owner:
             await self.run_maintenance(update, context)
+
+        # Adhésion Obligatoire au Groupe (Owner only)
+        elif data == "menu_cfg_group" and is_owner:
+            await query.answer()
+            msg, kb = self.interface.get_group_subscription_config_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+
+        elif data == "toggle_cfg_group_enabled" and is_owner:
+            new_state = self.db_manager.toggle_required_group_enabled()
+            status_txt = "activée" if new_state else "désactivée"
+            await query.answer(f"Obligation d'adhésion {status_txt} !")
+            msg, kb = self.interface.get_group_subscription_config_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+
+        elif data == "set_cfg_group_id" and is_owner:
+            await query.answer()
+            context.user_data["waiting_owner_input"] = "required_group_id"
+            await query.edit_message_text(
+                "🆔 <b>Entrez le Chat ID numérique du groupe obligatoire</b> (ex: <code>-1001234567890</code>) :\n\n"
+                "<i>Assurez-vous que le bot est bien présent dans ce groupe en tant qu'administrateur.</i>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_cfg_group")]])
+            )
+
+        elif data == "set_cfg_group_link" and is_owner:
+            await query.answer()
+            context.user_data["waiting_owner_input"] = "group_subscription_link"
+            await query.edit_message_text(
+                "🔗 <b>Entrez le nom du bot ou l'URL t.me d'inscription</b> (ex: <code>@parascriptionbot</code> ou <code>https://t.me/...</code>) :",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_cfg_group")]])
+            )
 
         # Statistiques
         elif data == "bot_stats" and privs.get("can_view_stats", True):
@@ -408,6 +460,10 @@ class AdminHandlers:
         alias = html.escape(str(self.db_manager.get_staff_alias(admin_id)))
         privs = self.db_manager.get_admin_privileges(admin_id)
 
+        # Vérification si l'administrateur cible est l'Owner principal
+        primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
+        is_primary_owner = (int(admin_id) == int(primary_owner_id))
+
         st_staff = "✅ OUI" if privs.get("can_manage_staff") else "❌ NON"
         st_vips = "✅ OUI" if privs.get("can_manage_vips") else "❌ NON"
         st_stats = "✅ OUI" if privs.get("can_view_stats") else "❌ NON"
@@ -429,16 +485,21 @@ class AdminHandlers:
                 InlineKeyboardButton(f"Archives Générales : {st_archives}", callback_data=f"set_permadmin_{admin_id}_can_view_archives"),
                 InlineKeyboardButton(f"⭐ Accès VIP : {st_vip_status}", callback_data=f"set_permadmin_{admin_id}_is_vip"),
             ],
-            [
-                InlineKeyboardButton(f"Rôle Suprême : {st_owner}", callback_data=f"set_permadmin_{admin_id}_is_owner"),
-            ],
-            [InlineKeyboardButton("🔙 Liste Managers", callback_data="gerer_admins")]
         ]
+
+        # L'Owner principal ne peut pas voir son rôle suprême basculé
+        if not is_primary_owner:
+            keyboard.append([
+                InlineKeyboardButton(f"Rôle Suprême : {st_owner}", callback_data=f"set_permadmin_{admin_id}_is_owner"),
+            ])
+
+        keyboard.append([InlineKeyboardButton("🔙 Liste Managers", callback_data="gerer_admins")])
 
         text = (
             f"⚙️ <b>Droits Administrateur : {alias}</b>\n"
             f"🆔 ID : <code>{admin_id}</code>\n\n"
-            "Activez ou désactivez les responsabilités et privilèges de ce compte :"
+            + ("⚠️ <i>Ceci est le Propriétaire principal (Intouchable).</i>\n\n" if is_primary_owner else "")
+            + "Activez ou désactivez les responsabilités et privilèges de ce compte :"
         )
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -452,6 +513,12 @@ class AdminHandlers:
             parts = data.split("_")
             admin_id = int(parts[2])
             flag = "_".join(parts[3:])
+
+            # Protection supplémentaire : Empêcher de modifier le statut is_owner de l'Owner principal
+            primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
+            if int(admin_id) == int(primary_owner_id) and flag == "is_owner":
+                await query.answer("❌ Impossible de modifier le rôle du propriétaire principal.", show_alert=True)
+                return
 
             with self.db_manager.transaction() as cursor:
                 cursor.execute(f"UPDATE admins SET {flag} = NOT {flag} WHERE user_id = %s", (admin_id,))
@@ -577,8 +644,13 @@ class AdminHandlers:
         await query.answer()
 
         try:
+            # Empêcher de lister l'Owner principal dans la suppression
+            primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("SELECT user_id, alias, is_owner FROM admins WHERE user_id != %s", (update.effective_user.id,))
+                cursor.execute(
+                    "SELECT user_id, alias, is_owner FROM admins WHERE user_id != %s AND user_id != %s",
+                    (update.effective_user.id, primary_owner_id)
+                )
                 admins = cursor.fetchall()
 
             if not admins:
@@ -637,6 +709,11 @@ class AdminHandlers:
             return ConversationHandler.END
 
         target_id = selected["user_id"]
+        primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
+        if int(target_id) == int(primary_owner_id):
+            await query.answer("❌ Impossible de révoquer le propriétaire principal.", show_alert=True)
+            return ConversationHandler.END
+
         try:
             with self.db_manager.transaction() as cursor:
                 cursor.execute("DELETE FROM admins WHERE user_id = %s", (target_id,))

@@ -98,13 +98,14 @@ class InterfaceManager:
         if user_role == "owner":
             message = "👑 <b>Paramètres Propriétaire (Super-Admin)</b>\n\nOptions de contrôle global du service :"
             keyboard = [
-                [InlineKeyboardButton("🤖 GESTION DU SERVICE", callback_data="gerer_bot")],
-                [InlineKeyboardButton("👥 ÉQUIPE STAFF (Opérateurs)", callback_data="gerer_staff")],
-                [InlineKeyboardButton("🛡️ MANAGERS (Admins)", callback_data="gerer_admins")],
-                [InlineKeyboardButton("⭐ GESTION DES CLIENTS VIP", callback_data="gerer_vips")],
-                [InlineKeyboardButton("📦 ARCHIVES GÉNÉRALES", callback_data="admin_global_archives")],
-                [InlineKeyboardButton("📊 STATISTIQUES GLOBALES", callback_data="bot_stats")],
-                [InlineKeyboardButton("🔔 NOTIFICATIONS STAFF & RAPPELS", callback_data="menu_notifs")],
+                [InlineKeyboardButton("🤖 GESTION DU BOT", callback_data="gerer_bot")],
+                [InlineKeyboardButton("👥 PIÈGEURS", callback_data="gerer_staff")],
+                [InlineKeyboardButton("🛡️ ADMINS", callback_data="gerer_admins")],
+                [InlineKeyboardButton("⭐ VIP", callback_data="gerer_vips")],
+                [InlineKeyboardButton("💳 PAIEMENTS", callback_data="staff_payment_settings")],
+                [InlineKeyboardButton("📦 ARCHIVES", callback_data="admin_global_archives")],
+                [InlineKeyboardButton("📊 STATISTIQUES", callback_data="bot_stats")],
+                [InlineKeyboardButton("🔔 NOTIFICATIONS & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
             ]
             if is_vip:
@@ -130,6 +131,7 @@ class InterfaceManager:
                 keyboard.append([InlineKeyboardButton("📊 STATISTIQUES GLOBALES", callback_data="bot_stats")])
 
             keyboard.extend([
+                [InlineKeyboardButton("💳 MES MODES DE PAIEMENT ACCEPTÉS", callback_data="staff_payment_settings")],
                 [InlineKeyboardButton("🔔 NOTIFICATIONS STAFF & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
             ])
@@ -152,6 +154,7 @@ class InterfaceManager:
             keyboard = [
                 [InlineKeyboardButton("📊 MON PROFIL & PERFORMANCES", callback_data=f"profil_admin_{user_id}")],
                 [InlineKeyboardButton(pause_btn_text, callback_data=pause_cb)],
+                [InlineKeyboardButton("💳 MES MODES DE PAIEMENT ACCEPTÉS", callback_data="staff_payment_settings")],
                 [InlineKeyboardButton("🔔 NOTIFICATIONS STAFF & RAPPELS", callback_data="menu_notifs")],
                 [InlineKeyboardButton("🏷️ MODIFIER MON ALIAS", callback_data="modifier_alias")],
                 [InlineKeyboardButton("👑 CONTACTER L'ADMINISTRATION", callback_data="contacter_owner")],
@@ -173,6 +176,28 @@ class InterfaceManager:
             keyboard.append([InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")])
 
         return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU MODES DE PAIEMENT DU STAFF ==========
+
+    def get_staff_payment_settings_menu(self, staff_id: int):
+        """Affiche les bascules de moyens de paiement pour l'opérateur."""
+        methods = self.db_manager.get_staff_payment_methods(staff_id)
+        st_stars = "✅ ACTIF" if methods["accept_stars"] else "❌ INACTIF"
+        st_direct = "✅ ACTIF" if methods["accept_direct"] else "❌ INACTIF"
+
+        text = (
+            "💳 <b>Modes de Paiement Acceptés</b>\n\n"
+            "Configurez les moyens de règlement proposés à vos clients lorsqu'ils paient leurs dossiers prioritaires :\n\n"
+            f"• <b>Telegram Stars :</b> {st_stars}\n"
+            f"• <b>Paiement direct (PayPal, virement, etc.) :</b> {st_direct}\n\n"
+            "<i>Note : Vous devez toujours conserver au moins un mode de paiement actif.</i>"
+        )
+        keyboard = [
+            [InlineKeyboardButton(f"⭐ Telegram Stars : {st_stars}", callback_data="toggle_pay_staff_accept_stars")],
+            [InlineKeyboardButton(f"💬 Paiement direct : {st_direct}", callback_data="toggle_pay_staff_accept_direct")],
+            [InlineKeyboardButton("🔙 Retour aux paramètres", callback_data="parametres")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
 
     # ========== SOUS-MENU GÉRER LE SERVICE (Owner Only) ==========
 
@@ -208,11 +233,39 @@ class InterfaceManager:
             [InlineKeyboardButton("🎛️ CANAUX & ORIENTATIONS (ON/OFF)", callback_data="menu_channels")],
             [InlineKeyboardButton("⚙️ LIMITES & QUOTAS", callback_data="menu_limits")],
             [InlineKeyboardButton("⏱️ DÉLAIS & ARCHIVAGE", callback_data="menu_delais")],
+            [InlineKeyboardButton("📢 ADHÉSION OBLIGATOIRE (GROUPE)", callback_data="menu_cfg_group")],
             [InlineKeyboardButton("🛠️ MAINTENANCE SYSTÈME", callback_data="maintenance")],
             [InlineKeyboardButton("🔙 Retour", callback_data="parametres")]
         ]
 
         return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU ADHÉSION OBLIGATOIRE GROUPE (Owner Only) ==========
+
+    def get_group_subscription_config_menu(self):
+        """Menu interactif de configuration de l'adhésion obligatoire."""
+        is_enabled = self.db_manager.is_required_group_enabled()
+        group_id = self.db_manager.get_required_group_id()
+        link = self.db_manager.get_group_subscription_link()
+
+        statut_badge = "🟢 ACTIVE" if is_enabled else "🔴 DÉSACTIVÉE"
+        toggle_btn_label = "🔴 Désactiver l'obligation" if is_enabled else "🟢 Activer l'obligation"
+        gid_str = f"<code>{group_id}</code>" if group_id != 0 else "<i>Non configuré (0)</i>"
+
+        text = (
+            "📢 <b>Configuration de l'Adhésion Obligatoire</b>\n\n"
+            f"• <b>État :</b> {statut_badge}\n"
+            f"• <b>Chat ID du groupe :</b> {gid_str}\n"
+            f"• <b>Lien / Bot d'inscription :</b> <code>{html.escape(link)}</code>\n\n"
+            "<i>Lorsque l'option est active, tout utilisateur non-membre du groupe est bloqué tant qu'il n'a pas validé son inscription.</i>"
+        )
+        keyboard = [
+            [InlineKeyboardButton(toggle_btn_label, callback_data="toggle_cfg_group_enabled")],
+            [InlineKeyboardButton("🆔 Modifier l'ID du groupe", callback_data="set_cfg_group_id")],
+            [InlineKeyboardButton("🔗 Modifier le Lien / Bot", callback_data="set_cfg_group_link")],
+            [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
 
     # ========== SOUS-MENU CANAUX & COMBINAISONS (Toggles ON/OFF) ==========
 
@@ -528,11 +581,13 @@ class InterfaceManager:
             "start_menu": lambda: self.get_start_interface(user_id, first_name),
             "gerer_demandes": self.get_gerer_demandes_menu,
             "parametres": lambda: self.get_parametres_menu(user_id),
+            "staff_payment_settings": lambda: self.get_staff_payment_settings_menu(user_id),
             "gerer_staff": self.get_gerer_staff_menu,
             "gerer_admins": self.get_gerer_admins_menu,
             "gerer_vips": self.get_gerer_vips_menu,
             "menu_vip_shop": lambda: self.get_vip_shop_menu(is_vip=is_vip),
             "gerer_bot": self.get_gerer_bot_menu,
+            "menu_cfg_group": self.get_group_subscription_config_menu,
             "menu_channels": self.get_channels_menu,
             "menu_limits": self.get_limits_menu,
         }
