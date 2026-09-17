@@ -1231,6 +1231,55 @@ class DatabaseManager:
             logger.error("Erreur modification montant demande %s : %s", demande_id, exc)
             return False, "Erreur technique lors de la mise à jour."
 
+    def upgrade_demande_to_prioritaire(self, demande_id: int, user_id: int, montant: float) -> Tuple[bool, str]:
+        """Convertit une demande standard en prioritaire avec un montant défini (compatible Client, Staff et Owner)."""
+        try:
+            val_montant = round(float(montant), 2)
+            if val_montant <= 0:
+                return False, "Le montant doit être supérieur à 0 €."
+
+            uid = int(user_id)
+            is_management = self.is_owner(uid) or self.is_admin(uid)
+
+            with self.transaction() as cursor:
+                # Si c'est l'owner ou un admin, pas besoin de filtrer strictement par user_id
+                if is_management:
+                    cursor.execute(
+                        "SELECT id, user_id, statut, prioritaire FROM demandes WHERE id = %s",
+                        (int(demande_id),)
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT id, user_id, statut, prioritaire FROM demandes WHERE id = %s AND user_id = %s",
+                        (int(demande_id), uid)
+                    )
+
+                dem = cursor.fetchone()
+                if not dem:
+                    return False, "Demande introuvable ou vous n'avez pas l'autorisation sur ce dossier."
+
+                if dem.get("prioritaire"):
+                    return False, "Cette demande est déjà prioritaire."
+
+                statuts_autorises = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours")
+                if dem.get("statut") not in statuts_autorises:
+                    return False, f"Ce dossier ne peut plus être converti avec le statut '{dem.get('statut')}'."
+
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET prioritaire = TRUE,
+                        montant = %s,
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (val_montant, int(demande_id))
+                )
+            return True, f"Demande convertie en prioritaire ({val_montant:.2f} €)."
+        except Exception as exc:
+            logger.error("Erreur conversion demande prioritaire %s : %s", demande_id, exc)
+            return False, "Erreur technique lors de la conversion."
+
     def get_paid_undelivered_demandes_for_reminder(self) -> List[Dict[str, Any]]:
         """Extrait les demandes prioritaires réussies payées dont les contenus n'ont pas encore été livrés."""
         try:

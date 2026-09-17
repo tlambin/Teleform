@@ -226,6 +226,44 @@ class UserHandlers:
                 )
                 return
 
+            # ==================== CONVERSION EN PRIORITAIRE ====================
+            elif data.startswith("upgrade_prio_"):
+                await query.answer()
+                demande_id = int(data.replace("upgrade_prio_", ""))
+                context.user_data["waiting_upgrade_prio_amount"] = demande_id
+
+                text_prompt = (
+                    f"💎 <b>Conversion en Demande Prioritaire (Dossier #{demande_id})</b>\n\n"
+                    "Indiquez au clavier le <b>montant</b> que vous souhaitez allouer à cette demande (en €) :\n"
+                    "<i>(Les demandes prioritaires sont examinées et traitées en priorité par l'équipe).</i>"
+                )
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Annuler", callback_data="voir_demandes")
+                ]])
+
+                if query.message and query.message.photo:
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=text_prompt,
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+                else:
+                    try:
+                        await query.edit_message_text(text_prompt, parse_mode="HTML", reply_markup=kb)
+                    except Exception:
+                        await context.bot.send_message(
+                            chat_id=query.message.chat_id,
+                            text=text_prompt,
+                            parse_mode="HTML",
+                            reply_markup=kb
+                        )
+                return
+
             # ==================== RÈGLEMENT DEMANDES PRIORITAIRES ====================
             elif data.startswith("pay_stars_prio_"):
                 await query.answer()
@@ -863,6 +901,40 @@ class UserHandlers:
     async def handle_text_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Aiguillage central des messages texte et médias hors commandes."""
         if not update.message:
+            return
+
+        # ==================== CONVERSION DEMANDE EN PRIORITAIRE ====================
+        if update.message.text and context.user_data and context.user_data.get("waiting_upgrade_prio_amount"):
+            demande_id = context.user_data.pop("waiting_upgrade_prio_amount")
+            raw_montant = update.message.text.strip().replace(",", ".")
+
+            try:
+                montant = float(raw_montant)
+                if montant <= 0:
+                    raise ValueError()
+            except ValueError:
+                context.user_data["waiting_upgrade_prio_amount"] = demande_id
+                await update.message.reply_text(
+                    "❌ Veuillez saisir un montant valide supérieur à 0 (ex : <code>15</code> ou <code>20.50</code>) :",
+                    parse_mode="HTML"
+                )
+                return
+
+            user_id = update.effective_user.id
+            ok, msg_result = self.db_manager.upgrade_demande_to_prioritaire(demande_id, user_id, montant)
+
+            if ok:
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes")]
+                ])
+                await update.message.reply_text(
+                    f"🎉 <b>Félicitations !</b>\n\nVotre dossier #{demande_id} est désormais <b>💎 Prioritaire</b> avec un montant de <b>{montant:.2f} €</b>.\n"
+                    "Nos piégeurs traiteront votre demande en priorité !",
+                    parse_mode="HTML",
+                    reply_markup=kb
+                )
+            else:
+                await update.message.reply_text(f"⚠️ {msg_result}")
             return
 
         # ==================== CONFIRMATION ZONE DE DANGER ====================

@@ -700,10 +700,10 @@ class TelegramBot:
             pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_danger_zone|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|limit_.*)$",
         ))
 
-        # Callbacks utilisateurs / clients (mis à jour avec check_subscription et préférences VIP)
+        # Callbacks utilisateurs / clients (avec upgrade_prio_.* inclus)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
-            pattern=r"^(check_subscription|nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|menu_vip_settings|vip_set_assign_.*|vip_pick_auto_staff|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|pay_stars_prio_.*|pay_contact_prio_.*)$",
+            pattern=r"^(check_subscription|nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|menu_vip_settings|vip_set_assign_.*|vip_pick_auto_staff|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|upgrade_prio_.*|pay_stars_prio_.*|pay_contact_prio_.*)$",
         ))
 
         # Réception des messages & médias (formulaires + batch envoi staff + saisie motif + confirmation danger zone)
@@ -714,7 +714,6 @@ class TelegramBot:
 
         # Tâches périodiques en arrière-plan
         if app.job_queue:
-            # 1. Rappels opérationnels périodiques
             app.job_queue.run_repeating(
                 check_and_send_admin_reminders,
                 interval=3600,
@@ -722,7 +721,6 @@ class TelegramBot:
             )
             logger.info("⏰ JobQueue activée : vérification des rappels staff toutes les 3600s.")
 
-            # 2. Auto-archivage des demandes livrées (délai paramétrable)
             app.job_queue.run_repeating(
                 check_and_auto_archive_demandes,
                 interval=3600,
@@ -730,7 +728,6 @@ class TelegramBot:
             )
             logger.info("📦 JobQueue activée : auto-archivage des demandes livrées toutes les 3600s.")
 
-            # 3. Rappels des demandes terminées non livrées (délai paramétrable)
             app.job_queue.run_repeating(
                 check_and_send_delivery_reminders,
                 interval=21600,
@@ -738,7 +735,6 @@ class TelegramBot:
             )
             logger.info("⏰ JobQueue activée : vérification des rappels de livraison toutes les 6h.")
 
-            # 4. Rappel quotidien pour les demandes payées non livrées
             app.job_queue.run_repeating(
                 check_and_send_paid_delivery_reminders,
                 interval=86400,

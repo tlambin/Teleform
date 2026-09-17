@@ -18,7 +18,7 @@ class DemandeManager:
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
-        logger.info("DemandeManager initialisé avec support Annulation, Archives, Rehausse Tarif et Filtrage Paiements")
+        logger.info("DemandeManager initialisé avec support Annulation, Archives, Rehausse Tarif, Conversion Prioritaire et Filtrage Paiements")
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
         """Contrôle les plafonds global et individuel avant création (contourné pour VIP)."""
@@ -269,7 +269,13 @@ class DemandeManager:
             if pay_row:
                 buttons.append(pay_row)
 
-        # 2. Actions sur le dossier selon son avancement
+        # 2. Conversion en Prioritaire pour les demandes Standard encore ouvertes
+        if not is_prio and statut_raw not in ["✅ Réussie", "❌ Annulée", "❌ Abandonnée"]:
+            buttons.append([
+                InlineKeyboardButton("💎 Passer en Prioritaire", callback_data=f"upgrade_prio_{demande_id}")
+            ])
+
+        # 3. Actions sur le dossier selon son avancement
         if not admin_en_charge and ("reçue" in statut_raw.lower() or "recue" in statut_raw.lower()):
             # Demande NON prise en charge : Modification complète et Suppression directe
             buttons.append([
@@ -285,7 +291,7 @@ class DemandeManager:
                 action_row.insert(0, InlineKeyboardButton(f"💰 Rehausser le tarif ({montant:.2f} €)", callback_data=f"modify_{demande_id}"))
             buttons.append(action_row)
 
-        # 3. Boutons de contact et de relance si un opérateur est assigné
+        # 4. Boutons de contact et de relance si un opérateur est assigné
         if admin_en_charge:
             contact_btn = InlineKeyboardButton("💬 Contacter mon référent", callback_data=f"vip_contact_admin_{demande_id}")
             if is_vip or is_prio:
@@ -294,7 +300,7 @@ class DemandeManager:
                 relance_btn = InlineKeyboardButton("🔔 Relancer (1 €)", callback_data=f"remind_admin_pay_{demande_id}")
             buttons.append([contact_btn, relance_btn])
 
-        # 4. Pagination
+        # 5. Pagination
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"nav_page_{page - 1}"))
@@ -304,7 +310,7 @@ class DemandeManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # 5. Actions complémentaires
+        # 6. Actions complémentaires
         can_create, _ = self.check_creation_quota(user_id)
         btn_creation = (
             InlineKeyboardButton("➕ Nouvelle demande", callback_data="new_demande")
