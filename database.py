@@ -2418,6 +2418,54 @@ class DatabaseManager:
             logger.error("Erreur calcul taille base de données : %s", exc)
             return {"total_size_mb": 0.0, "tables": []}
 
+    # ==================== ZONE DE DANGER (PURGES) ====================
+
+    def purge_table_data(self, target: str, owner_id: int) -> bool:
+        """Purger les données d'une table ou de l'ensemble de la base en préservant le propriétaire."""
+        try:
+            with self.transaction() as cursor:
+                if target == "archives":
+                    cursor.execute("DELETE FROM archives")
+
+                elif target == "demandes":
+                    cursor.execute("DELETE FROM demandes_suivi")
+                    cursor.execute("DELETE FROM demandes")
+
+                elif target == "users":
+                    # Conserve uniquement le compte du propriétaire
+                    cursor.execute("DELETE FROM user_preferences WHERE user_id != %s", (owner_id,))
+                    cursor.execute("DELETE FROM users WHERE user_id != %s", (owner_id,))
+
+                elif target == "staff":
+                    # Conserve le propriétaire
+                    cursor.execute("DELETE FROM staff WHERE user_id != %s", (owner_id,))
+
+                elif target == "admins":
+                    # Conserve le propriétaire principal
+                    cursor.execute("DELETE FROM admins WHERE user_id != %s AND is_owner = FALSE", (owner_id,))
+
+                elif target == "totale":
+                    # Purge complète de toutes les tables de données
+                    cursor.execute("DELETE FROM archives")
+                    cursor.execute("DELETE FROM demandes_suivi")
+                    cursor.execute("DELETE FROM demandes")
+                    cursor.execute("DELETE FROM staff WHERE user_id != %s", (owner_id,))
+                    cursor.execute("DELETE FROM admins WHERE user_id != %s AND is_owner = FALSE", (owner_id,))
+                    cursor.execute("DELETE FROM user_preferences WHERE user_id != %s", (owner_id,))
+                    cursor.execute("DELETE FROM users WHERE user_id != %s", (owner_id,))
+
+                else:
+                    logger.warning("Cible de purge inconnue : %s", target)
+                    return False
+
+            self.clear_cache()
+            logger.warning("🚨 PURGE EXÉCUTÉE avec succès sur la cible : %s par owner %s", target, owner_id)
+            return True
+
+        except Exception as exc:
+            logger.error("Erreur lors de la purge de la table '%s' : %s", target, exc, exc_info=True)
+            return False
+
 
 _global_db_manager = None
 

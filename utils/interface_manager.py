@@ -236,10 +236,31 @@ class InterfaceManager:
             [InlineKeyboardButton("📢 ADHÉSION OBLIGATOIRE (GROUPE)", callback_data="menu_cfg_group")],
             [InlineKeyboardButton("🎧 CONTACT SUPPORT", callback_data="menu_cfg_support")],
             [InlineKeyboardButton("🛠️ MAINTENANCE SYSTÈME", callback_data="maintenance")],
+            [InlineKeyboardButton("🚨 ZONE DE DANGER (PURGES)", callback_data="menu_danger_zone")],
             [InlineKeyboardButton("🔙 Retour", callback_data="parametres")]
         ]
 
         return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU ZONE DE DANGER (Owner Only) ==========
+
+    def get_danger_zone_menu(self):
+        """Affiche le menu de la Zone de Danger (Réservé au Propriétaire)."""
+        text = (
+            "🚨 <b>ZONE DE DANGER — SUPPRESSION DE DONNÉES</b>\n\n"
+            "⚠️ <i>Attention : Les actions réalisées ici sont irréversibles et supprimeront définitivement les données ciblées de la base MySQL.</i>\n\n"
+            "Sélectionnez la table ou l'ensemble à purger :"
+        )
+        keyboard = [
+            [InlineKeyboardButton("📦 Effacer les Archives", callback_data="danger_purge_archives")],
+            [InlineKeyboardButton("📋 Effacer les Demandes", callback_data="danger_purge_demandes")],
+            [InlineKeyboardButton("👤 Effacer les Utilisateurs", callback_data="danger_purge_users")],
+            [InlineKeyboardButton("🦈 Effacer le Staff", callback_data="danger_purge_staff")],
+            [InlineKeyboardButton("🛡️ Effacer les Admins", callback_data="danger_purge_admins")],
+            [InlineKeyboardButton("💥 SUPPRESSION TOTALE (TOUT)", callback_data="danger_purge_totale")],
+            [InlineKeyboardButton("🔙 Retour Gestion Service", callback_data="gerer_bot")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
 
     # ========== SOUS-MENU ADHÉSION OBLIGATOIRE GROUPE (Owner Only) ==========
 
@@ -604,6 +625,7 @@ class InterfaceManager:
             "gerer_vips": self.get_gerer_vips_menu,
             "menu_vip_shop": lambda: self.get_vip_shop_menu(is_vip=is_vip),
             "gerer_bot": self.get_gerer_bot_menu,
+            "menu_danger_zone": self.get_danger_zone_menu,
             "menu_cfg_group": self.get_group_subscription_config_menu,
             "menu_cfg_support": self.get_support_config_menu,
             "menu_channels": self.get_channels_menu,

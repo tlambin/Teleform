@@ -682,10 +682,10 @@ class TelegramBot:
         app.add_handler(CommandHandler("toggle_demandes", self.admin_handlers.toggle_demandes))
         app.add_handler(CommandHandler("maintenance", self.admin_handlers.run_maintenance))
 
-        # Aiguillage Gouvernance & Administration (Admin/Owner + Modes Paiement Staff)
+        # Aiguillage Gouvernance & Administration (Admin/Owner + Modes Paiement Staff + Zone de Danger)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|toggle_pay_staff_.*)$",
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*)$",
         ))
 
         # Aiguillage Traitement opérationnel des dossiers (Staff)
@@ -694,10 +694,10 @@ class TelegramBot:
             pattern=r"^(demandes_disponibles|dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|profil_.*|staff_view_demandes_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
         ))
 
-        # Menus d'interface et navigation (avec Paramètres Modes Paiement Staff)
+        # Menus d'interface et navigation (avec Paramètres Modes Paiement Staff + Zone de Danger)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_interface_callbacks,
-            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|limit_.*)$",
+            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|menu_danger_zone|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|limit_.*)$",
         ))
 
         # Callbacks utilisateurs / clients (mis à jour avec check_subscription et préférences VIP)
@@ -706,7 +706,7 @@ class TelegramBot:
             pattern=r"^(check_subscription|nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|menu_vip_settings|vip_set_assign_.*|vip_pick_auto_staff|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|pay_stars_prio_.*|pay_contact_prio_.*)$",
         ))
 
-        # Réception des messages & médias (formulaires + batch envoi staff + saisie motif)
+        # Réception des messages & médias (formulaires + batch envoi staff + saisie motif + confirmation danger zone)
         app.add_handler(MessageHandler(
             (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & ~filters.COMMAND,
             self.handle_incoming_messages,

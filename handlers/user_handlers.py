@@ -739,7 +739,7 @@ class UserHandlers:
             "gerer_bot", "bot_on", "bot_off", "bot_maintenance",
             "menu_channels", "menu_limits", "gerer_vips", "owner_add_vip", "owner_remove_vip",
             "menu_cfg_group", "toggle_cfg_group_enabled", "set_cfg_group_id", "set_cfg_group_link",
-            "menu_cfg_support", "set_cfg_support_contact"
+            "menu_cfg_support", "set_cfg_support_contact", "menu_danger_zone"
         }
         if (data in owner_actions or data.startswith("limit_")) and not self.config.is_admin(user_id):
             await query.answer("❌ Accès réservé aux administrateurs.", show_alert=True)
@@ -864,6 +864,32 @@ class UserHandlers:
         """Aiguillage central des messages texte et médias hors commandes."""
         if not update.message:
             return
+
+        # ==================== CONFIRMATION ZONE DE DANGER ====================
+        if update.message.text and context.user_data and context.user_data.get("waiting_danger_confirmation"):
+            if self.config.is_owner(update.effective_user.id):
+                target = context.user_data.pop("waiting_danger_confirmation")
+                context.user_data.pop("pending_danger_target", None)
+                saisie = update.message.text.strip()
+
+                if saisie == "Effacer":
+                    owner_id = getattr(self.config, "OWNER_ID", 0) or self.db_manager.get_owner_id()
+                    success = self.db_manager.purge_table_data(target, owner_id)
+                    if success:
+                        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚨 Zone de Danger", callback_data="menu_danger_zone")]])
+                        await update.message.reply_text(
+                            f"✅ <b>Purge réussie !</b>\n\nLa table ou cible <code>{target}</code> a été vidée.",
+                            parse_mode="HTML",
+                            reply_markup=kb
+                        )
+                    else:
+                        await update.message.reply_text("❌ Une erreur SQL est survenue lors de l'exécution de la purge.")
+                else:
+                    await update.message.reply_text(
+                        "❌ Mot de confirmation incorrect. L'opération de purge a été <b>annulée</b>.",
+                        parse_mode="HTML"
+                    )
+                return
 
         # Saisie d'une configuration Owner (Groupe obligatoire, Lien, ou Contact Support)
         if update.message.text and context.user_data and context.user_data.get("waiting_owner_input"):

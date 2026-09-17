@@ -289,6 +289,55 @@ class AdminHandlers:
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_cfg_support")]])
             )
 
+        # ==================== ZONE DE DANGER (PURGES - OWNER ONLY) ====================
+        elif data == "menu_danger_zone" and is_owner:
+            await query.answer()
+            context.user_data.pop("waiting_danger_confirmation", None)
+            context.user_data.pop("pending_danger_target", None)
+            msg, kb = self.interface.get_danger_zone_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+
+        elif data.startswith("danger_purge_") and is_owner:
+            await query.answer()
+            target = data.replace("danger_purge_", "")
+            context.user_data["pending_danger_target"] = target
+
+            labels = {
+                "archives": "des archives",
+                "demandes": "des demandes",
+                "users": "des utilisateurs",
+                "staff": "du staff",
+                "admins": "des administrateurs",
+                "totale": "TOTALE (de toute la base de données)",
+            }
+            libelle = labels.get(target, target)
+
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ OUI, continuer", callback_data=f"danger_confirm_yes_{target}")],
+                [InlineKeyboardButton("❌ NON, annuler", callback_data="menu_danger_zone")]
+            ])
+            text_confirm = (
+                f"🚨 <b>CONFIRMATION REQUISE</b>\n\n"
+                f"Êtes-vous sûr de vouloir effacer la table <b>{libelle}</b> ?\n\n"
+                "Cette action est <b>absolument irréversible</b>."
+            )
+            await self._safe_edit_or_send(query, context, text_confirm, reply_markup=kb)
+
+        elif data.startswith("danger_confirm_yes_") and is_owner:
+            await query.answer()
+            target = data.replace("danger_confirm_yes_", "")
+            context.user_data["waiting_danger_confirmation"] = target
+
+            text_step2 = (
+                "✍️ <b>Dernière étape de sécurité</b>\n\n"
+                f"Cible : <code>{target}</code>\n\n"
+                "Pour valider définitivement la suppression, veuillez <b>taper exactement au clavier le mot</b> :\n"
+                "<code>Effacer</code>\n\n"
+                "<i>(Envoyez n'importe quel autre message ou cliquez ci-dessous pour annuler).</i>"
+            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_danger_zone")]])
+            await self._safe_edit_or_send(query, context, text_step2, reply_markup=kb)
+
         # Statistiques
         elif data == "bot_stats" and privs.get("can_view_stats", True):
             await self.stats_manager.show_general_stats(update, context)
