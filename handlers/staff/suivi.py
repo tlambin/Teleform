@@ -20,7 +20,7 @@ class SuiviManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("SuiviManager initialisé avec confirmation de paiement prioritaire")
+        logger.info("SuiviManager initialisé avec confirmation de paiement prioritaire et surveillance")
 
     def _get_sort_settings(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les réglages de tri et filtre de suivi."""
@@ -171,7 +171,6 @@ class SuiviManager:
                 [InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")]
             ])
 
-            # Edition universelle : supporte les messages avec photo ou texte brut
             if query.message and query.message.photo:
                 try:
                     await query.edit_message_caption(
@@ -205,7 +204,7 @@ class SuiviManager:
             await query.answer("❌ Erreur technique.", show_alert=True)
 
     async def _execute_confirm_payment(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Valide la réception des fonds hors Stars et notifie le client."""
+        """Valide la réception des fonds hors Stars, notifie le client et alerte les superviseurs."""
         query = update.callback_query
         staff_id = update.effective_user.id
 
@@ -231,13 +230,17 @@ class SuiviManager:
         if ok:
             req_num = dem.get("request_number", demande_id)
             alias = self.db_manager.get_staff_alias(staff_id)
+            alias_esc = html.escape(str(alias))
+            prenom_esc = html.escape(str(dem.get("prenom") or "la cible"))
+            montant_val = float(dem.get("montant") or 0.0)
+
             await query.answer(f"✅ Paiement de la demande #{req_num} validé !", show_alert=True)
 
-            # Notification envoyée au client
+            # 1. Notification envoyée au client
             try:
                 msg_client = (
                     f"💳 <b>Paiement confirmé (Dossier #{req_num})</b>\n\n"
-                    f"Votre référent <b>{html.escape(str(alias))}</b> a validé la bonne réception de votre règlement.\n"
+                    f"Votre référent <b>{alias_esc}</b> a validé la bonne réception de votre règlement.\n"
                     "L'envoi de vos contenus est désormais débloqué !"
                 )
                 await context.bot.send_message(
@@ -247,6 +250,34 @@ class SuiviManager:
                 )
             except Exception as e_notif:
                 logger.warning("Impossible de notifier le client %s de la validation paiement : %s", dem["user_id"], e_notif)
+
+            # 2. Notification de surveillance aux superviseurs (Admins autorisés + Owner)
+            try:
+                monitors = self.db_manager.get_monitoring_admins()
+                alert_pay = (
+                    f"💰 <b>SURVEILLANCE STAFF — PAIEMENT ENCAISSÉ</b>\n\n"
+                    f"• <b>Opérateur :</b> {alias_esc} (<code>{staff_id}</code>)\n"
+                    f"• <b>Dossier :</b> #{req_num} ({prenom_esc})\n"
+                    f"• <b>Montant encaissé :</b> <code>{montant_val:.2f} €</code>\n"
+                    f"• <b>Mode :</b> Règlement direct validé manuellement."
+                )
+                kb_mon = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📄 Voir la fiche", callback_data=f"retour_texte_{demande_id}")]
+                ])
+
+                for mon_id in monitors:
+                    if int(mon_id) != int(staff_id):
+                        try:
+                            await context.bot.send_message(
+                                chat_id=mon_id,
+                                text=alert_pay,
+                                parse_mode="HTML",
+                                reply_markup=kb_mon
+                            )
+                        except Exception:
+                            pass
+            except Exception as mon_err:
+                logger.warning("Erreur surveillance encaissement staff : %s", mon_err)
 
             await self.show_demandes_suivies_page(update, context, page=0)
         else:

@@ -48,7 +48,7 @@ class AdminHandlers:
         self.bot_manager = BotManager(db_manager, config, self.interface)
         self.staff_manager = StaffManager(db_manager, config, self.interface)
 
-        logger.info("AdminHandlers initialisé avec architecture RBAC, support Archives Générales et Période d'essai.")
+        logger.info("AdminHandlers initialisé avec architecture RBAC, support Archives Générales et Surveillance Staff.")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou envoie un message texte propre."""
@@ -204,7 +204,7 @@ class AdminHandlers:
         user_id = update.effective_user.id
         data = query.data or ""
 
-        # 1. Gestion des modes de paiement acceptés (accessible à tout rôle opérationnel : Staff, Admin, Owner)
+        # 1. Gestion des modes de paiement acceptés
         if data == "staff_payment_settings" and (self.config.is_staff(user_id) or self.config.is_admin(user_id) or self.config.is_owner(user_id)):
             await query.answer()
             text_menu, kb_menu = self.interface.get_staff_payment_settings_menu(user_id)
@@ -533,6 +533,7 @@ class AdminHandlers:
         st_stats = "✅ OUI" if privs.get("can_view_stats") else "❌ NON"
         st_delais = "✅ OUI" if privs.get("can_manage_delais") else "❌ NON"
         st_archives = "✅ OUI" if privs.get("can_view_archives") else "❌ NON"
+        st_monitor = "✅ OUI" if privs.get("can_monitor_staff") else "❌ NON"
         st_vip_status = "✅ OUI" if privs.get("is_vip") else "❌ NON"
         st_owner = "👑 CO-GÉRANT" if privs.get("is_owner") else "🛡️ MANAGER"
 
@@ -547,6 +548,9 @@ class AdminHandlers:
             ],
             [
                 InlineKeyboardButton(f"Archives Générales : {st_archives}", callback_data=f"set_permadmin_{admin_id}_can_view_archives"),
+                InlineKeyboardButton(f"Surveillance Staff : {st_monitor}", callback_data=f"set_permadmin_{admin_id}_can_monitor_staff"),
+            ],
+            [
                 InlineKeyboardButton(f"⭐ Accès VIP : {st_vip_status}", callback_data=f"set_permadmin_{admin_id}_is_vip"),
             ],
         ]
@@ -672,8 +676,8 @@ class AdminHandlers:
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, added_by, date_added)
-                    VALUES (%s, %s, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, %s, NOW())
+                    INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, added_by, date_added)
+                    VALUES (%s, %s, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, %s, NOW())
                     """,
                     (target_id, alias, user_id)
                 )
@@ -708,7 +712,6 @@ class AdminHandlers:
         await query.answer()
 
         try:
-            # Empêcher de lister l'Owner principal dans la suppression
             primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(

@@ -65,7 +65,6 @@ class StaffHandlers:
         if not query or not update.effective_user:
             return
 
-        # Réponse immédiate pour couper net tout chargement infini Telegram
         try:
             await query.answer()
         except Exception:
@@ -74,7 +73,6 @@ class StaffHandlers:
         user_id = update.effective_user.id
         data = query.data or ""
 
-        # Contrôle des droits opérationnels
         if not self.config.is_staff(user_id):
             logger.warning("Tentative d'accès staff refusée pour l'utilisateur %s", user_id)
             return
@@ -199,7 +197,6 @@ class StaffHandlers:
             logger.error("Erreur callback staff '%s' : %s", data, exc, exc_info=True)
             await self._handle_callback_error(query)
 
-    # Alias rétrocompatible
     handle_admin_callbacks = handle_staff_callbacks
 
     # ==================== SUPERVISION ADMIN VERS PIÉGEUR ====================
@@ -265,7 +262,6 @@ class StaffHandlers:
 
             await query.answer(f"✅ Demande #{req_num} acceptée !", show_alert=False)
 
-            # Mise à jour du message du piégeur
             confirm_msg = (
                 f"✅ <b>Mission VIP acceptée (Dossier #{req_num})</b>\n\n"
                 f"Vous avez pris en charge le dossier de <b>{html.escape(str(prenom_cible))}</b>.\n"
@@ -277,7 +273,6 @@ class StaffHandlers:
             ])
             await self._safe_edit_or_reply(query, confirm_msg, reply_markup=kb)
 
-            # Notification au client VIP
             try:
                 vip_user_id = dem["user_id"]
                 notif_vip = (
@@ -334,7 +329,6 @@ class StaffHandlers:
             ])
             await self._safe_edit_or_reply(query, decline_msg, reply_markup=kb)
 
-            # Notification bienveillante au client VIP
             try:
                 vip_user_id = dem["user_id"]
                 notif_vip = (
@@ -354,7 +348,6 @@ class StaffHandlers:
             except Exception as e_notif:
                 logger.warning("Impossible de notifier le client VIP %s du refus : %s", dem.get("user_id"), e_notif)
 
-            # Alerte aux autres membres de l'équipe
             try:
                 prenom_esc = html.escape(dem.get("prenom") or "")
                 nom_esc = html.escape(dem.get("nom") or "")
@@ -615,7 +608,7 @@ class StaffHandlers:
         return True
 
     async def _dispatch_media_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Envoie l'ensemble du lot au destinataire et valide la livraison si applicable."""
+        """Envoie l'ensemble du lot au destinataire, valide la livraison et envoie une copie miroir aux superviseurs."""
         query = update.callback_query
         session = context.user_data.pop("contact_session", None)
 
@@ -706,12 +699,71 @@ class StaffHandlers:
                     reply_markup=user_keyboard
                 )
 
-            # Marquer le contenu comme livré dans la base si l'envoi est destiné au client
+            # Vérification et marquage du contenu comme livré dans la base
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute("SELECT user_id FROM demandes WHERE id = %s", (demande_id,))
+                cursor.execute("SELECT user_id, prenom FROM demandes WHERE id = %s", (demande_id,))
                 d_row = cursor.fetchone()
-            if d_row and d_row.get("user_id") == target_user_id:
+
+            is_client_delivery = bool(d_row and d_row.get("user_id") == target_user_id)
+            if is_client_delivery:
                 self.db_manager.mark_content_delivered(demande_id)
+
+                # ==================== COPIE MIROIR AUX SUPERVISEURS (SURVEILLANCE STAFF) ====================
+                try:
+                    monitors = self.db_manager.get_monitoring_admins()
+                    target_prenom = html.escape(str(d_row.get("prenom") or "la cible"))
+
+                    header_monitor = (
+                        f"👀 <b>SURVEILLANCE STAFF — ENVOI AU CLIENT</b>\n"
+                        f"• <b>Opérateur :</b> {alias_esc} (<code>{admin_id}</code>)\n"
+                        f"• <b>Dossier :</b> #{req_num} ({target_prenom})"
+                        f"{corps}"
+                    )
+
+                    for mon_id in monitors:
+                        if int(mon_id) != int(admin_id):
+                            try:
+                                if visuals:
+                                    for i in range(0, len(visuals), 10):
+                                        batch = visuals[i:i + 10]
+                                        m_group = []
+                                        for idx, item in enumerate(batch):
+                                            cap = header_monitor if (i == 0 and idx == 0) else (html.escape(item["caption"]) if item.get("caption") else None)
+                                            if item["type"] == "photo":
+                                                m_group.append(InputMediaPhoto(media=item["file_id"], caption=cap, parse_mode="HTML" if cap else None))
+                                            elif item["type"] == "video":
+                                                m_group.append(InputMediaVideo(media=item["file_id"], caption=cap, parse_mode="HTML" if cap else None))
+
+                                        if len(m_group) == 1:
+                                            s = m_group[0]
+                                            if isinstance(s, InputMediaPhoto):
+                                                await context.bot.send_photo(chat_id=mon_id, photo=s.media, caption=s.caption, parse_mode="HTML")
+                                            else:
+                                                await context.bot.send_video(chat_id=mon_id, video=s.media, caption=s.caption, parse_mode="HTML")
+                                        else:
+                                            await context.bot.send_media_group(chat_id=mon_id, media=m_group)
+
+                                if docs:
+                                    for i in range(0, len(docs), 10):
+                                        batch = docs[i:i + 10]
+                                        d_group = []
+                                        for idx, item in enumerate(batch):
+                                            cap = header_monitor if (not visuals and i == 0 and idx == 0) else (html.escape(item["caption"]) if item.get("caption") else None)
+                                            d_group.append(InputMediaDocument(media=item["file_id"], caption=cap, parse_mode="HTML" if cap else None))
+
+                                        if len(d_group) == 1:
+                                            await context.bot.send_document(chat_id=mon_id, document=d_group[0].media, caption=d_group[0].caption, parse_mode="HTML")
+                                        else:
+                                            await context.bot.send_media_group(chat_id=mon_id, media=d_group)
+
+                                if not visuals and not docs and texts:
+                                    await context.bot.send_message(chat_id=mon_id, text=header_monitor, parse_mode="HTML")
+
+                            except Exception as mon_send_err:
+                                logger.warning("Échec envoi surveillance à %s : %s", mon_id, mon_send_err)
+
+                except Exception as mon_err:
+                    logger.warning("Erreur lors de la notification de surveillance de livraison : %s", mon_err)
 
             total_items = len(visuals) + len(docs) + len(texts)
             done_text = (

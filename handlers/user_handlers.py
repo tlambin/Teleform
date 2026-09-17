@@ -41,24 +41,67 @@ class UserHandlers:
         if not user:
             return False
 
-        # Exemptions pour l'équipe opérationnelle et la direction
-        if self.config.is_staff(user.id) or self.config.is_admin(user.id) or self.config.is_owner(user.id):
+        # Exemptions pour l'équipe opérationnelle et la direction (Owner, Admins, Staff)
+        owner_id_db = self.db_manager.get_owner_id()
+        if (
+            self.config.is_staff(user.id)
+            or self.config.is_admin(user.id)
+            or self.config.is_owner(user.id)
+            or (owner_id_db and int(user.id) == int(owner_id_db))
+        ):
             return True
 
         # Vérifie si le module d'adhésion obligatoire est activé
         if not self.db_manager.is_required_group_enabled():
             return True
 
-        group_id = self.db_manager.get_required_group_id()
+        raw_group_id = self.db_manager.get_required_group_id()
+        try:
+            group_id = int(raw_group_id)
+        except (ValueError, TypeError):
+            group_id = 0
+
         if not group_id or group_id == 0:
             return True
 
+        # Correction automatique si le préfixe négatif a été oublié pour un supergroupe
+        if group_id > 0 and str(group_id).startswith("100"):
+            group_id = -group_id
+
+        telegram_err = None
+        user_status = None
         try:
             member = await context.bot.get_chat_member(chat_id=group_id, user_id=user.id)
-            if member.status in ("member", "administrator", "creator"):
+            user_status = member.status
+
+            # Statuts valides : Créateur, Admin, Membre standard
+            if user_status in ("member", "administrator", "creator"):
                 return True
+
+            # Membres avec restrictions par défaut dans le supergroupe
+            if user_status == "restricted":
+                is_in_group = getattr(member, "is_member", True)
+                if is_in_group:
+                    return True
+
+            logger.info("Utilisateur %s non validé dans le groupe %s (statut : %s)", user.id, group_id, user_status)
+
         except Exception as exc:
-            logger.warning("Erreur vérification adhésion groupe %s pour %s : %s", group_id, user.id, exc)
+            telegram_err = str(exc)
+            logger.error("💥 Erreur get_chat_member (chat_id=%s, user_id=%s) : %s", group_id, user.id, exc)
+
+        # Si l'utilisateur clique sur le bouton de vérification, afficher le détail technique en cas d'échec
+        if update.callback_query and update.callback_query.data == "check_subscription":
+            if telegram_err:
+                await update.callback_query.answer(
+                    f"⚠️ Erreur Telegram : {telegram_err[:180]} (Chat ID : {group_id})",
+                    show_alert=True
+                )
+            elif user_status:
+                await update.callback_query.answer(
+                    f"❌ Non détecté dans le groupe (Statut Telegram : {user_status}). Rejoignez le groupe avant de valider.",
+                    show_alert=True
+                )
 
         raw_link = self.db_manager.get_group_subscription_link()
         if raw_link.startswith("@"):
@@ -131,9 +174,8 @@ class UserHandlers:
         data = query.data
         user_id = query.from_user.id
 
-        # Vérification d'adhésion interactive
+        # 1. Vérification d'adhésion interactive
         if data == "check_subscription":
-            await query.answer()
             if await self._check_required_membership(update, context):
                 await query.answer("✅ Merci pour votre adhésion !", show_alert=True)
                 welcome_msg, reply_markup = self.interface.get_start_interface(user_id, query.from_user.first_name)
@@ -141,16 +183,14 @@ class UserHandlers:
                     await query.edit_message_text(welcome_msg, parse_mode="HTML", reply_markup=reply_markup)
                 except Exception:
                     await query.message.reply_text(welcome_msg, parse_mode="HTML", reply_markup=reply_markup)
-            else:
-                await query.answer("❌ Vous n'avez pas encore rejoint le groupe requis.", show_alert=True)
             return
 
-        # Contrôle préalable d'adhésion obligatoire
+        # 2. Contrôle préalable d'adhésion obligatoire
         if not await self._check_required_membership(update, context):
             await query.answer("❌ Adhésion obligatoire non validée.", show_alert=True)
             return
 
-        # 1. Contrôle global du service
+        # 3. Contrôle global du service
         if data.startswith(("form_", "nav_", "new_demande")) and not self.config.are_demandes_enabled():
             await query.answer()
             await query.edit_message_text(
@@ -164,14 +204,14 @@ class UserHandlers:
             return
 
         try:
-            # 2. Bouton d'information quota atteint
+            # Bouton d'information quota atteint
             if data == "quota_reached_info":
                 _, reason = self.demande.check_creation_quota(user_id)
                 clean_reason = reason.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")[:150]
                 await query.answer(clean_reason, show_alert=True)
                 return
 
-            # 3. Création d'une nouvelle demande
+            # Création d'une nouvelle demande
             elif data == "new_demande":
                 await query.answer()
                 can_create, reason_msg = self.demande.check_creation_quota(user_id)
@@ -187,12 +227,12 @@ class UserHandlers:
                     return
                 await self.formulaire.navigation.handle_form_navigation(update, context)
 
-            # 4. Consultation des archives de l'utilisateur
+            # Consultation des archives de l'utilisateur
             elif data == "mes_archives" or data.startswith("user_arch_page_"):
                 await self.demande.handle_navigation(update, context, data)
                 return
 
-            # 5. Boutique VIP Telegram Stars & Réglages VIP
+            # Boutique VIP Telegram Stars & Réglages VIP
             elif data == "menu_vip_shop":
                 await query.answer()
                 is_vip_user = self.db_manager.is_user_vip(user_id)
@@ -386,7 +426,7 @@ class UserHandlers:
                     await query.edit_message_text(contact_text, parse_mode="HTML", reply_markup=contact_kb)
                 return
 
-            # 6. Relance hebdomadaire gratuite
+            # Relance hebdomadaire gratuite
             elif data.startswith("remind_admin_free_"):
                 demande_id = int(data.replace("remind_admin_free_", ""))
                 can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
@@ -414,7 +454,7 @@ class UserHandlers:
                 await self._dispatch_admin_reminder(update, context, demande_id, is_paid_boost=False)
                 return
 
-            # 7. Relance payante
+            # Relance payante
             elif data.startswith("remind_admin_pay_"):
                 demande_id = int(data.replace("remind_admin_pay_", ""))
                 can_remind, err_msg = self.db_manager.can_send_demande_reminder(demande_id)
@@ -455,7 +495,7 @@ class UserHandlers:
                 )
                 return
 
-            # 8. Contacter mon référent (VIP & Standard dès prise en charge)
+            # Contacter mon référent
             elif data.startswith(("vip_contact_admin_", "contact_admin_")):
                 demande_id = int(data.split("_")[-1])
                 with self.db_manager.get_cursor() as cursor:
@@ -511,7 +551,7 @@ class UserHandlers:
                 await self.formulaire.handle_vip_admin_choice(update, context)
                 return
 
-            # 9. Reprise suite à un abandon
+            # Reprise suite à un abandon
             elif data.startswith("reprendre_demande_"):
                 await query.answer()
                 demande_id = int(data.replace("reprendre_demande_", ""))
@@ -540,7 +580,7 @@ class UserHandlers:
                     await query.answer("❌ Erreur technique lors de la remise en file d'attente.", show_alert=True)
                 return
 
-            # 10. Archivage par l'utilisateur
+            # Archivage par l'utilisateur
             elif data.startswith("archiver_demande_"):
                 await query.answer()
                 demande_id = int(data.replace("archiver_demande_", ""))
@@ -559,7 +599,7 @@ class UserHandlers:
                     await query.answer("❌ Erreur technique lors de l'archivage.", show_alert=True)
                 return
 
-            # 11. Protocole d'annulation client soumis au piégeur
+            # Protocole d'annulation client soumis au piégeur
             elif data.startswith("ask_cancel_demande_"):
                 await query.answer()
                 demande_id = int(data.replace("ask_cancel_demande_", ""))
@@ -587,7 +627,7 @@ class UserHandlers:
                     await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=kb)
                 return
 
-            # 12. Décision du piégeur : Acceptation
+            # Décision du piégeur : Acceptation
             elif data.startswith("accept_cancel_"):
                 await query.answer()
                 demande_id = int(data.replace("accept_cancel_", ""))
@@ -614,7 +654,7 @@ class UserHandlers:
                     await query.answer("❌ Demande introuvable ou déjà traitée.", show_alert=True)
                 return
 
-            # 13. Décision du piégeur : Refus
+            # Décision du piégeur : Refus
             elif data.startswith("refuse_cancel_"):
                 await query.answer()
                 demande_id = int(data.replace("refuse_cancel_", ""))
@@ -933,6 +973,94 @@ class UserHandlers:
                     parse_mode="HTML",
                     reply_markup=kb
                 )
+
+                # Notifications automatiques suite à la conversion
+                try:
+                    with self.db_manager.get_cursor() as cursor:
+                        cursor.execute(
+                            "SELECT request_number, prenom, orientation, instagram, snapchat, admin_en_charge FROM demandes WHERE id = %s",
+                            (int(demande_id),)
+                        )
+                        d_info = cursor.fetchone()
+
+                    if d_info:
+                        req_num = d_info.get("request_number") or demande_id
+                        prenom = html.escape(str(d_info.get("prenom") or "la cible"))
+                        admin_id = d_info.get("admin_en_charge")
+
+                        # Cas 1 : La demande est déjà prise en charge -> alerte au référent
+                        if admin_id:
+                            msg_referent = (
+                                f"💎 <b>DEMANDE BOOSTÉE EN PRIORITAIRE !</b>\n\n"
+                                f"Le client a converti le dossier <b>#{req_num}</b> ({prenom}) en prioritaire.\n"
+                                f"💰 <b>Nouveau montant convenu :</b> <code>{montant:.2f} €</code>"
+                            )
+                            kb_ref = InlineKeyboardMarkup([
+                                [InlineKeyboardButton("📄 Voir le dossier", callback_data=f"retour_texte_{demande_id}")]
+                            ])
+                            try:
+                                await context.bot.send_message(
+                                    chat_id=admin_id,
+                                    text=msg_referent,
+                                    parse_mode="HTML",
+                                    reply_markup=kb_ref
+                                )
+                            except Exception as e_notif:
+                                logger.warning("Impossible de notifier le référent %s de l'upgrade : %s", admin_id, e_notif)
+
+                        # Cas 2 : La demande est libre en file d'attente -> diffusion staff
+                        else:
+                            ori = d_info.get("orientation", "hetero")
+                            has_insta = bool(d_info.get("instagram"))
+                            has_snap = bool(d_info.get("snapchat"))
+
+                            staff_members = self.config.get_all_staff()
+                            for st_id in staff_members:
+                                if self.db_manager.is_staff_paused(st_id):
+                                    continue
+
+                                perms = self.db_manager.get_staff_permissions(st_id)
+                                p_ori = perms.get("perm_orientation", "all")
+                                p_res = perms.get("perm_reseaux", "all")
+
+                                if p_ori != "all" and p_ori != ori and ori != "bi":
+                                    continue
+                                if p_res == "insta" and not has_insta:
+                                    continue
+                                if p_res == "snap" and not has_snap:
+                                    continue
+
+                                prefs = self.db_manager.get_admin_preferences(st_id)
+                                notif_mode = prefs.get("notif_new_mode", "sound")
+                                if notif_mode == "off":
+                                    continue
+
+                                is_silent = (notif_mode == "silent")
+                                msg_staff = (
+                                    f"💎 <b>DEMANDE DEVENUE PRIORITAIRE ! (File d'attente)</b>\n\n"
+                                    f"Le dossier <b>#{req_num}</b> ({prenom}) est maintenant prioritaire.\n"
+                                    f"💰 <b>Montant proposé :</b> <code>{montant:.2f} €</code>\n\n"
+                                    "Disponible immédiatement dans les demandes ouvertes."
+                                )
+                                kb_staff = InlineKeyboardMarkup([
+                                    [InlineKeyboardButton("⚡ Prendre en charge", callback_data=f"suivre_demande_{demande_id}")],
+                                    [InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")]
+                                ])
+
+                                try:
+                                    await context.bot.send_message(
+                                        chat_id=st_id,
+                                        text=msg_staff,
+                                        parse_mode="HTML",
+                                        reply_markup=kb_staff,
+                                        disable_notification=is_silent
+                                    )
+                                except Exception:
+                                    pass
+
+                except Exception as exc_notif:
+                    logger.error("Erreur lors de la diffusion des alertes upgrade prio : %s", exc_notif)
+
             else:
                 await update.message.reply_text(f"⚠️ {msg_result}")
             return

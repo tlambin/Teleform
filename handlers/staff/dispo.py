@@ -22,7 +22,7 @@ class DispoManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("DispoManager initialisé avec support Anti-Auto-Prise, Suppression Admin & Mode Période d'essai")
+        logger.info("DispoManager initialisé avec support Anti-Auto-Prise, Suppression Admin, Surveillance et Mode Période d'essai")
 
     def _get_active_filters(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les filtres de la session utilisateur."""
@@ -163,7 +163,7 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=page)
 
     async def assign_demande_to_admin(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Prend en charge la demande : bascule à '⏳ En attente' et avertit le demandeur."""
+        """Prend en charge la demande : bascule à '⏳ En attente', avertit le client et les administrateurs superviseurs."""
         query = update.callback_query
         staff_id = update.effective_user.id
 
@@ -239,6 +239,7 @@ class DispoManager:
             staff_alias = self.db_manager.get_staff_alias(staff_id)
             req_num = demande.get("request_number", demande_id)
 
+            # 1. Notification au client
             await self.notifs_manager.send_status_update_notification(
                 context=context,
                 user_id=demande["user_id"],
@@ -251,6 +252,36 @@ class DispoManager:
                 reussie_substatus=None,
                 admin_alias=staff_alias,
             )
+
+            # 2. Notification aux administrateurs superviseurs (Surveillance Staff)
+            try:
+                monitors = self.db_manager.get_monitoring_admins()
+                target_prenom = html.escape(str(demande.get("prenom") or "la cible"))
+                alias_esc = html.escape(str(staff_alias))
+
+                alert_text = (
+                    f"👀 <b>SURVEILLANCE STAFF — PRISE EN CHARGE</b>\n\n"
+                    f"• <b>Opérateur :</b> {alias_esc} (<code>{staff_id}</code>)\n"
+                    f"• <b>Dossier :</b> #{req_num} ({target_prenom})\n"
+                    f"• <b>Statut :</b> <code>⏳ En attente</code>"
+                )
+                kb_monitor = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📄 Ouvrir la fiche", callback_data=f"retour_texte_{demande_id}")]
+                ])
+
+                for mon_id in monitors:
+                    if int(mon_id) != int(staff_id):
+                        try:
+                            await context.bot.send_message(
+                                chat_id=mon_id,
+                                text=alert_text,
+                                parse_mode="HTML",
+                                reply_markup=kb_monitor
+                            )
+                        except Exception:
+                            pass
+            except Exception as mon_err:
+                logger.warning("Erreur notification surveillance staff : %s", mon_err)
 
             await query.answer(f"✅ Demande #{req_num} prise en charge !", show_alert=False)
 
@@ -492,7 +523,6 @@ class DispoManager:
 
         # ==================== RESTRICTION PÉRIODE D'ESSAI ====================
         if is_trial:
-            # 1. Vérifier si le membre a déjà une demande test en cours
             active_demandes = self.db_manager.get_staff_active_demandes(user_id)
             if active_demandes:
                 d = active_demandes[0]
@@ -509,7 +539,6 @@ class DispoManager:
                 await self._render_clean_text(query, context, msg, kb)
                 return
 
-            # 2. Tirage au sort d'une demande unique compatible
             demande = self.db_manager.get_random_demande_for_trial(user_id)
             if not demande:
                 msg = (

@@ -206,6 +206,7 @@ class DatabaseManager:
                 can_view_stats BOOLEAN DEFAULT TRUE,
                 can_manage_delais BOOLEAN DEFAULT FALSE,
                 can_view_archives BOOLEAN DEFAULT FALSE,
+                can_monitor_staff BOOLEAN DEFAULT FALSE,
                 added_by BIGINT DEFAULT NULL,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -328,6 +329,7 @@ class DatabaseManager:
             ("admins", "can_view_stats", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_manage_delais", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_view_archives", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "can_monitor_staff", "BOOLEAN DEFAULT FALSE"),
             ("demandes", "orientation", "VARCHAR(16) DEFAULT 'hetero'"),
             ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
@@ -437,9 +439,9 @@ class DatabaseManager:
                     owner_alias = self.get_config_value("owner_alias", "Propriétaire")
                     cursor.execute(
                         """
-                        INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives)
-                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
-                        ON DUPLICATE KEY UPDATE is_owner = TRUE, is_vip = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE
+                        INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff)
+                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+                        ON DUPLICATE KEY UPDATE is_owner = TRUE, is_vip = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE, can_monitor_staff = TRUE
                         """,
                         (owner_id, owner_alias)
                     )
@@ -590,7 +592,7 @@ class DatabaseManager:
             return False
 
     def get_admin_privileges(self, user_id: int) -> Dict[str, bool]:
-        """Retourne les permissions granulaires d'un administrateur (incluant le flag is_vip)."""
+        """Retourne les permissions granulaires d'un administrateur."""
         if self.is_owner(user_id):
             return {
                 "is_owner": True,
@@ -600,13 +602,14 @@ class DatabaseManager:
                 "can_view_stats": True,
                 "can_manage_delais": True,
                 "can_view_archives": True,
+                "can_monitor_staff": True,
             }
 
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives
+                    SELECT is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff
                     FROM admins WHERE user_id = %s
                     """,
                     (int(user_id),)
@@ -621,6 +624,7 @@ class DatabaseManager:
                         "can_view_stats": bool(row["can_view_stats"]),
                         "can_manage_delais": bool(row["can_manage_delais"]),
                         "can_view_archives": bool(row.get("can_view_archives", False)),
+                        "can_monitor_staff": bool(row.get("can_monitor_staff", False)),
                     }
         except Exception as exc:
             logger.error("Erreur lecture privilèges admin %s : %s", user_id, exc)
@@ -633,13 +637,14 @@ class DatabaseManager:
             "can_view_stats": False,
             "can_manage_delais": False,
             "can_view_archives": False,
+            "can_monitor_staff": False,
         }
 
     def update_admin_privilege(self, user_id: int, priv_key: str, value: bool) -> bool:
-        """Met à jour un privilège granulaire d'un administrateur (y compris is_vip)."""
+        """Met à jour un privilège granulaire d'un administrateur."""
         allowed_keys = {
             "can_manage_staff", "can_manage_vips", "can_view_stats",
-            "can_manage_delais", "can_view_archives", "is_vip"
+            "can_manage_delais", "can_view_archives", "can_monitor_staff", "is_vip"
         }
         if priv_key not in allowed_keys:
             return False
@@ -653,6 +658,22 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur mise à jour privilège admin %s (%s) : %s", user_id, priv_key, exc)
             return False
+
+    def get_monitoring_admins(self) -> List[int]:
+        """Retourne la liste des admins autorisés à surveiller l'activité du staff (Owners + Admins avec droit)."""
+        admins = set()
+        primary_owner = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
+        if primary_owner:
+            admins.add(int(primary_owner))
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT user_id FROM admins WHERE is_owner = TRUE OR can_monitor_staff = TRUE")
+                for r in cursor.fetchall():
+                    admins.add(int(r["user_id"]))
+        except Exception as exc:
+            logger.error("Erreur récupération admins moniteurs : %s", exc)
+        return list(admins)
 
     # ==================== TABLE CONFIG DYNAMIQUE ====================
 
@@ -1184,11 +1205,7 @@ class DatabaseManager:
             return False
 
     def update_demande_montant(self, demande_id: int, nouveau_montant: float) -> Tuple[bool, str]:
-        """Met à jour le montant d'une demande prioritaire.
-
-        - Si la demande est '📥 Reçue' ou '🎯 Assignée (VIP)' : modification libre (> 0).
-        - Si la demande est '⏳ En attente' ou '🔄 En cours' : augmentation stricte (prix plancher).
-        """
+        """Met à jour le montant d'une demande prioritaire."""
         try:
             nouveau_montant = round(float(nouveau_montant), 2)
             if nouveau_montant <= 0:
@@ -1213,7 +1230,6 @@ class DatabaseManager:
 
                 montant_actuel = float(dem.get("montant") or 0.0)
 
-                # Règle de prix plancher : uniquement si la demande est déjà prise en charge
                 if statut_actuel in ("⏳ En attente", "🔄 En cours") and nouveau_montant <= montant_actuel:
                     return False, f"La demande est déjà prise en charge : vous ne pouvez qu'augmenter le tarif (minimum : {montant_actuel:.2f} €)."
 
@@ -1232,17 +1248,16 @@ class DatabaseManager:
             return False, "Erreur technique lors de la mise à jour."
 
     def upgrade_demande_to_prioritaire(self, demande_id: int, user_id: int, montant: float) -> Tuple[bool, str]:
-        """Convertit une demande standard en prioritaire avec un montant défini (compatible Client, Staff et Owner)."""
+        """Convertit une demande standard en prioritaire avec montant (compatible Client, Staff et Owner)."""
         try:
             val_montant = round(float(montant), 2)
             if val_montant <= 0:
                 return False, "Le montant doit être supérieur à 0 €."
 
             uid = int(user_id)
-            is_management = self.is_owner(uid) or self.is_admin(uid)
+            is_management = self.is_owner(uid) or self.is_admin(uid) or self.is_staff(uid)
 
             with self.transaction() as cursor:
-                # Si c'est l'owner ou un admin, pas besoin de filtrer strictement par user_id
                 if is_management:
                     cursor.execute(
                         "SELECT id, user_id, statut, prioritaire FROM demandes WHERE id = %s",
@@ -2481,20 +2496,16 @@ class DatabaseManager:
                     cursor.execute("DELETE FROM demandes")
 
                 elif target == "users":
-                    # Conserve uniquement le compte du propriétaire
                     cursor.execute("DELETE FROM user_preferences WHERE user_id != %s", (owner_id,))
                     cursor.execute("DELETE FROM users WHERE user_id != %s", (owner_id,))
 
                 elif target == "staff":
-                    # Conserve le propriétaire
                     cursor.execute("DELETE FROM staff WHERE user_id != %s", (owner_id,))
 
                 elif target == "admins":
-                    # Conserve le propriétaire principal
                     cursor.execute("DELETE FROM admins WHERE user_id != %s AND is_owner = FALSE", (owner_id,))
 
                 elif target == "totale":
-                    # Purge complète de toutes les tables de données
                     cursor.execute("DELETE FROM archives")
                     cursor.execute("DELETE FROM demandes_suivi")
                     cursor.execute("DELETE FROM demandes")

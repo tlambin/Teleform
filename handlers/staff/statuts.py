@@ -16,7 +16,7 @@ class StatutsManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("StatutsManager initialisé avec support Staff/Admin & Dénouement Période d'essai")
+        logger.info("StatutsManager initialisé avec support Staff/Admin, Surveillance et Dénouement Période d'essai")
 
     async def show_status_change_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Affiche le panneau principal de paramétrage du statut avec interrupteurs et sous-options."""
@@ -226,7 +226,7 @@ class StatutsManager:
         nouveau_statut: str,
         reussie_substatus: str = None
     ):
-        """Met à jour le statut, actualise les suivis, alerte le demandeur et valide l'essai si réussi."""
+        """Met à jour le statut, actualise les suivis, alerte le demandeur et informe les administrateurs superviseurs."""
         staff_id = query.from_user.id
         staff_alias = self.db_manager.get_staff_alias(staff_id)
 
@@ -306,6 +306,43 @@ class StatutsManager:
             cursor.execute("SELECT * FROM demandes WHERE id = %s", (demande_id,))
             demande_fresh = cursor.fetchone()
 
+        # ==================== ALERTE SURVEILLANCE STAFF (ADMINS) ====================
+        try:
+            monitors = self.db_manager.get_monitoring_admins()
+            req_num_mon = html.escape(str(demande.get("request_number", demande_id)))
+            target_prenom = html.escape(str(demande.get("prenom") or "la cible"))
+            staff_alias_esc = html.escape(str(staff_alias))
+            nouveau_statut_display = self.db_manager.format_statut_display(nouveau_statut, new_diff, reussie_substatus)
+
+            alert_text = (
+                f"👀 <b>SURVEILLANCE STAFF — CHANGEMENT DE STATUT</b>\n\n"
+                f"• <b>Opérateur :</b> {staff_alias_esc} (<code>{staff_id}</code>)\n"
+                f"• <b>Dossier :</b> #{req_num_mon} ({target_prenom})\n"
+                f"• <b>Nouveau statut :</b> <code>{html.escape(nouveau_statut_display)}</code>"
+            )
+
+            if bool(demande_fresh.get("prioritaire")):
+                montant_mon = float(demande_fresh.get("montant") or 0.0)
+                alert_text += f"\n• <b>Montant :</b> <code>{montant_mon:.2f} €</code>"
+
+            kb_mon = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📄 Voir le dossier", callback_data=f"retour_texte_{demande_id}")]
+            ])
+
+            for mon_id in monitors:
+                if int(mon_id) != int(staff_id):
+                    try:
+                        await context.bot.send_message(
+                            chat_id=mon_id,
+                            text=alert_text,
+                            parse_mode="HTML",
+                            reply_markup=kb_mon
+                        )
+                    except Exception:
+                        pass
+        except Exception as mon_err:
+            logger.warning("Erreur notification surveillance staff changement statut : %s", mon_err)
+
         await query.answer("✅ Statut mis à jour !")
         if query.message and query.message.photo:
             await self._update_photo_caption(query, demande_fresh)
@@ -334,7 +371,6 @@ class StatutsManager:
 
         # Cas 2 : Réussie Terminée
         elif nouveau_statut == "✅ Réussie" and reussie_substatus == "terminee":
-            # Sous-cas A : Demande prioritaire en attente de paiement
             if is_prio and montant > 0 and p_statut == "en_attente":
                 prio_wait_text = (
                     f"💎 <b>Demande prioritaire #{req_num} réussie !</b>\n\n"
@@ -353,7 +389,6 @@ class StatutsManager:
                 ])
                 await context.bot.send_message(chat_id=staff_id, text=prio_wait_text, parse_mode="HTML", reply_markup=prio_wait_kb)
 
-            # Sous-cas B : Demande standard ou déjà payée, sans contenu livré
             elif not has_delivered:
                 remind_text = (
                     f"⚠️ <b>Action requise (Demande #{req_num})</b>\n\n"
@@ -367,7 +402,6 @@ class StatutsManager:
                 ])
                 await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
 
-            # Sous-cas C : Déjà livrée, prête pour l'archivage
             else:
                 remind_text = (
                     f"📦 <b>Dossier #{req_num} prêt pour l'archivage</b>\n\n"
@@ -382,6 +416,7 @@ class StatutsManager:
 
     async def _archive_demande_now(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Archive immédiatement une demande terminée ayant livré son contenu."""
+        staff_id = query.from_user.id
         with self.db_manager.get_cursor() as cursor:
             cursor.execute("SELECT * FROM demandes WHERE id = %s", (demande_id,))
             demande = cursor.fetchone()
@@ -397,6 +432,26 @@ class StatutsManager:
         success = self.db_manager.archiver_demande_reussie(demande_id)
         if success:
             req_num = html.escape(str(demande.get("request_number", demande_id)))
+            staff_alias = self.db_manager.get_staff_alias(staff_id)
+
+            # Notification de surveillance aux administrateurs
+            try:
+                monitors = self.db_manager.get_monitoring_admins()
+                alert_arch = (
+                    f"🗄️ <b>SURVEILLANCE STAFF — DOSSIER ARCHIVÉ</b>\n\n"
+                    f"• <b>Opérateur :</b> {html.escape(str(staff_alias))} (<code>{staff_id}</code>)\n"
+                    f"• <b>Dossier :</b> #{req_num} ({html.escape(str(demande.get('prenom') or 'la cible'))})\n"
+                    "• <b>Statut :</b> Archivé avec succès."
+                )
+                for mon_id in monitors:
+                    if int(mon_id) != int(staff_id):
+                        try:
+                            await context.bot.send_message(chat_id=mon_id, text=alert_arch, parse_mode="HTML")
+                        except Exception:
+                            pass
+            except Exception as mon_err:
+                logger.warning("Erreur surveillance archivage : %s", mon_err)
+
             await query.answer(f"✅ Demande #{req_num} archivée avec succès !")
             back_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("📋 Retour à mes suivis", callback_data="demandes_suivies")
@@ -443,7 +498,7 @@ class StatutsManager:
             await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=cancel_kb)
 
     async def process_abandon_reason(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enregistre le motif d'abandon, gère le maintien de l'essai et notifie le demandeur."""
+        """Enregistre le motif d'abandon, gère le maintien de l'essai et notifie le demandeur et les administrateurs."""
         if not update.message or not update.message.text:
             return
 
@@ -527,7 +582,24 @@ class StatutsManager:
             except Exception as notif_exc:
                 logger.warning("Échec envoi motif abandon à %s : %s", user_id_demande, notif_exc)
 
-            # Précision spécifique si l'opérateur est en période d'essai
+            # Notification de surveillance aux administrateurs
+            try:
+                monitors = self.db_manager.get_monitoring_admins()
+                alert_abandon = (
+                    f"⚠️ <b>SURVEILLANCE STAFF — ABANDON DE DOSSIER</b>\n\n"
+                    f"• <b>Opérateur :</b> {staff_alias_esc} (<code>{staff_id}</code>)\n"
+                    f"• <b>Dossier :</b> #{req_num}\n"
+                    f"• <b>Motif invoqué :</b> « <i>{raison_esc}</i> »"
+                )
+                for mon_id in monitors:
+                    if int(mon_id) != int(staff_id):
+                        try:
+                            await context.bot.send_message(chat_id=mon_id, text=alert_abandon, parse_mode="HTML")
+                        except Exception:
+                            pass
+            except Exception as mon_err:
+                logger.warning("Erreur surveillance abandon staff : %s", mon_err)
+
             is_trial = self.db_manager.is_staff_trial(staff_id)
             trial_feedback = ""
             if is_trial:
@@ -579,7 +651,6 @@ class StatutsManager:
 
         # Clôture & Archivage
         if is_reussie and sub_status == "terminee":
-            # Ne débloquer l'archivage ou l'injonction de livraison que si la demande est réglée (ou non payante)
             if not is_prio or paiement_statut == "paye":
                 if has_delivered:
                     keyboard.insert(1, [
