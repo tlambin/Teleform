@@ -433,7 +433,6 @@ class DatabaseManager:
                 except Exception as seed_err:
                     logger.warning("Initialisation clés de config par défaut : %s", seed_err)
 
-                # Amorçage automatique du propriétaire dans la table admins
                 owner_id = getattr(self.config, "OWNER_ID", 0) or int(self.get_config_value("owner_id", "0"))
                 if owner_id:
                     owner_alias = self.get_config_value("owner_alias", "Propriétaire")
@@ -450,6 +449,90 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur lors de la création des tables : %s", exc)
             raise
+
+    # ==================== COMPTEURS MENUS GESTION DES DEMANDES ====================
+
+    def get_staff_demandes_counts(self, user_id: int) -> Dict[str, int]:
+        """Calcule les compteurs : disponibles (selon perms), suivies actives, et strictement archivées."""
+        counts = {"dispo": 0, "suivies": 0, "archives": 0}
+        uid = int(user_id)
+        is_own = self.is_owner(uid)
+
+        try:
+            with self.get_cursor() as cursor:
+                # Permissions de filtrage
+                perm_res = "all"
+                perm_type = "all"
+                perm_ori = "all"
+
+                if not is_own:
+                    cursor.execute(
+                        "SELECT perm_reseaux, perm_type, perm_orientation FROM staff WHERE user_id = %s",
+                        (uid,)
+                    )
+                    perms = cursor.fetchone() or {}
+                    perm_res = perms.get("perm_reseaux") or "all"
+                    perm_type = perms.get("perm_type") or "all"
+                    perm_ori = perms.get("perm_orientation") or "all"
+
+                # 1. DISPONIBLE : '📥 Reçue', sans opérateur, excluant ses propres dépôts
+                dispo_clauses = ["statut = '📥 Reçue'", "admin_en_charge IS NULL", "user_id != %s"]
+                dispo_params: List[Any] = [uid]
+
+                if perm_res == "insta":
+                    dispo_clauses.append("instagram IS NOT NULL AND instagram != ''")
+                elif perm_res == "snap":
+                    dispo_clauses.append("snapchat IS NOT NULL AND snapchat != ''")
+
+                if perm_type == "prio_only":
+                    dispo_clauses.append("prioritaire = 1")
+                elif perm_type == "standard_only":
+                    dispo_clauses.append("prioritaire = 0")
+
+                if perm_ori == "hetero":
+                    dispo_clauses.append("orientation IN ('hetero', 'bi')")
+                elif perm_ori == "gay":
+                    dispo_clauses.append("orientation IN ('gay', 'bi')")
+                elif perm_ori == "bi":
+                    dispo_clauses.append("orientation = 'bi'")
+
+                sql_dispo = f"SELECT COUNT(*) AS total FROM demandes WHERE {' AND '.join(dispo_clauses)}"
+                cursor.execute(sql_dispo, tuple(dispo_params))
+                r_dispo = cursor.fetchone()
+                counts["dispo"] = int(r_dispo["total"]) if r_dispo and r_dispo.get("total") else 0
+
+                # 2. SUIVIES : Uniquement les dossiers en cours assignés à cet opérateur
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS total FROM demandes
+                    WHERE admin_en_charge = %s AND statut IN ('⏳ En attente', '🔄 En cours')
+                    """,
+                    (uid,)
+                )
+                r_suivi = cursor.fetchone()
+                counts["suivies"] = int(r_suivi["total"]) if r_suivi and r_suivi.get("total") else 0
+
+                # 3. ARCHIVÉES : Uniquement dans la table archives (finalisées/réussies ou abandonnées par lui)
+                # Inclut les dossiers où l'opérateur a abandonné la demande même si relancée ultérieurement
+                alias = self.get_staff_alias(uid)
+                cursor.execute(
+                    """
+                    SELECT COUNT(DISTINCT a.id) AS total
+                    FROM archives a
+                    LEFT JOIN demandes_suivi ds ON a.original_id = ds.demande_id AND ds.admin_id = %s
+                    WHERE a.admin_en_charge = %s 
+                       OR ds.admin_id = %s
+                       OR a.details LIKE %s
+                    """,
+                    (uid, uid, uid, f"%{alias}%")
+                )
+                r_arch = cursor.fetchone()
+                counts["archives"] = int(r_arch["total"]) if r_arch and r_arch.get("total") else 0
+
+        except Exception as exc:
+            logger.error("Erreur calcul compteurs staff pour user %s : %s", user_id, exc, exc_info=True)
+
+        return counts
 
     # ==================== DÉTECTION DOUBLON SOCIAL ====================
 
@@ -973,13 +1056,11 @@ class DatabaseManager:
         """Retourne les modes de paiement acceptés (table config pour l'owner, table staff pour les autres)."""
         uid = int(staff_id)
 
-        # Cas spécifique : Owner principal (stocké dans config)
         if self.is_owner(uid):
             stars = str(self.get_config_value("owner_accept_stars", "true")).lower() in ("true", "1", "yes")
             direct = str(self.get_config_value("owner_accept_direct", "true")).lower() in ("true", "1", "yes")
             return {"accept_stars": stars, "accept_direct": direct}
 
-        # Cas général : Staff, Admins et Co-Owners
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -1016,14 +1097,12 @@ class DatabaseManager:
             if not new_val and not stars:
                 return False, "Vous devez conserver au moins un moyen de paiement actif."
 
-        # Cas spécifique : Owner principal -> écriture dans config
         if self.is_owner(uid):
             cfg_key = f"owner_{method}"
             val_str = "true" if new_val else "false"
             ok = self.set_config_value(cfg_key, val_str)
             return (True, "Mode de paiement mis à jour.") if ok else (False, "Erreur technique.")
 
-        # Cas général : Staff, Admins et Co-Owners -> mise à jour de la table staff
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -1590,7 +1669,14 @@ class DatabaseManager:
                         """,
                         (alias, reason, *ids)
                     )
-                    cursor.execute(f"DELETE FROM demandes_suivi WHERE demande_id IN ({placeholders})", ids)
+                    cursor.execute(
+                        f"""
+                        UPDATE demandes_suivi
+                        SET statut_suivi = 'abandonnee', derniere_action = NOW()
+                        WHERE demande_id IN ({placeholders}) AND admin_id = %s
+                        """,
+                        (*ids, int(staff_id))
+                    )
 
             return rows
         except Exception as exc:

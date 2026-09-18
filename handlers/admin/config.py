@@ -34,7 +34,7 @@ class ConfigManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("ConfigManager initialisé avec support RBAC, Matrice Canaux & Orientations")
+        logger.info("ConfigManager initialisé avec support RBAC, Matrice Canaux & Menus Paramètres")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou supprime la photo existante pour émettre du texte."""
@@ -68,32 +68,159 @@ class ConfigManager:
                         disable_web_page_preview=True
                     )
 
-    async def show_config_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche le menu récapitulatif des configurations courantes."""
+    # ==================== MENU 1 : PARAMÈTRES ====================
+
+    async def show_parametres_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche le menu général PARAMÈTRES selon la maquette."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        user_id = update.effective_user.id
+        is_owner = self.config.is_owner(user_id)
+        is_admin = self.config.is_admin(user_id)
+
+        buttons = []
+
+        # 1. GESTION DU BOT (Owner / Admin)
+        if is_owner or is_admin:
+            buttons.append([
+                InlineKeyboardButton("🤖 GESTION DU BOT", callback_data="admin_gestion_bot")
+            ])
+            # 2. ADMINS | PIÉGEURS
+            buttons.append([
+                InlineKeyboardButton("🧠 ADMINS", callback_data="param_manage_admins"),
+                InlineKeyboardButton("🎣 PIÉGEURS", callback_data="param_manage_piegeurs")
+            ])
+
+        # 3. MODIFIER MON ALIAS
+        buttons.append([
+            InlineKeyboardButton("🏷️ MODIFIER MON ALIAS 🏷️", callback_data="param_edit_alias")
+        ])
+
+        # 4. ARCHIVES | STATS
+        buttons.append([
+            InlineKeyboardButton("📦 ARCHIVES", callback_data="admin_archives_menu"),
+            InlineKeyboardButton("🧮 STATS", callback_data="admin_stats_menu")
+        ])
+
+        # 5. PAIEMENT
+        buttons.append([
+            InlineKeyboardButton("💰 PAIEMENT 💰", callback_data="param_payment_settings")
+        ])
+
+        # 6. VIP | OPTIONS
+        buttons.append([
+            InlineKeyboardButton("⭐ VIP", callback_data="param_vip_menu"),
+            InlineKeyboardButton("✨ OPTIONS", callback_data="param_options_menu")
+        ])
+
+        # 7. NOTIFICATIONS
+        buttons.append([
+            InlineKeyboardButton("🔔 NOTIFICATIONS 🔔", callback_data="param_notifs_menu")
+        ])
+
+        # Retour menu principal
+        buttons.append([
+            InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")
+        ])
+
+        text = (
+            "⚙️ <b>PARAMÈTRES</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Sélectionnez une option de configuration :"
+        )
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        if query:
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
+        elif update.message:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+    # ==================== MENU 2 : GESTION DU BOT ====================
+
+    async def show_gestion_bot_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche le sous-menu GESTION DU BOT selon la maquette."""
+        query = update.callback_query
         user = update.effective_user
         if not user or not self.config.is_admin(user.id):
-            if update.callback_query:
-                await update.callback_query.answer("❌ Accès non autorisé.", show_alert=True)
-            elif update.message:
-                await update.message.reply_text("❌ Accès non autorisé.")
+            if query:
+                await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
             return
 
-        if update.callback_query:
-            await update.callback_query.answer()
+        if query:
+            await query.answer()
 
-        try:
-            current_config = self._get_current_config()
-            message = self._format_config_message(current_config)
-            keyboard = self._create_config_keyboard()
+        demandes_suspendues = not self.config.are_demandes_enabled()
+        label_suspension = (
+            "✅ RÉACTIVER LES DEMANDES ✅"
+            if demandes_suspendues
+            else "❌ SUSPENDRE LES DEMANDES ❌"
+        )
 
-            if update.callback_query:
-                await self._safe_edit_or_send(update.callback_query, context, message, reply_markup=keyboard)
-            elif update.message:
-                await update.message.reply_text(message, parse_mode="HTML", reply_markup=keyboard)
+        buttons = [
+            # 1. SUSPENDRE / RÉACTIVER
+            [InlineKeyboardButton(label_suspension, callback_data="config_toggle_demandes_service")],
 
-        except Exception as exc:
-            logger.error("Erreur affichage menu configuration : %s", exc, exc_info=True)
-            await self._send_error_message(update, context, "❌ Erreur lors de la récupération de la configuration.")
+            # 2. LIMITES | QUOTAS
+            [
+                InlineKeyboardButton("⌛ LIMITES", callback_data="menu_limits"),
+                InlineKeyboardButton("⚖️ QUOTAS", callback_data="menu_channels")
+            ],
+
+            # 3. ARCHIVAGE | MAINTENANCE
+            [
+                InlineKeyboardButton("📦 ARCHIVAGE", callback_data="menu_delais"),
+                InlineKeyboardButton("⛔ MAINTENANCE", callback_data="config_toggle_maintenance")
+            ],
+
+            # 4. ADHÉSION | CONTACT
+            [
+                InlineKeyboardButton("🔑 ADHÉSION", callback_data="bot_adhesion_settings"),
+                InlineKeyboardButton("📢 CONTACT", callback_data="bot_contact_settings")
+            ],
+
+            # 5. ZONE DE DANGER
+            [InlineKeyboardButton("⛔ ZONE DE DANGER ⛔", callback_data="bot_danger_zone")],
+
+            # Retour Paramètres
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres_menu")]
+        ]
+
+        text = (
+            "🤖 <b>GESTION DU BOT</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Panneau de contrôle système de la plateforme :"
+        )
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        if query:
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
+        elif update.message:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+    # ==================== ACTIONS GESTION DU BOT ====================
+
+    async def toggle_demandes_service(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Bascule l'ouverture ou la fermeture du service de dépôt de demandes."""
+        query = update.callback_query
+        user = update.effective_user
+        if not query or not user or not self.config.is_admin(user.id):
+            if query:
+                await query.answer("❌ Action réservée à l'administration.", show_alert=True)
+            return
+
+        actuellement_ouvert = self.config.are_demandes_enabled()
+        if actuellement_ouvert:
+            self.config.disable_demandes()
+            self.set_setting("demandes_enabled", "false")
+            await query.answer("🛑 Réception des demandes suspendue !", show_alert=True)
+        else:
+            self.config.enable_demandes()
+            self.set_setting("demandes_enabled", "true")
+            await query.answer("✅ Réception des demandes réactivée !", show_alert=True)
+
+        await self.show_gestion_bot_menu(update, context)
 
     async def toggle_maintenance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Bascule l'état du mode maintenance avec synchronisation SQL."""
@@ -103,8 +230,6 @@ class ConfigManager:
             if query:
                 await query.answer("❌ Action réservée à la direction.", show_alert=True)
             return
-
-        await query.answer()
 
         try:
             current = self.is_maintenance_mode()
@@ -122,16 +247,8 @@ class ConfigManager:
 
             status_str = "activé" if new_val else "désactivé"
             logger.info("Maintenance %s par le propriétaire %s", status_str, user.id)
-
-            text = (
-                f"🛠️ <b>Mode maintenance {status_str}</b>\n\n"
-                f"Le service est désormais {'restreint à la direction' if new_val else 'disponible selon les paramètres standards'}."
-            )
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Retour Configuration", callback_data="gerer_bot")
-            ]])
-
-            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
+            await query.answer(f"🛠️ Mode maintenance {status_str} !", show_alert=True)
+            await self.show_gestion_bot_menu(update, context)
 
         except Exception as exc:
             logger.error("Erreur bascule mode maintenance : %s", exc)
@@ -146,29 +263,20 @@ class ConfigManager:
                 await query.answer("❌ Action réservée à la direction.", show_alert=True)
             return
 
-        await query.answer()
-
         try:
             current = self.is_priority_allowed()
             new_val = not current
             self.set_setting("allow_priority_requests", "true" if new_val else "false")
 
             status_str = "autorisées" if new_val else "désactivées"
-            text = (
-                f"💎 <b>Demandes prioritaires {status_str}</b>\n\n"
-                f"Les demandes prioritaires payantes sont dorénavant {'acceptées' if new_val else 'refusées'}."
-            )
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Retour Configuration", callback_data="gerer_bot")
-            ]])
-
-            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
+            await query.answer(f"💎 Demandes prioritaires {status_str} !", show_alert=True)
+            await self.show_gestion_bot_menu(update, context)
 
         except Exception as exc:
             logger.error("Erreur bascule demandes prioritaires : %s", exc)
             await self._send_error_message(update, context, "❌ Erreur lors du réglage des demandes prioritaires.")
 
-    # ==================== ACTIVATION / DÉSACTIVATION DES 4 CANAUX COMBINÉS ====================
+    # ==================== CANAUX & MATRICE ====================
 
     async def show_channels_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Menu interactif de bascule pour les 4 canaux combinés (Hétéro/Gay × Insta/Snap)."""
@@ -183,7 +291,7 @@ class ConfigManager:
         await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def toggle_channel_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE, key_name: str):
-        """Bascule l'état d'un canal combiné (allow_hetero_insta, allow_hetero_snap, allow_gay_insta, allow_gay_snap)."""
+        """Bascule l'état d'un canal combiné."""
         query = update.callback_query
         if not query:
             return
@@ -194,7 +302,7 @@ class ConfigManager:
         await query.answer("✅ État du canal mis à jour !")
         await self.show_channels_menu(update, context)
 
-    # ==================== MENU LIMITES & PLAFONDS PAR CANAL ====================
+    # ==================== LIMITES & PLAFONDS ====================
 
     async def show_limits_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche le menu complet des quotas globaux et par canal combiné."""
@@ -211,7 +319,7 @@ class ConfigManager:
         elif update.message:
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
-    # ==================== GESTION DES DÉLAIS PARAMÉTRABLES ====================
+    # ==================== DÉLAIS PARAMÉTRABLES ====================
 
     async def show_delais_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche le menu de paramétrage des délais automatiques."""
@@ -232,7 +340,7 @@ class ConfigManager:
         keyboard = [
             [InlineKeyboardButton(f"📦 Auto-archivage ({hours}h)", callback_data="cfg_sub_archive_hours")],
             [InlineKeyboardButton(f"⚠️ Relance sans livraison ({days}j)", callback_data="cfg_sub_reminder_days")],
-            [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
+            [InlineKeyboardButton("🔙 Gestion du Bot", callback_data="admin_gestion_bot")]
         ]
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -321,65 +429,10 @@ class ConfigManager:
         val = self.get_setting("max_demandes_per_user", "3")
         return int(val) if str(val).isdigit() else 3
 
-    def _get_current_config(self) -> dict:
-        """Lit l'ensemble des réglages applicatifs."""
-        raw = self.db_manager.get_all_config()
-        cfg = self.DEFAULT_SETTINGS.copy()
-        for k, v in raw.items():
-            cfg[k] = v
-        return cfg
-
-    def _format_config_message(self, cfg: dict) -> str:
-        """Formate le récapitulatif des réglages pour l'administrateur."""
-        is_maint = str(cfg.get("maintenance_mode", "false")).lower() == "true"
-        is_prio = str(cfg.get("allow_priority_requests", "true")).lower() == "true"
-        is_active = self.config.are_demandes_enabled()
-
-        maint_badge = "🔴 Activé" if is_maint else "🟢 Désactivé"
-        prio_badge = "✅ Autorisées" if is_prio else "❌ Désactivées"
-        active_badge = "🟢 Ouvert" if is_active else "🔴 Suspendu"
-
-        max_user = html.escape(str(cfg.get("max_demandes_per_user", "3")))
-        max_tot = str(cfg.get("max_total_demandes", "0"))
-        tot_str = "Illimité" if max_tot == "0" else html.escape(max_tot)
-
-        auto_arch = html.escape(str(cfg.get("auto_archive_hours", "72")))
-        deliv_rem = html.escape(str(cfg.get("delivery_reminder_days", "7")))
-
-        return (
-            "⚙️ <b>Paramètres Généraux du Système</b>\n\n"
-            f"• <b>Service global :</b> {active_badge}\n"
-            f"• <b>Mode maintenance :</b> {maint_badge}\n"
-            f"• <b>Demandes prioritaires :</b> {prio_badge}\n"
-            f"• <b>Plafond global :</b> <code>{tot_str}</code>\n"
-            f"• <b>Plafond par client :</b> <code>{max_user}</code>\n"
-            f"• <b>Auto-archivage :</b> {auto_arch}h post-livraison\n"
-            f"• <b>Relance livraison :</b> {deliv_rem} jours\n\n"
-            "Sélectionnez une catégorie pour configurer :"
-        )
-
-    def _create_config_keyboard(self) -> InlineKeyboardMarkup:
-        """Génère le clavier de contrôle de configuration."""
-        keyboard = [
-            [
-                InlineKeyboardButton("🛠️ Maintenance", callback_data="config_toggle_maintenance"),
-                InlineKeyboardButton("💎 Prioritaires", callback_data="config_toggle_priority"),
-            ],
-            [
-                InlineKeyboardButton("🎛️ Canaux & Orientations", callback_data="menu_channels"),
-                InlineKeyboardButton("⚙️ Quotas & Plafonds", callback_data="menu_limits"),
-            ],
-            [
-                InlineKeyboardButton("⏱️ Délais & Relances", callback_data="menu_delais"),
-                InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot"),
-            ]
-        ]
-        return InlineKeyboardMarkup(keyboard)
-
     async def _send_error_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         """Envoie un message d'erreur avec retour sécurisé."""
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")
+            InlineKeyboardButton("🔙 Gestion du Bot", callback_data="admin_gestion_bot")
         ]])
         if update.callback_query:
             await self._safe_edit_or_send(update.callback_query, context, text, reply_markup=kb)

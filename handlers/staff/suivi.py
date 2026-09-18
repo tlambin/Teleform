@@ -3,6 +3,7 @@
 from datetime import datetime
 import html
 import logging
+import re
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -10,8 +11,65 @@ from telegram import (
     Update,
 )
 from telegram.ext import ContextTypes
+from utils.validators import convert_utc_to_paris
 
 logger = logging.getLogger(__name__)
+
+
+def format_date_fr(val) -> str:
+    """Convertit une date ou un timestamp au format strict JJ/MM/AAAA."""
+    if not val:
+        return "?"
+    if hasattr(val, "strftime"):
+        return convert_utc_to_paris(val).strftime("%d/%m/%Y")
+    try:
+        dt = datetime.strptime(str(val)[:19], "%Y-%m-%d %H:%M:%S")
+        return convert_utc_to_paris(dt).strftime("%d/%m/%Y")
+    except Exception:
+        pass
+    try:
+        parts = str(val)[:10].split("-")
+        if len(parts) == 3:
+            return f"{parts[2]}/{parts[1]}/{parts[0]}"
+    except Exception:
+        pass
+    return str(val)[:10]
+
+
+def format_datetime_fr(val) -> str:
+    """Convertit une date ou un timestamp au format strict JJ/MM/AAAA HH:MM."""
+    if not val:
+        return "?"
+    if hasattr(val, "strftime"):
+        return convert_utc_to_paris(val).strftime("%d/%m/%Y %H:%M")
+    try:
+        dt = datetime.strptime(str(val)[:19], "%Y-%m-%d %H:%M:%S")
+        return convert_utc_to_paris(dt).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        pass
+    try:
+        parts = str(val)[:10].split("-")
+        time_part = str(val)[11:16] if len(str(val)) >= 16 else "00:00"
+        if len(parts) == 3:
+            return f"{parts[2]}/{parts[1]}/{parts[0]} {time_part}"
+    except Exception:
+        pass
+    return str(val)[:16]
+
+
+def clean_reason_text(raw_reason: str) -> str:
+    """Nettoie les balises HTML, puces et préfixes de nom déjà enregistrés dans le motif."""
+    if not raw_reason:
+        return "Non précisée"
+    clean = str(raw_reason).strip()
+    clean = re.sub(r"<[^>]+>", "", clean)
+    clean = re.sub(r"^[•\-\*]\s*", "", clean)
+    if ":" in clean:
+        parts = clean.split(":", 1)
+        if len(parts[0].strip().split()) <= 3:
+            clean = parts[1].strip()
+    clean = clean.strip(" «»\"'")
+    return html.escape(clean) if clean else "Non précisée"
 
 
 class SuiviManager:
@@ -20,7 +78,7 @@ class SuiviManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("SuiviManager initialisé avec confirmation de paiement prioritaire et surveillance")
+        logger.info("SuiviManager initialisé avec charte graphique unifiée, confirmation de paiement et surveillance")
 
     def _get_sort_settings(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les réglages de tri et filtre de suivi."""
@@ -38,12 +96,12 @@ class SuiviManager:
             return ""
 
         if not demande.get("has_delivered_content"):
-            return "⏳ <b>Clôture :</b> <i>En attente de transmission du contenu</i>"
+            return "⏳ <b>Clôture :</b> <i>En attente d'expédition du contenu</i>"
 
         hours_setting = self.db_manager.get_auto_archive_hours()
         date_liv = demande.get("date_livraison")
         if not date_liv:
-            return f"📦 <b>Auto-archivage :</b> <i>programmé sous {hours_setting}h</i>"
+            return f"📦 <b>Auto-archivage :</b> programmé sous {hours_setting}h"
 
         try:
             if isinstance(date_liv, str):
@@ -55,7 +113,7 @@ class SuiviManager:
                 return f"📦 <b>Auto-archivage :</b> dans ~{hours_left}h (Contenu livré)"
             return "📦 <b>Auto-archivage :</b> <i>imminent...</i>"
         except Exception:
-            return f"📦 <b>Auto-archivage :</b> <i>programmé sous {hours_setting}h</i>"
+            return f"📦 <b>Auto-archivage :</b> programmé sous {hours_setting}h"
 
     async def show_demandes_suivies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Point d'entrée principal."""
@@ -111,8 +169,9 @@ class SuiviManager:
         elif data == "suivi_search_prompt":
             context.user_data["waiting_suivi_search"] = True
             msg = (
-                "🔍 <b>Recherche dans vos suivis</b>\n\n"
-                "Tapez un terme (nom, prénom, ville, réseau, détail) :"
+                "🔍 <b>RECHERCHE DANS VOS SUIVIS</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Tapez un terme au clavier (nom, prénom, ville, réseau, détail) :"
             )
             keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton("❌ Annuler", callback_data="suivi_cancel_search")
@@ -159,15 +218,18 @@ class SuiviManager:
             montant_val = float(dem.get("montant") or 0.0)
 
             prompt_text = (
-                f"⚠️ <b>Confirmation d'encaissement (Dossier #{req_num})</b>\n\n"
-                f"👤 <b>Cible :</b> {prenom_esc}\n"
-                f"💰 <b>Montant à valider :</b> {montant_val:.2f} €\n\n"
-                "Êtes-vous sûr d'avoir <b>bien reçu l'intégralité du paiement</b> de la part du client ?\n\n"
-                "<i>Cette action avertira le client de la validation de son paiement et débloquera l'envoi des contenus.</i>"
+                f"💳 <b>CONFIRMATION D'ENCAISSEMENT</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Dossier :</b> #{req_num}\n"
+                f"• <b>Cible :</b> {prenom_esc}\n"
+                f"• <b>Montant :</b> <code>{montant_val:.2f} €</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Confirmez-vous avoir reçu l'intégralité du règlement ?\n\n"
+                "<i>Cette action avertira le client et débloquera l'envoi des contenus.</i>"
             )
 
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚠️ Oui, confirmer l'encaissement", callback_data=f"confirm_payment_prio_exec_{demande_id}")],
+                [InlineKeyboardButton("✅ Confirmer l'encaissement", callback_data=f"confirm_payment_prio_exec_{demande_id}")],
                 [InlineKeyboardButton("❌ Annuler", callback_data=f"retour_texte_{demande_id}")]
             ])
 
@@ -211,7 +273,7 @@ class SuiviManager:
         with self.db_manager.get_cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, user_id, request_number, prenom, montant, admin_en_charge 
+                SELECT id, user_id, request_number, prenom, montant, admin_en_charge
                 FROM demandes WHERE id = %s
                 """,
                 (demande_id,)
@@ -234,14 +296,14 @@ class SuiviManager:
             prenom_esc = html.escape(str(dem.get("prenom") or "la cible"))
             montant_val = float(dem.get("montant") or 0.0)
 
-            await query.answer(f"✅ Paiement de la demande #{req_num} validé !", show_alert=True)
+            await query.answer(f"✅ Paiement du dossier #{req_num} validé !", show_alert=True)
 
-            # 1. Notification envoyée au client
             try:
                 msg_client = (
-                    f"💳 <b>Paiement confirmé (Dossier #{req_num})</b>\n\n"
-                    f"Votre référent <b>{alias_esc}</b> a validé la bonne réception de votre règlement.\n"
-                    "L'envoi de vos contenus est désormais débloqué !"
+                    f"💳 <b>PAIEMENT CONFIRMÉ (Dossier #{req_num})</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Votre référent <b>{alias_esc}</b> a validé la réception de votre règlement.\n\n"
+                    "<i>L'envoi de vos contenus est désormais débloqué !</i>"
                 )
                 await context.bot.send_message(
                     chat_id=dem["user_id"],
@@ -251,7 +313,6 @@ class SuiviManager:
             except Exception as e_notif:
                 logger.warning("Impossible de notifier le client %s de la validation paiement : %s", dem["user_id"], e_notif)
 
-            # 2. Notification de surveillance aux superviseurs (Admins autorisés + Owner)
             try:
                 monitors = self.db_manager.get_monitoring_admins()
                 alert_pay = (
@@ -259,10 +320,10 @@ class SuiviManager:
                     f"• <b>Opérateur :</b> {alias_esc} (<code>{staff_id}</code>)\n"
                     f"• <b>Dossier :</b> #{req_num} ({prenom_esc})\n"
                     f"• <b>Montant encaissé :</b> <code>{montant_val:.2f} €</code>\n"
-                    f"• <b>Mode :</b> Règlement direct validé manuellement."
+                    f"• <b>Mode :</b> Règlement direct validé."
                 )
                 kb_mon = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📄 Voir la fiche", callback_data=f"retour_texte_{demande_id}")]
+                    [InlineKeyboardButton("📄 Ouvrir la fiche", callback_data=f"retour_texte_{demande_id}")]
                 ])
 
                 for mon_id in monitors:
@@ -294,7 +355,7 @@ class SuiviManager:
         settings["search"] = query_text
 
         await update.message.reply_text(
-            f"🔎 Recherche appliquée sur les suivis : « <b>{html.escape(query_text)}</b> »",
+            f"🔎 Filtre appliqué sur vos suivis : « <b>{html.escape(query_text)}</b> »",
             parse_mode="HTML"
         )
         await self._render_first_page_from_message(update, context)
@@ -307,10 +368,10 @@ class SuiviManager:
         if not demandes:
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🧹 Effacer la recherche", callback_data="suivi_clear_search")],
-                [InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")],
-                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")],
+                [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
             ])
-            await update.message.reply_text("🔍 Aucun suivi ne correspond à cette recherche.", reply_markup=keyboard)
+            await update.message.reply_text("🔍 Aucun suivi ne correspond à votre recherche.", reply_markup=keyboard)
             return
 
         total = len(demandes)
@@ -349,14 +410,14 @@ class SuiviManager:
         keyboard = [
             [
                 InlineKeyboardButton(btn_label("📅 Date suivi", "date_suivi"), callback_data="suivi_set_sort_date_suivi"),
-                InlineKeyboardButton(btn_label("📝 Date demande", "date_creation"), callback_data="suivi_set_sort_date_creation"),
+                InlineKeyboardButton(btn_label("📝 Date dépôt", "date_creation"), callback_data="suivi_set_sort_date_creation"),
             ],
             [
                 InlineKeyboardButton(btn_label("👤 Nom", "nom"), callback_data="suivi_set_sort_nom"),
                 InlineKeyboardButton(btn_label("🎂 Âge", "age"), callback_data="suivi_set_sort_age"),
             ],
             [
-                InlineKeyboardButton(btn_label("💰 Prix / Don", "montant"), callback_data="suivi_set_sort_montant"),
+                InlineKeyboardButton(btn_label("💰 Tarif", "montant"), callback_data="suivi_set_sort_montant"),
                 InlineKeyboardButton(btn_label("📊 Statut", "statut"), callback_data="suivi_set_sort_statut"),
             ],
             [
@@ -370,21 +431,23 @@ class SuiviManager:
 
         nom_critere = {
             "date_suivi": "Date de prise en charge",
-            "date_creation": "Date de création de la demande",
+            "date_creation": "Date de création du dossier",
             "nom": "Nom / Prénom",
             "age": "Âge",
-            "montant": "Montant / Priorité",
-            "statut": "Statut de traitement",
+            "montant": "Tarif / Don",
+            "statut": "Statut opérationnel",
         }.get(sb, sb)
 
         sens_str = "Croissant" if settings["order"] == "ASC" else "Décroissant"
         search_str = f"« {html.escape(settings['search'])} »" if settings["search"] else "<i>Aucun</i>"
 
         text = (
-            "⚙️ <b>Options de tri & recherche (Demandes Suivies)</b>\n\n"
-            f"• <b>Tri actuel :</b> {html.escape(nom_critere)} ({sens_str} {order_arrow})\n"
-            f"• <b>Recherche :</b> {search_str}\n\n"
-            "<i>Cliquez sur un critère pour l'activer ou inverser son ordre :</i>"
+            "⚙️ <b>TRI & FILTRAGE DES SUIVIS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Critère actif :</b> {html.escape(nom_critere)} ({sens_str} {order_arrow})\n"
+            f"• <b>Recherche :</b> {search_str}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<i>Sélectionnez un critère pour basculer son sens ou appliquer :</i>"
         )
         await self._render_clean_text(query, context, text, InlineKeyboardMarkup(keyboard))
 
@@ -445,22 +508,24 @@ class SuiviManager:
             settings = self._get_sort_settings(context)
             if settings["search"]:
                 msg = (
-                    "💌 <b>Mes Demandes Suivies</b>\n\n"
-                    f"🔍 Aucun suivi ne correspond au filtre « {html.escape(settings['search'])} »."
+                    "💌 <b>MES DOSSIERS SUIVIS</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🔍 Aucun suivi ne correspond à « {html.escape(settings['search'])} »."
                 )
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🧹 Effacer la recherche", callback_data="suivi_clear_search")],
                     [InlineKeyboardButton("⚙️ Options de tri", callback_data="suivi_sort_menu")],
-                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                    [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
                 ])
             else:
                 msg = (
-                    "💌 <b>Mes Demandes Suivies</b>\n\n"
-                    "❤️ Vous ne prenez en charge aucune demande actuellement."
+                    "💌 <b>MES DOSSIERS SUIVIS</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "❤️ Vous n'avez aucune demande active en cours de traitement."
                 )
                 keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📮 Demandes Disponibles", callback_data="demandes_disponibles")],
-                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                    [InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")],
+                    [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
                 ])
 
             await self._render_clean_text(query, context, msg, keyboard)
@@ -546,148 +611,163 @@ class SuiviManager:
                     )
 
     def _format_suivi_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche avec état du paiement et compte à rebours d'archivage."""
-        priorite_icon = "💎" if demande.get("prioritaire") else "📝"
-        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_val = float(demande.get("montant") or 0.0)
-        montant_str = f" ({montant_val:.2f}€)" if demande.get("prioritaire") else ""
+        """Formate la fiche du dossier suivi par le staff selon le gabarit calibré et avec bloc Historique."""
+        req_num = html.escape(str(demande.get("request_number") or demande["id"]))
+        is_prio = bool(demande.get("prioritaire"))
+        titre = f"💎  <b>Demande Prioritaire #{req_num} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{req_num} ({page + 1}/{total})</b>"
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
-        nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
+        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
 
+        ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
+        ori_label = ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée")
+        loc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
+
+        lines = [
+            titre,
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"👤  <b>{nom_complet}{age_str}</b>",
+            f"📍  {ori_label} de {loc}"
+        ]
+
+        if demande.get("details"):
+            det = html.escape(str(demande["details"]).strip())
+            lines.append(f"💬  <i>{det}</i>")
+
+        if is_prio:
+            montant_val = float(demande.get("montant") or 0.0)
+            lines.append(f"💰  <b>{montant_val:.2f} €</b>")
+
+        # Réseaux
+        reseaux = []
+        if demande.get("instagram"):
+            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+        if demande.get("snapchat"):
+            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+
+        if reseaux:
+            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
+            lines.extend(reseaux)
+
+        # Bloc Statut
         statut_label = self.db_manager.format_statut_display(
             demande.get("statut", "⏳ En attente"),
             demande.get("is_difficile", False),
             demande.get("reussie_substatus")
         )
-        statut_esc = html.escape(statut_label)
-        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+        lines.append("\n───────  <b>STATUT</b>  ──────")
+        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
+        dt_mod = demande.get("date_modification")
+        if dt_mod:
+            lines.append(f" <i>{format_datetime_fr(dt_mod)}</i>")
 
-        if demande.get("username"):
-            demandeur = f"@{html.escape(demande['username'])}"
-        elif demande.get("user_first_name"):
-            demandeur = html.escape(demande["user_first_name"])
-        else:
-            demandeur = f"User {demande['user_id']}"
-
-        date_suivi_str = str(demande.get("date_suivi", ""))[:16]
-
-        lines = [
-            f"💌 <b>Demande suivie #{req_num}</b> ({page + 1}/{total})\n",
-            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
-            f"📍 <b>Localisation :</b> {loc_esc}",
-            f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-            f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
-            f"🙋 <b>Demandeur :</b> {demandeur}"
-        ]
-
-        if demande.get("prioritaire"):
+        # Statut du paiement
+        if is_prio:
             p_statut = demande.get("paiement_statut", "non_requis")
             if p_statut == "paye":
-                lines.append("💳 <b>Paiement :</b> 🟢 <i>Réglé et validé</i>")
+                lines.append("\n🟢 <b>Réglé et validé</b>")
             elif p_statut == "en_attente":
-                lines.append(f"💳 <b>Paiement :</b> 🟡 <i>En attente de règlement ({montant_val:.2f} €)</i>")
+                lines.append("\n🟡 <b>En attente de règlement</b>")
 
-        if demande.get("ancien_admin_alias") and demande.get("raison_abandon"):
-            anc_alias = html.escape(str(demande["ancien_admin_alias"]))
-            motif = html.escape(str(demande["raison_abandon"]))
-            lines.append(
-                f"\n⚠️ <b>HISTORIQUE - TENTATIVE PRÉCÉDENTE :</b>\n"
-                f"• Ancien opérateur : <b>{anc_alias}</b>\n"
-                f"• Motif d'abandon : <i>« {motif} »</i>"
-            )
+        # Gestionnaire (toujours présent en suivi)
+        admin_id = demande.get("admin_en_charge")
+        if admin_id:
+            alias = html.escape(str(self.db_manager.get_staff_alias(admin_id) or f"Staff_{admin_id}"))
+            lines.append(f"\n<b>Géré par :</b> <b>{alias}</b>")
 
-        reseaux = []
-        if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]))
-            reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
-        if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]))
-            reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
-        if reseaux:
-            lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
+        dt_suivi = demande.get("date_suivi")
+        if dt_suivi:
+            lines.append(f"<b>Depuis le :</b> <i>{format_datetime_fr(dt_suivi)}</i>")
 
-        if demande.get("details"):
-            det = str(demande["details"])
-            det_court = (det[:140] + "...") if len(det) > 140 else det
-            lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
+        # Bloc Infos
+        lines.append("\n───────  <b>INFOS</b>  ───────")
+        dt_crea = demande.get("date_creation")
+        lines.append(f"<b>Déposé le :</b>  {format_datetime_fr(dt_crea)}")
+
+        demandeur = f"@{html.escape(demande['username'])}" if demande.get("username") else (
+            html.escape(str(demande.get("user_first_name") or f"User {demande['user_id']}"))
+        )
+        lines.append(f"<b>Par :</b>  {demandeur} (<code>{demande['user_id']}</code>)")
+
+        # Bloc HISTORIQUE (si abandon antérieur)
+        ancien_alias = demande.get("ancien_admin_alias")
+        raw_reason = demande.get("raison_abandon")
+        if ancien_alias or raw_reason:
+            alias_str = html.escape(str(ancien_alias or "Opérateur"))
+            reason_str = clean_reason_text(raw_reason)
+            dt_abandon = demande.get("date_modification")
+            date_abandon_str = format_datetime_fr(dt_abandon) if dt_abandon else "Date inconnue"
+
+            lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
+            lines.append("❌ Abandonné")
+            lines.append(f"{alias_str} le {date_abandon_str}")
+            lines.append(f"<b>Raison :</b> {reason_str}")
 
         archive_badge = self._format_archive_countdown(demande)
         if archive_badge:
             lines.append(f"\n{archive_badge}")
 
-        s = self._get_sort_settings(context)
-        label_sort = {
-            "date_suivi": "date suivi",
-            "date_creation": "date demande",
-            "age": "âge",
-            "montant": "prix",
-            "statut": "statut",
-            "nom": "nom",
-        }.get(s["sort_by"], s["sort_by"])
-        arrow = "⬆️" if s["order"] == "ASC" else "⬇️"
-
-        tags = [f"{html.escape(label_sort)} {arrow}"]
-        if s["search"]:
-            tags.append(f"«{html.escape(s['search'])}»")
-
-        lines.append(f"\n🏷️ <i>Tri : {' | '.join(tags)} | Suivie le {date_suivi_str}</i>")
         return "\n".join(lines)
 
     def _build_suivi_keyboard(self, demande: dict, page: int, total: int) -> InlineKeyboardMarkup:
-        """Clavier avec actions directes, bouton confirmation paiement, bouton archivage et pagination."""
+        """Construit le clavier des demandes suivies selon la maquette exacte."""
         demande_id = demande["id"]
-        is_reussie = (demande.get("statut") == "✅ Réussie")
-        sub_status = demande.get("reussie_substatus")
-        has_delivered = bool(demande.get("has_delivered_content", False))
+        statut_raw = str(demande.get("statut") or "").strip()
+        is_reussie = (statut_raw == "✅ Réussie")
         is_prio = bool(demande.get("prioritaire"))
         paiement_statut = demande.get("paiement_statut", "non_requis")
+        has_delivered = bool(demande.get("has_delivered_content", False))
 
         buttons = [
+            # 1. 📌 CHANGER LE STATUT 📌
+            [InlineKeyboardButton("📌 CHANGER LE STATUT 📌", callback_data=f"change_status_{demande_id}")],
+            # 2. 👤 PROFIL | 💬 CONTACT
             [
-                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
-                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}"),
-            ],
-            [
-                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
+                InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}"),
+                InlineKeyboardButton("💬 CONTACT", callback_data=f"contacter_{demande_id}")
             ]
         ]
 
-        # Bouton d'action prioritaire : Déclenche la fenêtre de confirmation
+        # 3. 💰 VALIDER LE PAIEMENT 💰 (si prio + réussie + en attente)
         if is_prio and is_reussie and paiement_statut == "en_attente":
-            buttons.insert(0, [
-                InlineKeyboardButton("💳 Confirmer la réception du paiement", callback_data=f"confirm_payment_prio_{demande_id}")
+            buttons.append([
+                InlineKeyboardButton("💰 VALIDER LE PAIEMENT 💰", callback_data=f"confirm_payment_prio_{demande_id}")
             ])
 
-        # Clôture & Archivage
-        if is_reussie and sub_status == "terminee":
+        # 4. Alternance dynamique : ENVOYER LE CONTENU ou ARCHIVER LE DOSSIER
+        if is_reussie:
             if not is_prio or paiement_statut == "paye":
                 if has_delivered:
-                    buttons.insert(1, [
-                        InlineKeyboardButton("📦 Archiver le dossier", callback_data=f"status_archive_now_{demande_id}")
+                    buttons.append([
+                        InlineKeyboardButton("📦 ARCHIVER LE DOSSIER 📦", callback_data=f"status_archive_now_{demande_id}")
                     ])
                 else:
-                    buttons.insert(1, [
-                        InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
+                    buttons.append([
+                        InlineKeyboardButton("📤 ENVOYER LE CONTENU 📤", callback_data=f"contacter_{demande_id}")
                     ])
 
+        # 5. ⬅️ PRÉCÉDENTE | SUIVANTE ➡️
         nav_row = []
         if page > 0:
-            nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"suivi_prev_{page}"))
+            nav_row.append(InlineKeyboardButton("⬅️ PRÉCÉDENTE", callback_data=f"suivi_prev_{page}"))
         if page < total - 1:
-            nav_row.append(InlineKeyboardButton("Suivante ➡️", callback_data=f"suivi_next_{page}"))
-
+            nav_row.append(InlineKeyboardButton("SUIVANTE ➡️", callback_data=f"suivi_next_{page}"))
         if nav_row:
             buttons.append(nav_row)
 
+        # 6. 🔍 TRIER | 📮 DISPO
         buttons.append([
-            InlineKeyboardButton("⚙️ Trier / Rechercher", callback_data="suivi_sort_menu"),
-            InlineKeyboardButton("📮 Disponibles", callback_data="demandes_disponibles")
+            InlineKeyboardButton("🔍 TRIER", callback_data="suivi_sort_menu"),
+            InlineKeyboardButton("📮 DISPO", callback_data="demandes_disponibles")
         ])
+
+        # 7. ⬅️ RETOUR
         buttons.append([
-            InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
+            InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")
         ])
 
         return InlineKeyboardMarkup(buttons)

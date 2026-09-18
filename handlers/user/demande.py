@@ -1,12 +1,50 @@
 """Gestion de la consultation et du cycle de vie des demandes utilisateur."""
 
+from datetime import datetime
 import html
 import logging
+import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 from utils.validators import convert_utc_to_paris
 
 logger = logging.getLogger(__name__)
+
+
+def format_datetime_fr(val) -> str:
+    """Convertit une date ou un timestamp au format strict JJ/MM/AAAA HH:MM."""
+    if not val:
+        return "?"
+    if hasattr(val, "strftime"):
+        return convert_utc_to_paris(val).strftime("%d/%m/%Y %H:%M")
+    try:
+        dt = datetime.strptime(str(val)[:19], "%Y-%m-%d %H:%M:%S")
+        return convert_utc_to_paris(dt).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        pass
+    try:
+        parts = str(val)[:10].split("-")
+        time_part = str(val)[11:16] if len(str(val)) >= 16 else "00:00"
+        if len(parts) == 3:
+            return f"{parts[2]}/{parts[1]}/{parts[0]} {time_part}"
+    except Exception:
+        pass
+    return str(val)[:16]
+
+
+def clean_reason_text(raw_reason: str) -> str:
+    """Nettoie les balises HTML, puces et préfixes de nom déjà enregistrés dans le motif."""
+    if not raw_reason:
+        return "Non précisée"
+    clean = str(raw_reason).strip()
+    clean = re.sub(r"<[^>]+>", "", clean)
+    clean = re.sub(r"^[•\-\*]\s*", "", clean)
+    if ":" in clean:
+        parts = clean.split(":", 1)
+        if len(parts[0].strip().split()) <= 3:
+            clean = parts[1].strip()
+    clean = clean.strip(" «»\"'")
+    return html.escape(clean) if clean else "Non précisée"
 
 
 class DemandeManager:
@@ -18,7 +56,7 @@ class DemandeManager:
         self.db_manager = db_manager
         self.config = config
         self.account_manager = account_manager
-        logger.info("DemandeManager initialisé avec support Annulation, Archives, Rehausse Tarif, Conversion Prioritaire et Filtrage Paiements")
+        logger.info("DemandeManager initialisé avec charte graphique unifiée et support RBAC")
 
     def check_creation_quota(self, user_id: int) -> tuple[bool, str]:
         """Contrôle les plafonds global et individuel avant création (contourné pour VIP)."""
@@ -41,9 +79,10 @@ class DemandeManager:
 
             if total_actif >= max_total:
                 return False, (
-                    "🚫 <b>Service complet</b>\n\n"
-                    "Le plafond global de demandes simultanées sur la plateforme a été atteint.\n"
-                    "Merci de réessayer un peu plus tard."
+                    "🚫 <b>SERVICE SATURÉ</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "Le plafond global des demandes en cours sur la plateforme est atteint.\n\n"
+                    "<i>Veuillez patienter ou réessayer un peu plus tard.</i>"
                 )
 
         # 2. Quota individuel
@@ -59,10 +98,11 @@ class DemandeManager:
 
             if user_actif >= max_user:
                 return False, (
-                    "⚠️ <b>Limite atteinte</b>\n\n"
-                    f"Vous avez déjà <b>{user_actif}/{max_user}</b> demande(s) en cours de traitement.\n"
-                    "Attendez qu'une de vos demandes soit finalisée avant d'en ouvrir une nouvelle.\n\n"
-                    "<i>⭐ Devenez membre VIP pour débloquer les demandes illimitées !</i>"
+                    "⚠️ <b>QUOTA PERSONNEL ATTEINT</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Vous avez déjà <b>{user_actif}/{max_user}</b> demande(s) actives en traitement.\n\n"
+                    "Attendez qu'un dossier se termine pour en créer un autre.\n\n"
+                    "⭐ <i>Le statut VIP permet d'ouvrir des demandes en illimité.</i>"
                 )
 
         return True, ""
@@ -133,7 +173,8 @@ class DemandeManager:
                            photo_id, statut, is_difficile, reussie_substatus,
                            prioritaire, montant, date_creation,
                            date_modification, instagram, snapchat, details,
-                           admin_en_charge, last_vip_reminder, paiement_statut
+                           admin_en_charge, ancien_admin_alias, raison_abandon,
+                           last_vip_reminder, paiement_statut
                     FROM demandes
                     WHERE user_id = %s
                     ORDER BY id DESC
@@ -188,141 +229,170 @@ class DemandeManager:
             await self._send_error_message(update, context, edit_message)
 
     def _format_demande_card(self, demande: dict, current_page: int, total_pages: int) -> str:
-        """Met en forme la fiche d'une demande avec échappement HTML sécurisé."""
-        type_badge = "💎 Prioritaire" if demande.get("prioritaire") else "📝 Standard"
+        """Formate la fiche côté utilisateur avec calibrage strict des traits et bloc Historique."""
+        user_req_num = demande.get("request_number")
+        if not user_req_num or (user_req_num == 1 and total_pages > 1):
+            user_req_num = total_pages - current_page
 
-        montant = float(demande.get("montant") or 0.0)
-        montant_str = f" - <b>{montant:.2f} €</b>" if demande.get("prioritaire") else ""
+        is_prio = bool(demande.get("prioritaire"))
+        titre = f"💎  <b>Demande Prioritaire #{user_req_num} ({current_page + 1}/{total_pages})</b>" if is_prio else f"📝  <b>Demande Standard #{user_req_num} ({current_page + 1}/{total_pages})</b>"
 
-        prenom_esc = html.escape(demande.get("prenom") or "")
-        nom_esc = html.escape(demande.get("nom") or "")
-        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Non renseigné"
-        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
+        prenom_esc = html.escape(str(demande.get("prenom") or ""))
+        nom_esc = html.escape(str(demande.get("nom") or ""))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
+        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
 
+        ori_raw = str(demande.get("orientation") or "").strip().lower()
+        ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
+        ori_label = ori_map.get(ori_raw, "Non précisée")
+        loc = html.escape(str(demande.get("localisation") or "Lieu non précisé").strip())
+
+        lines = [
+            titre,
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"👤  <b>{nom_complet}{age_str}</b>",
+            f"📍  {ori_label} de {loc}"
+        ]
+
+        if demande.get("details"):
+            det = html.escape(str(demande["details"]).strip())
+            lines.append(f"💬  <i>{det}</i>")
+
+        if is_prio:
+            montant = float(demande.get("montant") or 0.0)
+            lines.append(f"💰  <b>{montant:.2f} €</b>")
+
+        # Réseaux sociaux
+        reseaux = []
+        if demande.get("instagram"):
+            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+        if demande.get("snapchat"):
+            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+
+        if reseaux:
+            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
+            lines.extend(reseaux)
+
+        # Bloc STATUT
         statut_label = self.db_manager.format_statut_display(
             demande.get("statut", "📥 Reçue"),
             demande.get("is_difficile", False),
             demande.get("reussie_substatus")
         )
-        statut_esc = html.escape(statut_label)
-        age_str = demande.get("age") if demande.get("age") is not None else "?"
+        lines.append("\n───────  <b>STATUT</b>  ──────")
+        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
 
-        lignes = [
-            f"📋 <b>Demande #{demande.get('request_number', demande['id'])}</b> ({current_page + 1}/{total_pages})\n",
-            f"👤 <b>Identité :</b> {nom_complet} ({age_str} ans)",
-            f"📍 <b>Localisation :</b> {loc_esc}",
-            f"🎯 <b>Type :</b> {type_badge}{montant_str}",
-            f"📊 <b>Statut :</b> <code>{statut_esc}</code>"
-        ]
+        dt_mod = demande.get("date_modification")
+        if dt_mod:
+            lines.append(f" <i>{format_datetime_fr(dt_mod)}</i>")
 
+        if is_prio:
+            p_statut = demande.get("paiement_statut", "non_requis")
+            if p_statut == "paye":
+                lines.append("\n🟢 <b>Réglé et validé</b>")
+            elif p_statut == "en_attente":
+                lines.append("\n🟡 <b>En attente de règlement</b>")
+
+        # Gestionnaire (affiché uniquement si assigné)
         admin_id = demande.get("admin_en_charge")
         if admin_id:
-            alias = self.db_manager.get_staff_alias(admin_id)
-            lignes.append(f"👨‍💼 <b>Référent :</b> {html.escape(alias or 'Opérateur en charge')}")
+            alias = html.escape(str(self.db_manager.get_staff_alias(admin_id) or "Opérateur"))
+            lines.append(f"\n<b>Géré par :</b> <b>{alias}</b>")
+            dt_suivi = demande.get("date_modification")
+            if dt_suivi:
+                lines.append(f"<b>Depuis le :</b> <i>{format_datetime_fr(dt_suivi)}</i>")
 
-        reseaux = []
-        if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]))
-            reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
-        if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]))
-            reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
-        if reseaux:
-            lines_str = " | ".join(reseaux)
-            lignes.append(f"🌐 <b>Réseaux :</b> {lines_str}")
-
-        if demande.get("details"):
-            det = str(demande["details"])
-            det_short = (det[:150] + "...") if len(det) > 150 else det
-            lignes.append(f"💬 <b>Remarque :</b> <i>{html.escape(det_short)}</i>")
-
+        # Bloc INFOS
+        lines.append("\n───────  <b>INFOS</b>  ───────")
         dt_crea = demande.get("date_creation")
-        crea_str = convert_utc_to_paris(dt_crea).strftime("%d/%m/%Y à %H:%M") if dt_crea else "?"
-        lignes.append(f"\n📅 <i>Créée le {crea_str}</i>")
+        lines.append(f"<b>Déposé le :</b>  {format_datetime_fr(dt_crea)}")
 
-        return "\n".join(lignes)
+        # Bloc HISTORIQUE (si abandon préalable)
+        ancien_alias = demande.get("ancien_admin_alias")
+        raw_reason = demande.get("raison_abandon")
+        if ancien_alias or raw_reason:
+            alias_str = html.escape(str(ancien_alias or "Opérateur"))
+            reason_str = clean_reason_text(raw_reason)
+            dt_abandon = demande.get("date_modification")
+            date_abandon_str = format_datetime_fr(dt_abandon) if dt_abandon else "Date inconnue"
+
+            lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
+            lines.append("❌ Abandonné")
+            lines.append(f"{alias_str} le {date_abandon_str}")
+            lines.append(f"<b>Raison :</b> {reason_str}")
+
+        return "\n".join(lines)
 
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
-        """Génère les boutons d'actions selon le statut et les méthodes de paiement configurées."""
+        """Génère les boutons de 'Mes Demandes' selon la maquette et les règles métiers."""
         buttons = []
         demande_id = demande["id"]
         admin_en_charge = demande.get("admin_en_charge")
         statut_raw = str(demande.get("statut") or "").strip()
         is_prio = bool(demande.get("prioritaire"))
         is_vip = self.db_manager.is_user_vip(user_id)
-        montant = float(demande.get("montant") or 0.0)
-        paiement_statut = demande.get("paiement_statut")
+        is_active = statut_raw not in ["✅ Réussie", "❌ Annulée", "❌ Abandonnée"]
 
-        # 1. Demande terminée en attente de règlement : options selon les préférences du piégeur
-        if statut_raw == "✅ Réussie" and is_prio and paiement_statut == "en_attente":
-            methods = (
-                self.db_manager.get_staff_payment_methods(admin_en_charge)
-                if admin_en_charge
-                else {"accept_stars": True, "accept_direct": True}
-            )
-            pay_row = []
-            if methods.get("accept_stars", True):
-                pay_row.append(InlineKeyboardButton("⭐ Payer en Stars", callback_data=f"pay_stars_prio_{demande_id}"))
-            if methods.get("accept_direct", True):
-                pay_row.append(InlineKeyboardButton("💬 Convenir du règlement", callback_data=f"pay_contact_prio_{demande_id}"))
-
-            if pay_row:
-                buttons.append(pay_row)
-
-        # 2. Conversion en Prioritaire pour les demandes Standard encore ouvertes
-        if not is_prio and statut_raw not in ["✅ Réussie", "❌ Annulée", "❌ Abandonnée"]:
+        # 1. 💎 PASSER PRIORITAIRE 💎 (si standard active)
+        if not is_prio and is_active:
             buttons.append([
-                InlineKeyboardButton("💎 Passer en Prioritaire", callback_data=f"upgrade_prio_{demande_id}")
+                InlineKeyboardButton("💎 PASSER PRIORITAIRE 💎", callback_data=f"upgrade_prio_{demande_id}")
             ])
 
-        # 3. Actions sur le dossier selon son avancement
-        if not admin_en_charge and ("reçue" in statut_raw.lower() or "recue" in statut_raw.lower()):
-            # Demande NON prise en charge : Modification complète et Suppression directe
+        # 2. 💰 MODIFIER LE PRIX 💰 (si prio active non assignée)
+        if is_prio and is_active and not admin_en_charge:
             buttons.append([
-                InlineKeyboardButton("✏️ Modifier", callback_data=f"modify_{demande_id}"),
-                InlineKeyboardButton("🗑️ Supprimer", callback_data=f"delete_{demande_id}")
+                InlineKeyboardButton("💰 MODIFIER LE PRIX 💰", callback_data=f"modify_{demande_id}")
             ])
-        elif statut_raw not in ["✅ Réussie", "❌ Annulée", "❌ Abandonnée"]:
-            # Demande PRISE EN CHARGE (en attente ou en cours)
-            action_row = [
-                InlineKeyboardButton("❌ Demander l'annulation", callback_data=f"ask_cancel_demande_{demande_id}")
-            ]
-            if is_prio:
-                action_row.insert(0, InlineKeyboardButton(f"💰 Rehausser le tarif ({montant:.2f} €)", callback_data=f"modify_{demande_id}"))
-            buttons.append(action_row)
 
-        # 4. Boutons de contact et de relance si un opérateur est assigné
-        if admin_en_charge:
-            contact_btn = InlineKeyboardButton("💬 Contacter mon référent", callback_data=f"vip_contact_admin_{demande_id}")
+        # 3. 💰 AUGMENTER LE PRIX 💰 (si prio active déjà assignée)
+        if is_prio and is_active and admin_en_charge:
+            buttons.append([
+                InlineKeyboardButton("💰 AUGMENTER LE PRIX 💰", callback_data=f"modify_{demande_id}")
+            ])
+
+        # 4. ✏️ MODIFIER | 🗑️ SUPPRIMER (uniquement non assignée)
+        if is_active and not admin_en_charge:
+            buttons.append([
+                InlineKeyboardButton("✏️ MODIFIER", callback_data=f"modify_{demande_id}"),
+                InlineKeyboardButton("🗑️ SUPPRIMER", callback_data=f"delete_{demande_id}")
+            ])
+
+        # 5. 💬 CONTACT | 🛎️ RELANCER (dès qu'assigné)
+        if admin_en_charge and is_active:
+            contact_btn = InlineKeyboardButton("💬 CONTACT", callback_data=f"vip_contact_admin_{demande_id}")
             if is_vip or is_prio:
-                relance_btn = InlineKeyboardButton("🔔 Relancer (Gratuit)", callback_data=f"remind_admin_free_{demande_id}")
+                relance_btn = InlineKeyboardButton("🛎️ RELANCER (Gratuit)", callback_data=f"remind_admin_free_{demande_id}")
             else:
-                relance_btn = InlineKeyboardButton("🔔 Relancer (1 €)", callback_data=f"remind_admin_pay_{demande_id}")
+                relance_btn = InlineKeyboardButton("🛎️ RELANCER (1€)", callback_data=f"remind_admin_pay_{demande_id}")
             buttons.append([contact_btn, relance_btn])
 
-        # 5. Pagination
+        # 6. ⬅️ PRÉCÉDENTE | SUIVANTE ➡️
         nav_row = []
         if page > 0:
-            nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"nav_page_{page - 1}"))
+            nav_row.append(InlineKeyboardButton("⬅️ PRÉCÉDENTE", callback_data=f"nav_page_{page - 1}"))
         if page < total - 1:
-            nav_row.append(InlineKeyboardButton("Suivante ➡️", callback_data=f"nav_page_{page + 1}"))
-
+            nav_row.append(InlineKeyboardButton("SUIVANTE ➡️", callback_data=f"nav_page_{page + 1}"))
         if nav_row:
             buttons.append(nav_row)
 
-        # 6. Actions complémentaires
+        # 7. 🗳️ CRÉER | 📦 ARCHIVES (X)
         can_create, _ = self.check_creation_quota(user_id)
-        btn_creation = (
-            InlineKeyboardButton("➕ Nouvelle demande", callback_data="new_demande")
+        btn_creer = (
+            InlineKeyboardButton("🗳️ CRÉER", callback_data="new_demande")
             if can_create
-            else InlineKeyboardButton("🔒 Quota atteint", callback_data="quota_reached_info")
+            else InlineKeyboardButton("🔒 PLEIN", callback_data="quota_reached_info")
         )
-
         nb_archives = self.db_manager.get_archives_count(user_id=user_id)
-        btn_archives = InlineKeyboardButton(f"📦 Mes archives ({nb_archives})", callback_data="mes_archives")
+        btn_archives = InlineKeyboardButton(f"📦 ARCHIVES ({nb_archives})", callback_data="mes_archives")
+        buttons.append([btn_creer, btn_archives])
 
-        buttons.append([btn_creation, btn_archives])
-        buttons.append([InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")])
+        # 8. ⬅️ RETOUR
+        buttons.append([
+            InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")
+        ])
 
         return InlineKeyboardMarkup(buttons)
 
@@ -341,13 +411,14 @@ class DemandeManager:
 
         if total_archives == 0:
             msg = (
-                "📦 <b>Mes Archives</b>\n\n"
-                "Vous n'avez actuellement aucune demande archivée.\n"
-                "Les demandes finalisées, clôturées ou annulées apparaîtront ici."
+                "📦 <b>MES ARCHIVES PERSONNELLES</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Vous n'avez actuellement aucun dossier archivé.\n\n"
+                "<i>Les demandes finalisées ou annulées apparaîtront ici automatiquement.</i>"
             )
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Voir mes demandes actives", callback_data="voir_demandes")],
-                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
             ])
             if query:
                 if query.message and query.message.photo:
@@ -405,45 +476,83 @@ class DemandeManager:
                 )
 
     def _format_user_archive_card(self, item: dict, page: int, total: int) -> str:
-        """Formate la fiche d'une archive pour la vue du demandeur."""
+        """Formate la fiche d'une archive pour la vue du demandeur avec bloc Historique."""
         prenom_esc = html.escape(str(item.get("prenom") or ""))
         nom_esc = html.escape(str(item.get("nom") or ""))
-        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Non renseigné"
+        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
         loc_esc = html.escape(str(item.get("localisation") or "Non précisée"))
-        statut_esc = html.escape(str(item.get("statut") or "Archivée"))
+        age_str = f"  •  {item['age']} ans" if item.get("age") is not None else ""
         num = item.get("original_id") or item.get("id")
 
-        type_badge = "💎 Prioritaire" if item.get("prioritaire") else "📝 Standard"
-
-        dt_crea = item.get("date_creation")
-        crea_str = convert_utc_to_paris(dt_crea).strftime("%d/%m/%Y") if dt_crea else "?"
-
-        dt_arch = item.get("date_archivage")
-        arch_str = convert_utc_to_paris(dt_arch).strftime("%d/%m/%Y") if dt_arch else "?"
+        is_prio = bool(item.get("prioritaire"))
+        titre = f"💎  <b>Demande Prioritaire #{num} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{num} ({page + 1}/{total})</b>"
 
         lines = [
-            f"📦 <b>Archive dossier #{num}</b> ({page + 1}/{total})\n",
-            f"👤 <b>Identité :</b> {nom_complet} ({item.get('age', '?')} ans)",
-            f"📍 <b>Localisation :</b> {loc_esc}",
-            f"🎯 <b>Type :</b> {type_badge}",
-            f"📊 <b>Statut final :</b> <code>{statut_esc}</code>",
+            titre,
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"👤  <b>{nom_complet}{age_str}</b>",
+            f"📍  {loc_esc}"
         ]
 
-        admin_charge = item.get("admin_en_charge")
-        if admin_charge:
-            alias = self.db_manager.get_staff_alias(admin_charge)
-            lines.append(f"👨‍💼 <b>Traité par :</b> {html.escape(alias or 'Opérateur')}")
-        else:
-            lines.append("👨‍💼 <b>Traité par :</b> <i>Équipe support</i>")
-
         if item.get("details"):
-            det_esc = html.escape(str(item["details"]))
-            lines.append(f"📝 <b>Détails / Note :</b> {det_esc}")
+            det_esc = html.escape(str(item["details"]).strip())
+            lines.append(f"💬  <i>{det_esc}</i>")
 
-        lines.extend([
-            f"\n📅 <i>Déposée le : {crea_str}</i>",
-            f"🗄️ <i>Archivée le : {arch_str}</i>",
-        ])
+        if is_prio:
+            montant = float(item.get("montant") or 0.0)
+            lines.append(f"💰  <b>{montant:.2f} €</b>")
+
+        # Réseaux
+        reseaux = []
+        if item.get("instagram"):
+            ig = html.escape(str(item["instagram"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+        if item.get("snapchat"):
+            snap = html.escape(str(item["snapchat"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+
+        if reseaux:
+            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
+            lines.extend(reseaux)
+
+        # Bloc STATUT
+        statut_label = html.escape(str(item.get("statut") or "Archivée"))
+        dt_arch = item.get("date_archivage")
+
+        lines.append("\n───────  <b>STATUT</b>  ──────")
+        lines.append(f" • <b>{statut_label}</b> • ")
+        if dt_arch:
+            lines.append(f" <i>{format_datetime_fr(dt_arch)}</i>")
+
+        # Bloc INFOS
+        dt_crea = item.get("date_creation")
+        lines.append("\n───────  <b>INFOS</b>  ───────")
+        lines.append(f"<b>Déposé le :</b>  {format_datetime_fr(dt_crea)}")
+
+        # Bloc HISTORIQUE
+        statut_raw = str(item.get("statut") or "").lower()
+        admin_charge = item.get("admin_en_charge")
+        alias_admin = html.escape(str(self.db_manager.get_staff_alias(admin_charge) if admin_charge else "Opérateur"))
+
+        lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
+        if "abandon" in statut_raw or "annul" in statut_raw:
+            dt_ev = item.get("date_archivage") or item.get("date_modification")
+            date_ev_str = format_datetime_fr(dt_ev) if dt_ev else "Date inconnue"
+            raw_reason = item.get("raison_abandon") or item.get("details")
+            raison = clean_reason_text(raw_reason)
+
+            lines.append("❌ Abandonné")
+            lines.append(f"{alias_admin} le {date_ev_str}")
+            lines.append(f"<b>Raison :</b> {raison}")
+        else:
+            montant = float(item.get("montant") or 0.0)
+            montant_str = f" ({montant:.2f} €)" if montant > 0 else ""
+            dt_ev = item.get("date_livraison") or item.get("date_archivage") or item.get("date_modification")
+            date_ev_str = format_datetime_fr(dt_ev) if dt_ev else "Date inconnue"
+
+            lines.append(f"✅ Réussie{montant_str}")
+            lines.append(f"{alias_admin} le {date_ev_str}")
+
         return "\n".join(lines)
 
     def _build_user_archive_keyboard(self, page: int, total: int) -> InlineKeyboardMarkup:
@@ -452,16 +561,16 @@ class DemandeManager:
         nav_row = []
 
         if page > 0:
-            nav_row.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"user_arch_page_{page - 1}"))
+            nav_row.append(InlineKeyboardButton("⬅️ Précédent", callback_data=f"user_arch_page_{page - 1}"))
         if page < total - 1:
-            nav_row.append(InlineKeyboardButton("Suivante ➡️", callback_data=f"user_arch_page_{page + 1}"))
+            nav_row.append(InlineKeyboardButton("Suivant ➡️", callback_data=f"user_arch_page_{page + 1}"))
 
         if nav_row:
             buttons.append(nav_row)
 
         buttons.append([
-            InlineKeyboardButton("📋 Retour à mes demandes", callback_data="voir_demandes"),
-            InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
+            InlineKeyboardButton("📋 Mes demandes actives", callback_data="voir_demandes"),
+            InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")
         ])
         return InlineKeyboardMarkup(buttons)
 
@@ -478,14 +587,15 @@ class DemandeManager:
         btn_archives = InlineKeyboardButton(f"📦 Mes archives ({nb_archives})", callback_data="mes_archives")
 
         text = (
-            "📭 <b>Aucune demande active</b>\n\n"
-            "Vous n'avez pas encore soumis de demande.\n"
-            "Cliquez ci-dessous pour en créer une ou consultez votre historique :"
+            "📭 <b>AUCUN DOSSIER ACTIF</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Vous n'avez aucune demande en cours de traitement pour le moment.\n\n"
+            "<i>Créez votre première demande ou consultez vos archives :</i>"
         )
         keyboard = InlineKeyboardMarkup([
             [btn_creation],
             [btn_archives],
-            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+            [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
         ])
 
         chat_id = update.effective_chat.id if update.effective_chat else None
@@ -509,7 +619,7 @@ class DemandeManager:
         """Message en cas de problème de connexion base."""
         text = "❌ <b>Erreur technique</b> lors de la récupération de vos demandes."
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+            [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
         ])
         chat_id = update.effective_chat.id if update.effective_chat else None
 
