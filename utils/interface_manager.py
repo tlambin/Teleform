@@ -213,27 +213,27 @@ class InterfaceManager:
     # ========== SOUS-MENU GESTION DU BOT (CONFORME MAQUETTE) ==========
 
     def get_gerer_bot_menu(self):
-        """Menu de contrôle du bot conforme à la maquette GESTION DU BOT."""
-        try:
-            demandes_ouvertes = self.config.are_demandes_enabled()
-        except Exception:
-            demandes_ouvertes = True
+        """Menu de contrôle du bot conforme à la maquette GESTION DU BOT avec état en tête."""
+        val_demandes = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
+        demandes_ouvertes = val_demandes in ("true", "1", "yes")
 
-        demandes_suspendues = not demandes_ouvertes
+        etat_badge = "🟢 <b>OUVERTES (Actives)</b>" if demandes_ouvertes else "🔴 <b>SUSPENDUES (Fermées)</b>"
         label_suspension = (
-            "✅ RÉACTIVER LES DEMANDES ✅"
-            if demandes_suspendues
-            else "❌ SUSPENDRE LES DEMANDES ❌"
+            "❌ SUSPENDRE LES DEMANDES ❌"
+            if demandes_ouvertes
+            else "✅ RÉACTIVER LES DEMANDES ✅"
         )
 
         message = (
             "🤖 <b>GESTION DU BOT</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>État des demandes :</b> {etat_badge}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Panneau de contrôle système de la plateforme :"
         )
 
         keyboard = [
-            # 1. SUSPENDRE LES DEMANDES
+            # 1. SUSPENDRE / RÉACTIVER LES DEMANDES
             [InlineKeyboardButton(label_suspension, callback_data="bot_toggle_suspension")],
 
             # 2. ⌛ LIMITES | ⚖️ QUOTAS
@@ -659,6 +659,12 @@ class InterfaceManager:
         """Aiguillage des callbacks d'interface vers le bon générateur de vue."""
         is_vip = self.db_manager.is_user_vip(user_id)
 
+        def toggle_suspension_handler():
+            val_actuelle = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
+            nouvel_etat = "false" if val_actuelle in ("true", "1", "yes") else "true"
+            self.db_manager.set_config_value("demandes_enabled", nouvel_etat)
+            return self.get_gerer_bot_menu()
+
         routing_map = {
             "start_menu": lambda: self.get_start_interface(user_id, first_name),
             "gerer_demandes": lambda: self.get_gerer_demandes_menu(user_id),
@@ -669,11 +675,7 @@ class InterfaceManager:
             "gerer_vips": self.get_gerer_vips_menu,
             "menu_vip_shop": lambda: self.get_vip_shop_menu(is_vip=is_vip),
             "gerer_bot": self.get_gerer_bot_menu,
-            "bot_toggle_suspension": lambda: (
-                self.config.disable_demandes() if self.config.are_demandes_enabled() else self.config.enable_demandes(),
-                self.get_gerer_bot_menu()[0],
-                self.get_gerer_bot_menu()[1]
-            ),
+            "bot_toggle_suspension": toggle_suspension_handler,
             "menu_danger_zone": self.get_danger_zone_menu,
             "menu_cfg_group": self.get_group_subscription_config_menu,
             "menu_cfg_support": self.get_support_config_menu,

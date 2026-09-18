@@ -229,13 +229,11 @@ class DemandeManager:
             await self._send_error_message(update, context, edit_message)
 
     def _format_demande_card(self, demande: dict, current_page: int, total_pages: int) -> str:
-        """Formate la fiche côté utilisateur avec calibrage strict des traits et bloc Historique."""
-        user_req_num = demande.get("request_number")
-        if not user_req_num or (user_req_num == 1 and total_pages > 1):
-            user_req_num = total_pages - current_page
+        """Formate la fiche côté utilisateur avec numérotation propre et calibrage strict des traits."""
+        num_client = total_pages - current_page
 
         is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{user_req_num} ({current_page + 1}/{total_pages})</b>" if is_prio else f"📝  <b>Demande Standard #{user_req_num} ({current_page + 1}/{total_pages})</b>"
+        titre = f"💎  <b>Demande Prioritaire #{num_client} ({current_page + 1}/{total_pages})</b>" if is_prio else f"📝  <b>Demande Standard #{num_client} ({current_page + 1}/{total_pages})</b>"
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
@@ -476,16 +474,17 @@ class DemandeManager:
                 )
 
     def _format_user_archive_card(self, item: dict, page: int, total: int) -> str:
-        """Formate la fiche d'une archive pour la vue du demandeur avec bloc Historique."""
+        """Formate la fiche d'une archive pour la vue du demandeur avec numérotation propre."""
+        num_archive_client = total - page
+
         prenom_esc = html.escape(str(item.get("prenom") or ""))
         nom_esc = html.escape(str(item.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
         loc_esc = html.escape(str(item.get("localisation") or "Non précisée"))
         age_str = f"  •  {item['age']} ans" if item.get("age") is not None else ""
-        num = item.get("original_id") or item.get("id")
 
         is_prio = bool(item.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{num} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{num} ({page + 1}/{total})</b>"
+        titre = f"💎  <b>Demande Prioritaire #{num_archive_client} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{num_archive_client} ({page + 1}/{total})</b>"
 
         lines = [
             titre,

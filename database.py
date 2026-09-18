@@ -453,7 +453,7 @@ class DatabaseManager:
     # ==================== COMPTEURS MENUS GESTION DES DEMANDES ====================
 
     def get_staff_demandes_counts(self, user_id: int) -> Dict[str, int]:
-        """Calcule les compteurs : disponibles (selon perms), suivies actives, et strictement archivées."""
+        """Calcule les compteurs : disponibles (selon perms), suivies actives (toutes celles en cours de traitement), et strictement archivées."""
         counts = {"dispo": 0, "suivies": 0, "archives": 0}
         uid = int(user_id)
         is_own = self.is_owner(uid)
@@ -501,30 +501,25 @@ class DatabaseManager:
                 r_dispo = cursor.fetchone()
                 counts["dispo"] = int(r_dispo["total"]) if r_dispo and r_dispo.get("total") else 0
 
-                # 2. SUIVIES : Uniquement les dossiers en cours assignés à cet opérateur
+                # 2. SUIVIES : toutes les demandes assignées à cet opérateur encore présentes dans la table demandes
+                # (inclut les réussies en attente de livraison, de paiement ou d'auto-archivage)
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total FROM demandes
-                    WHERE admin_en_charge = %s AND statut IN ('⏳ En attente', '🔄 En cours')
+                    WHERE admin_en_charge = %s
                     """,
                     (uid,)
                 )
                 r_suivi = cursor.fetchone()
                 counts["suivies"] = int(r_suivi["total"]) if r_suivi and r_suivi.get("total") else 0
 
-                # 3. ARCHIVÉES : Uniquement dans la table archives (finalisées/réussies ou abandonnées par lui)
-                # Inclut les dossiers où l'opérateur a abandonné la demande même si relancée ultérieurement
-                alias = self.get_staff_alias(uid)
+                # 3. ARCHIVÉES : uniquement les dossiers officiellement basculés dans la table archives
                 cursor.execute(
                     """
-                    SELECT COUNT(DISTINCT a.id) AS total
-                    FROM archives a
-                    LEFT JOIN demandes_suivi ds ON a.original_id = ds.demande_id AND ds.admin_id = %s
-                    WHERE a.admin_en_charge = %s 
-                       OR ds.admin_id = %s
-                       OR a.details LIKE %s
+                    SELECT COUNT(*) AS total FROM archives
+                    WHERE admin_en_charge = %s
                     """,
-                    (uid, uid, uid, f"%{alias}%")
+                    (uid,)
                 )
                 r_arch = cursor.fetchone()
                 counts["archives"] = int(r_arch["total"]) if r_arch and r_arch.get("total") else 0

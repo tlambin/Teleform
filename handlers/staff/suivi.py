@@ -213,14 +213,14 @@ class SuiviManager:
                 await query.answer("❌ Demande introuvable.", show_alert=True)
                 return
 
-            req_num = html.escape(str(dem.get("request_number", demande_id)))
+            real_id = dem["id"]
             prenom_esc = html.escape(str(dem.get("prenom") or ""))
             montant_val = float(dem.get("montant") or 0.0)
 
             prompt_text = (
                 f"💳 <b>CONFIRMATION D'ENCAISSEMENT</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Dossier :</b> #{req_num}\n"
+                f"• <b>Dossier :</b> #{real_id}\n"
                 f"• <b>Cible :</b> {prenom_esc}\n"
                 f"• <b>Montant :</b> <code>{montant_val:.2f} €</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -290,17 +290,17 @@ class SuiviManager:
 
         ok = self.db_manager.set_demande_paiement_statut(demande_id, "paye")
         if ok:
-            req_num = dem.get("request_number", demande_id)
+            real_id = dem["id"]
             alias = self.db_manager.get_staff_alias(staff_id)
             alias_esc = html.escape(str(alias))
             prenom_esc = html.escape(str(dem.get("prenom") or "la cible"))
             montant_val = float(dem.get("montant") or 0.0)
 
-            await query.answer(f"✅ Paiement du dossier #{req_num} validé !", show_alert=True)
+            await query.answer(f"✅ Paiement du dossier #{real_id} validé !", show_alert=True)
 
             try:
                 msg_client = (
-                    f"💳 <b>PAIEMENT CONFIRMÉ (Dossier #{req_num})</b>\n"
+                    f"💳 <b>PAIEMENT CONFIRMÉ (Dossier #{real_id})</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"Votre référent <b>{alias_esc}</b> a validé la réception de votre règlement.\n\n"
                     "<i>L'envoi de vos contenus est désormais débloqué !</i>"
@@ -318,7 +318,7 @@ class SuiviManager:
                 alert_pay = (
                     f"💰 <b>SURVEILLANCE STAFF — PAIEMENT ENCAISSÉ</b>\n\n"
                     f"• <b>Opérateur :</b> {alias_esc} (<code>{staff_id}</code>)\n"
-                    f"• <b>Dossier :</b> #{req_num} ({prenom_esc})\n"
+                    f"• <b>Dossier :</b> #{real_id} ({prenom_esc})\n"
                     f"• <b>Montant encaissé :</b> <code>{montant_val:.2f} €</code>\n"
                     f"• <b>Mode :</b> Règlement direct validé."
                 )
@@ -452,7 +452,7 @@ class SuiviManager:
         await self._render_clean_text(query, context, text, InlineKeyboardMarkup(keyboard))
 
     def _fetch_sorted_suivis(self, admin_id: int, context: ContextTypes.DEFAULT_TYPE) -> list:
-        """Exécute la requête SQL avec tri dynamique sécurisé."""
+        """Exécute la requête SQL avec tri dynamique sécurisé en incluant toutes les demandes assignées."""
         settings = self._get_sort_settings(context)
         sb = settings["sort_by"]
         order = settings["order"] if settings["order"] in ("ASC", "DESC") else "DESC"
@@ -468,8 +468,7 @@ class SuiviManager:
         sort_column = col_map.get(sb, "ds.date_suivi")
 
         sql_where = [
-            "ds.admin_id = %s",
-            "ds.statut_suivi = 'active'"
+            "d.admin_en_charge = %s"
         ]
         params = [admin_id]
 
@@ -483,16 +482,18 @@ class SuiviManager:
 
         query_sql = f"""
             SELECT d.*, d.user_id AS user_id, u.username, u.first_name AS user_first_name,
-                   ds.date_suivi
+                   COALESCE(ds.date_suivi, d.date_modification) AS date_suivi
             FROM demandes d
-            JOIN demandes_suivi ds ON d.id = ds.demande_id
+            LEFT JOIN demandes_suivi ds ON d.id = ds.demande_id AND ds.admin_id = %s
             LEFT JOIN users u ON d.user_id = u.user_id
             WHERE {' AND '.join(sql_where)}
             ORDER BY d.prioritaire DESC, {sort_column} {order}
         """
 
+        full_params = tuple([admin_id] + params)
+
         with self.db_manager.get_cursor() as cursor:
-            cursor.execute(query_sql, tuple(params))
+            cursor.execute(query_sql, full_params)
             return cursor.fetchall()
 
     async def show_demandes_suivies_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
@@ -611,10 +612,10 @@ class SuiviManager:
                     )
 
     def _format_suivi_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche du dossier suivi par le staff selon le gabarit calibré et avec bloc Historique."""
-        req_num = html.escape(str(demande.get("request_number") or demande["id"]))
+        """Formate la fiche du dossier suivi par le staff selon le gabarit calibré et avec le vrai ID."""
+        real_id = demande["id"]
         is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{req_num} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{req_num} ({page + 1}/{total})</b>"
+        titre = f"💎  <b>Demande Prioritaire #{real_id} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{real_id} ({page + 1}/{total})</b>"
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))

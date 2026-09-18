@@ -117,7 +117,7 @@ class DispoManager:
 
         # 2. Suppression administrative
         elif data.startswith("admin_del_dispo_"):
-            if not self.config.is_admin(user_id):
+            if not self.db_manager.is_admin(user_id):
                 await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
                 return
 
@@ -226,7 +226,7 @@ class DispoManager:
         query = update.callback_query
         staff_id = update.effective_user.id
 
-        if not self.config.is_staff(staff_id):
+        if not self.db_manager.is_staff(staff_id):
             await query.answer("❌ Action réservée aux membres de l'équipe (Staff).", show_alert=True)
             return
 
@@ -285,7 +285,7 @@ class DispoManager:
                     """
                     INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
                     VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE
+                    ON DUPLICATE KEY UPDATE 
                         admin_id = VALUES(admin_id),
                         derniere_action = NOW(),
                         statut_suivi = 'active'
@@ -294,13 +294,13 @@ class DispoManager:
                 )
 
             staff_alias = self.db_manager.get_staff_alias(staff_id)
-            req_num = demande.get("request_number", demande_id)
+            real_id = demande["id"]
 
             await self.notifs_manager.send_status_update_notification(
                 context=context,
                 user_id=demande["user_id"],
                 demande_id=demande["id"],
-                request_number=req_num,
+                request_number=real_id,
                 prenom_cible=demande.get("prenom"),
                 old_status=demande.get("statut", "📥 Reçue"),
                 new_status=nouveau_statut,
@@ -317,7 +317,7 @@ class DispoManager:
                 alert_text = (
                     f"👀 <b>SURVEILLANCE STAFF — PRISE EN CHARGE</b>\n\n"
                     f"• <b>Opérateur :</b> {alias_esc} (<code>{staff_id}</code>)\n"
-                    f"• <b>Dossier :</b> #{req_num} ({target_prenom})\n"
+                    f"• <b>Dossier :</b> #{real_id} ({target_prenom})\n"
                     f"• <b>Statut :</b> <code>⏳ En attente</code>"
                 )
                 kb_monitor = InlineKeyboardMarkup([
@@ -338,7 +338,7 @@ class DispoManager:
             except Exception as mon_err:
                 logger.warning("Erreur notification surveillance staff : %s", mon_err)
 
-            await query.answer(f"✅ Demande #{req_num} prise en charge !", show_alert=False)
+            await query.answer(f"✅ Demande #{real_id} prise en charge !", show_alert=False)
 
             is_trial = self.db_manager.is_staff_trial(staff_id)
             trial_notice = "\n\n🧪 <i>Ce dossier constitue votre test d'intégration. Menez-le à bien pour valider votre accès complet !</i>" if is_trial else ""
@@ -350,7 +350,7 @@ class DispoManager:
             success_msg = (
                 f"🎉 <b>PRISE EN CHARGE VALIDÉE</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"La demande <b>#{req_num}</b> est passée en statut <b>⏳ En attente</b>.\n"
+                f"La demande <b>#{real_id}</b> est passée en statut <b>⏳ En attente</b>.\n"
                 f"Le demandeur a été notifié de votre attribution.{trial_notice}"
             )
             await self._render_clean_text(query, context, success_msg, keyboard)
@@ -584,11 +584,11 @@ class DispoManager:
             active_demandes = self.db_manager.get_staff_active_demandes(user_id)
             if active_demandes:
                 d = active_demandes[0]
-                req_num = d.get("request_number", d["id"])
+                real_id = d["id"]
                 msg = (
                     "🧪 <b>PÉRIODE D'ESSAI EN COURS</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"Vous avez déjà un dossier test en cours de traitement (<b>Dossier #{req_num}</b>).\n\n"
+                    f"Vous avez déjà un dossier test en cours de traitement (<b>Dossier #{real_id}</b>).\n\n"
                     "<i>Finalisez cette demande pour débloquer l'accès complet à la file générale.</i>"
                 )
                 kb = InlineKeyboardMarkup([
@@ -616,7 +616,7 @@ class DispoManager:
             text_card = self._format_trial_demande_card(demande)
             demande_id = demande["id"]
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("PRENDRE EN CHARGE", callback_data=f"suivre_demande_{demande_id}")],
+                [InlineKeyboardButton("❤️ PRENDRE EN CHARGE ❤️", callback_data=f"suivre_demande_{demande_id}")],
                 [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
             ])
             photo_id = demande.get("photo_id")
@@ -669,7 +669,7 @@ class DispoManager:
             return
 
         random_page = random.randint(0, len(demandes) - 1)
-        await query.answer(f"🎲 Dossier sélectionné : #{demandes[random_page].get('request_number', demandes[random_page]['id'])}")
+        await query.answer(f"🎲 Dossier sélectionné : #{demandes[random_page]['id']}")
         await self.show_demandes_disponibles_page(update, context, page=random_page)
 
     async def _render_photo(self, query, context: ContextTypes.DEFAULT_TYPE, photo_id: str, caption: str, keyboard: InlineKeyboardMarkup):
@@ -748,10 +748,10 @@ class DispoManager:
         nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
         age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
         loc_esc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
-        req_num = demande.get("request_number", demande["id"])
+        real_id = demande["id"]
 
         is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{req_num}</b>" if is_prio else f"📝  <b>Demande Standard #{req_num}</b>"
+        titre = f"💎  <b>Demande Prioritaire #{real_id}</b>" if is_prio else f"📝  <b>Demande Standard #{real_id}</b>"
 
         lines = [
             titre,
@@ -813,10 +813,10 @@ class DispoManager:
         return "\n".join(lines)
 
     def _format_demande_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche d'une demande disponible pour le staff selon la maquette."""
-        req_num = html.escape(str(demande.get("request_number") or demande["id"]))
+        """Formate la fiche d'une demande disponible pour le staff selon la maquette avec le vrai ID."""
+        real_id = demande["id"]
         is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{req_num} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{req_num} ({page + 1}/{total})</b>"
+        titre = f"💎  <b>Demande Prioritaire #{real_id} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{real_id} ({page + 1}/{total})</b>"
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
@@ -922,8 +922,8 @@ class DispoManager:
             ]
         ]
 
-        # 3. 🗑️ SUPPRIMER 🗑️ (admin/owner uniquement)
-        if self.config.is_admin(user_id):
+        # 3. 🗑️ SUPPRIMER 🗑️ (admin/owner uniquement via db_manager)
+        if self.db_manager.is_admin(user_id):
             buttons.append([
                 InlineKeyboardButton("🗑️ SUPPRIMER 🗑️", callback_data=f"admin_del_dispo_{demande_id}")
             ])

@@ -73,7 +73,7 @@ class StaffHandlers:
         user_id = update.effective_user.id
         data = query.data or ""
 
-        if not self.config.is_staff(user_id):
+        if not self.db_manager.is_staff(user_id):
             logger.warning("Tentative d'accès staff refusée pour l'utilisateur %s", user_id)
             return
 
@@ -89,11 +89,11 @@ class StaffHandlers:
                 await self._handle_vip_decline(query, context, demande_id, user_id)
                 return
 
-            # 1. Demandes disponibles et filtres
+            # 1. Demandes disponibles, filtres et suppression administrative
             elif data == "demandes_disponibles":
                 await self.dispo.show_demandes_disponibles(update, context)
 
-            elif data.startswith("dispo_"):
+            elif data.startswith("dispo_") or data.startswith("admin_del_dispo_"):
                 await self.dispo.handle_callback_routing(update, context, data)
 
             # 2. Prise en charge d'une demande disponible -> statut "En attente" + notification
