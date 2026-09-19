@@ -19,12 +19,12 @@ class StatutsManager:
         logger.info("StatutsManager initialisé avec support Staff/Admin, Surveillance et Dénouement Période d'essai")
 
     async def show_status_change_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Affiche le panneau principal de paramétrage du statut avec interrupteurs et sous-options."""
+        """Affiche le panneau principal de paramétrage du statut selon le plan exact."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
-        if not self.config.is_staff(update.effective_user.id):
+        if not self.db_manager.is_staff(update.effective_user.id):
             await query.answer("❌ Action réservée aux membres de l'équipe (Staff).", show_alert=True)
             return
 
@@ -32,7 +32,7 @@ class StatutsManager:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT request_number, prenom, nom, statut, is_difficile, reussie_substatus, photo_id
+                    SELECT id, request_number, prenom, nom, statut, is_difficile, reussie_substatus, photo_id
                     FROM demandes WHERE id = %s
                     """,
                     (demande_id,),
@@ -43,48 +43,43 @@ class StatutsManager:
                 await query.answer("❌ Demande introuvable.", show_alert=True)
                 return
 
-            prenom_esc = html.escape(str(demande.get("prenom") or ""))
-            nom_esc = html.escape(str(demande.get("nom") or ""))
-            nom_complet = f"{prenom_esc} {nom_esc}".strip()
             current_status = demande.get("statut") or "📥 Reçue"
             is_diff = bool(demande.get("is_difficile", False))
             reussie_sub = demande.get("reussie_substatus")
             statut_display = self.db_manager.format_statut_display(current_status, is_diff, reussie_sub)
-            req_num = html.escape(str(demande.get("request_number", demande_id)))
             is_photo_message = bool(query.message and query.message.photo)
 
-            keyboard = []
+            keyboard = [
+                # Ligne 1 : ⏳ EN ATTENTE | 🔄 EN COURS
+                [
+                    InlineKeyboardButton("⏳ EN ATTENTE", callback_data=f"status_apply_{demande_id}_attente"),
+                    InlineKeyboardButton("🔄 EN COURS", callback_data=f"status_apply_{demande_id}_encours")
+                ]
+            ]
 
-            # 1. Statuts principaux de traitement
-            btn_attente = "• ⏳ En attente •" if current_status == "⏳ En attente" else "⏳ En attente"
-            btn_encours = "• 🔄 En cours •" if current_status == "🔄 En cours" else "🔄 En cours"
-            keyboard.append([
-                InlineKeyboardButton(btn_attente, callback_data=f"status_apply_{demande_id}_attente"),
-                InlineKeyboardButton(btn_encours, callback_data=f"status_apply_{demande_id}_encours")
-            ])
-
-            # 2. Interrupteur Difficile (si En attente ou En cours)
+            # Ligne 2 : Option Difficile affichée UNIQUEMENT si le dossier est En attente ou En cours
             if current_status in ("⏳ En attente", "🔄 En cours"):
-                toggle_icon = "🟢 ACTIVÉE" if is_diff else "⚪ DÉSACTIVÉE"
+                diff_label = "⚠️ DIFFICILE : OUI" if is_diff else "⚠️ DIFFICILE : NON"
                 keyboard.append([
-                    InlineKeyboardButton(f"⚠️ Option Difficile : {toggle_icon}", callback_data=f"status_toggle_diff_{demande_id}")
+                    InlineKeyboardButton(diff_label, callback_data=f"status_toggle_diff_{demande_id}")
                 ])
 
-            # 3. Statut Réussie et Abandon
-            btn_reussie = f"• {statut_display} •" if current_status == "✅ Réussie" else "✅ Réussie..."
+            # Ligne 3 : ✅ RÉUSSIE | ❌ ABANDONNER
             keyboard.append([
-                InlineKeyboardButton(btn_reussie, callback_data=f"status_sub_reussie_{demande_id}"),
-                InlineKeyboardButton("❌ Abandonner", callback_data=f"status_prompt_abandon_{demande_id}")
+                InlineKeyboardButton("✅ RÉUSSIE", callback_data=f"status_sub_reussie_{demande_id}"),
+                InlineKeyboardButton("❌ ABANDONNER", callback_data=f"status_prompt_abandon_{demande_id}")
             ])
 
-            # 4. Bouton Annuler (retour propre aux suivis)
-            keyboard.append([InlineKeyboardButton("🔙 Annuler", callback_data="demandes_suivies")])
+            # Ligne 4 : ⬅️ RETOUR
+            keyboard.append([
+                InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
+            ])
 
             text = (
-                f"📊 <b>Changer le Statut</b>\n\n"
-                f"📝 <b>Demande #{req_num}</b> - {nom_complet}\n"
-                f"Statut actuel : <b>{html.escape(statut_display)}</b>\n\n"
-                "Choisissez le nouveau statut ou ajustez les options ci-dessous :"
+                "📌 <b>CHANGER LE STATUT</b> 📌\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"• {html.escape(statut_display)} •\n\n"
+                "<i>Sélectionnez le nouveau statut :</i>"
             )
 
             if is_photo_message:
@@ -104,23 +99,27 @@ class StatutsManager:
             logger.error("Erreur affichage menu changement statut : %s", exc, exc_info=True)
 
     async def show_reussie_suboptions(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Affiche le sous-panneau de sélection pour le statut ✅ Réussie."""
+        """Affiche le sous-panneau de sélection pour le statut ✅ Réussie selon le plan exact."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
         is_photo = bool(query.message and query.message.photo)
+
         text = (
-            "✅ <b>Demande Réussie - Précision</b>\n\n"
-            "Veuillez définir la nature de la réussite :\n\n"
-            "• <b>🟢 Active :</b> La demande a abouti, mais le suivi reste ouvert pour obtenir des contenus supplémentaires.\n"
-            "• <b>❎ Terminée :</b> La demande est pleinement finalisée, aucun contenu de plus ne sera recherché."
+            "✅ <b>DEMANDE RÉUSSIE</b> ✅\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "• <b>Active :</b> La demande reste active, de nouveaux éléments peuvent être obtenus.\n"
+            "• <b>Terminée :</b> La demande est réussie et définitivement clôturée.\n\n"
+            "<i>Sélectionnez le statut actuel :</i>"
         )
 
         keyboard = [
-            [InlineKeyboardButton("🟢 Active (D'autres contenus possibles)", callback_data=f"status_apply_reussie_{demande_id}_active")],
-            [InlineKeyboardButton("❎ Terminée (Dossier clos)", callback_data=f"status_apply_reussie_{demande_id}_terminee")],
-            [InlineKeyboardButton("🔙 Retour", callback_data=f"change_status_{demande_id}")]
+            [
+                InlineKeyboardButton("🟢 ACTIVE 🟢", callback_data=f"status_apply_reussie_{demande_id}_active"),
+                InlineKeyboardButton("❎ TERMINÉE ❎", callback_data=f"status_apply_reussie_{demande_id}_terminee")
+            ],
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data=f"change_status_{demande_id}")]
         ]
 
         if is_photo:
@@ -135,7 +134,7 @@ class StatutsManager:
             return
 
         staff_id = update.effective_user.id
-        if not self.config.is_staff(staff_id):
+        if not self.db_manager.is_staff(staff_id):
             await query.answer("❌ Action réservée aux membres de l'équipe (Staff).", show_alert=True)
             return
 
@@ -171,8 +170,8 @@ class StatutsManager:
             if data.startswith("status_toggle_diff_"):
                 demande_id = int(data.replace("status_toggle_diff_", ""))
                 new_diff_state = self.db_manager.toggle_demande_difficile(demande_id)
-                state_label = "activée ⚠️" if new_diff_state else "désactivée 🟢"
-                await query.answer(f"Option Difficile {state_label} !", show_alert=False)
+                state_label = "OUI ⚠️" if new_diff_state else "NON"
+                await query.answer(f"Difficulté définie sur : {state_label}", show_alert=False)
 
                 with self.db_manager.get_cursor() as cursor:
                     cursor.execute(
@@ -188,7 +187,7 @@ class StatutsManager:
                         context=context,
                         user_id=demande["user_id"],
                         demande_id=demande["id"],
-                        request_number=demande.get("request_number"),
+                        request_number=demande["id"],
                         prenom_cible=demande.get("prenom"),
                         old_status=current_status,
                         new_status=current_status,
@@ -246,6 +245,7 @@ class StatutsManager:
             await query.answer("❌ Demande introuvable.", show_alert=True)
             return
 
+        real_id = demande["id"]
         old_status = demande["statut"]
         old_diff = bool(demande.get("is_difficile", False))
         old_sub = demande.get("reussie_substatus")
@@ -261,7 +261,7 @@ class StatutsManager:
                     """
                     INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
                     VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE 
+                    ON DUPLICATE KEY UPDATE
                         admin_id = VALUES(admin_id),
                         derniere_action = NOW(),
                         statut_suivi = 'active'
@@ -276,7 +276,7 @@ class StatutsManager:
             try:
                 congrats_msg = (
                     "🎉 <b>FÉLICITATIONS ! PÉRIODE D'ESSAI VALIDÉE !</b>\n\n"
-                    f"Votre prise en charge de la demande <b>#{demande.get('request_number', demande_id)}</b> est un succès.\n"
+                    f"Votre prise en charge de la demande <b>#{real_id}</b> est un succès.\n"
                     "Votre statut probatoire est désormais levé : vous avez un <b>accès complet</b> à l'ensemble des demandes disponibles !"
                 )
                 await context.bot.send_message(
@@ -293,7 +293,7 @@ class StatutsManager:
             context=context,
             user_id=demande["user_id"],
             demande_id=demande["id"],
-            request_number=demande.get("request_number"),
+            request_number=real_id,
             prenom_cible=demande.get("prenom"),
             old_status=old_label,
             new_status=nouveau_statut,
@@ -309,7 +309,6 @@ class StatutsManager:
         # ==================== ALERTE SURVEILLANCE STAFF (ADMINS) ====================
         try:
             monitors = self.db_manager.get_monitoring_admins()
-            req_num_mon = html.escape(str(demande.get("request_number", demande_id)))
             target_prenom = html.escape(str(demande.get("prenom") or "la cible"))
             staff_alias_esc = html.escape(str(staff_alias))
             nouveau_statut_display = self.db_manager.format_statut_display(nouveau_statut, new_diff, reussie_substatus)
@@ -317,7 +316,7 @@ class StatutsManager:
             alert_text = (
                 f"👀 <b>SURVEILLANCE STAFF — CHANGEMENT DE STATUT</b>\n\n"
                 f"• <b>Opérateur :</b> {staff_alias_esc} (<code>{staff_id}</code>)\n"
-                f"• <b>Dossier :</b> #{req_num_mon} ({target_prenom})\n"
+                f"• <b>Dossier :</b> #{real_id} ({target_prenom})\n"
                 f"• <b>Nouveau statut :</b> <code>{html.escape(nouveau_statut_display)}</code>"
             )
 
@@ -349,8 +348,8 @@ class StatutsManager:
         else:
             await self._update_existing_text_message(query, demande_fresh)
 
-        req_num = html.escape(str(demande.get("request_number", demande_id)))
-        prenom_esc = html.escape(str(demande.get("prenom") or "la cible"))
+        req_num = html.escape(str(demande_fresh.get("id")))
+        prenom_esc = html.escape(str(demande_fresh.get("prenom") or "la cible"))
         has_delivered = bool(demande_fresh.get("has_delivered_content", False))
         is_prio = bool(demande_fresh.get("prioritaire", False))
         montant = float(demande_fresh.get("montant") or 0.0)
@@ -360,12 +359,12 @@ class StatutsManager:
         if nouveau_statut == "✅ Réussie" and reussie_substatus == "active":
             remind_text = (
                 f"💡 <b>Rappel de suivi (Demande #{req_num})</b>\n\n"
-                f"Le statut a été passé en <b>Réussie (🟢 Active)</b>.\n"
+                f"Le statut a été passé en <b>Réussie (Active)</b>.\n"
                 f"D'autres contenus peuvent être obtenus sur <b>{prenom_esc}</b>."
             )
             remind_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💬 Contacter le demandeur", callback_data=f"contacter_{demande_id}")],
-                [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")]
+                [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
             ])
             await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
 
@@ -379,7 +378,7 @@ class StatutsManager:
                     "Le demandeur a reçu les options de paiement (Stars Telegram ou contact direct).\n\n"
                     "• Si le client règle par Stars, vous serez notifié instantanément.\n"
                     "• S'il vous contacte pour un autre moyen de paiement (PayPal, virement, etc.), "
-                    "vous pourrez valider la réception des fonds via le bouton <b>« 💳 Confirmer la réception du paiement »</b> sur votre fiche de suivi.\n\n"
+                    "vous pourrez valider la réception des fonds via le bouton <b>« 💰 VALIDER LE PAIEMENT 💰 »</b> sur votre fiche de suivi.\n\n"
                     "<i>Conservez vos fichiers : vous pourrez les envoyer dès que le paiement sera validé.</i>"
                 )
                 prio_wait_kb = InlineKeyboardMarkup([
@@ -392,7 +391,7 @@ class StatutsManager:
             elif not has_delivered:
                 remind_text = (
                     f"⚠️ <b>Action requise (Demande #{req_num})</b>\n\n"
-                    f"La demande a été déclarée <b>Réussie (❎ Terminée)</b>.\n\n"
+                    f"La demande a été déclarée <b>Réussie (Terminée)</b>.\n\n"
                     f"👉 Vous devez <b>obligatoirement envoyer le contenu obtenu</b> à l'utilisateur.\n"
                     "<i>Le bouton d'archivage sera débloqué dès votre premier envoi (et la demande s'auto-archivera sous 72h).</i>"
                 )
@@ -409,7 +408,7 @@ class StatutsManager:
                     "ou le laisser s'archiver automatiquement dans 72h."
                 )
                 remind_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📦 Archiver le dossier maintenant", callback_data=f"status_archive_now_{demande_id}")],
+                    [InlineKeyboardButton("📦 ARCHIVER LE DOSSIER 📦", callback_data=f"status_archive_now_{demande_id}")],
                     [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
                 ])
                 await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
@@ -431,7 +430,7 @@ class StatutsManager:
 
         success = self.db_manager.archiver_demande_reussie(demande_id)
         if success:
-            req_num = html.escape(str(demande.get("request_number", demande_id)))
+            real_id = demande["id"]
             staff_alias = self.db_manager.get_staff_alias(staff_id)
 
             # Notification de surveillance aux administrateurs
@@ -440,7 +439,7 @@ class StatutsManager:
                 alert_arch = (
                     f"🗄️ <b>SURVEILLANCE STAFF — DOSSIER ARCHIVÉ</b>\n\n"
                     f"• <b>Opérateur :</b> {html.escape(str(staff_alias))} (<code>{staff_id}</code>)\n"
-                    f"• <b>Dossier :</b> #{req_num} ({html.escape(str(demande.get('prenom') or 'la cible'))})\n"
+                    f"• <b>Dossier :</b> #{real_id} ({html.escape(str(demande.get('prenom') or 'la cible'))})\n"
                     "• <b>Statut :</b> Archivé avec succès."
                 )
                 for mon_id in monitors:
@@ -452,12 +451,12 @@ class StatutsManager:
             except Exception as mon_err:
                 logger.warning("Erreur surveillance archivage : %s", mon_err)
 
-            await query.answer(f"✅ Demande #{req_num} archivée avec succès !")
+            await query.answer(f"✅ Demande #{real_id} archivée avec succès !")
             back_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📋 Retour à mes suivis", callback_data="demandes_suivies")
+                InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")
             ]])
             msg = (
-                f"📦 <b>Demande #{req_num} archivée !</b>\n\n"
+                f"📦 <b>Demande #{real_id} archivée !</b>\n\n"
                 "Le dossier est désormais clos et archivé. Le quota du demandeur a été libéré."
             )
             if query.message and query.message.photo:
@@ -476,19 +475,19 @@ class StatutsManager:
         context.user_data["waiting_abandon_reason"] = {"demande_id": demande_id}
 
         with self.db_manager.get_cursor() as cursor:
-            cursor.execute("SELECT request_number FROM demandes WHERE id = %s", (demande_id,))
+            cursor.execute("SELECT id FROM demandes WHERE id = %s", (demande_id,))
             row = cursor.fetchone()
 
-        req_num = html.escape(str(row.get("request_number", demande_id))) if row else str(demande_id)
+        real_id = row["id"] if row else demande_id
         prompt_text = (
-            f"⚠️ <b>Abandon de la demande #{req_num}</b>\n\n"
+            f"⚠️ <b>Abandon de la demande #{real_id}</b>\n\n"
             "Veuillez taper au clavier la <b>raison de l'abandon</b>.\n\n"
             "<i>Ce message sera transmis au demandeur pour qu'il comprenne la situation "
             "et choisisse soit de remettre la demande en disponible (pour un autre membre), "
             "soit de l'abandonner définitivement (ce qui libère son quota).</i>"
         )
         cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Annuler", callback_data="demandes_suivies")
+            InlineKeyboardButton("❌ Annuler", callback_data=f"change_status_{demande_id}")
         ]])
 
         if query.message and query.message.photo:
@@ -517,7 +516,7 @@ class StatutsManager:
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
-                    SELECT request_number, user_id, prenom, ancien_admin_alias, raison_abandon 
+                    SELECT id, request_number, user_id, prenom, ancien_admin_alias, raison_abandon
                     FROM demandes WHERE id = %s
                     """,
                     (demande_id,)
@@ -540,14 +539,14 @@ class StatutsManager:
 
                 cursor.execute(
                     """
-                    UPDATE demandes 
+                    UPDATE demandes
                     SET statut = '❌ Abandonnée',
                         is_difficile = FALSE,
                         reussie_substatus = NULL,
                         admin_en_charge = %s,
                         ancien_admin_alias = %s,
                         raison_abandon = %s,
-                        date_modification = NOW() 
+                        date_modification = NOW()
                     WHERE id = %s
                     """,
                     (staff_id, nouvel_alias_str, nouvelle_raison_str, demande_id)
@@ -555,7 +554,7 @@ class StatutsManager:
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
 
             user_id_demande = demande["user_id"]
-            req_num = html.escape(str(demande.get("request_number", demande_id)))
+            real_id = demande["id"]
 
             abandon_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Remettre en disponible", callback_data=f"reprendre_demande_{demande_id}")],
@@ -563,7 +562,7 @@ class StatutsManager:
             ])
 
             msg_demandeur = (
-                f"⚠️ <b>Information sur votre demande #{req_num}</b>\n\n"
+                f"⚠️ <b>Information sur votre demande #{real_id}</b>\n\n"
                 f"L'opérateur <b>{staff_alias_esc}</b> n'est plus en mesure de traiter votre demande.\n\n"
                 f"📝 <b>Motif communiqué :</b>\n"
                 f"« <i>{raison_esc}</i> »\n\n"
@@ -588,7 +587,7 @@ class StatutsManager:
                 alert_abandon = (
                     f"⚠️ <b>SURVEILLANCE STAFF — ABANDON DE DOSSIER</b>\n\n"
                     f"• <b>Opérateur :</b> {staff_alias_esc} (<code>{staff_id}</code>)\n"
-                    f"• <b>Dossier :</b> #{req_num}\n"
+                    f"• <b>Dossier :</b> #{real_id}\n"
                     f"• <b>Motif invoqué :</b> « <i>{raison_esc}</i> »"
                 )
                 for mon_id in monitors:
@@ -610,11 +609,11 @@ class StatutsManager:
                 )
 
             back_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📋 Retour aux demandes suivies", callback_data="demandes_suivies"),
+                InlineKeyboardButton("💌 Demandes suivies", callback_data="demandes_suivies"),
                 InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")
             ]])
             await update.message.reply_text(
-                f"✅ <b>Demande #{req_num} passée en statut ❌ Abandonnée.</b>\n\n"
+                f"✅ <b>Demande #{real_id} passée en statut ❌ Abandonnée.</b>\n\n"
                 f"Le demandeur a été notifié avec votre motif.{trial_feedback}",
                 parse_mode="HTML",
                 reply_markup=back_kb
@@ -625,7 +624,7 @@ class StatutsManager:
             await update.message.reply_text("❌ Une erreur est survenue lors de l'enregistrement de l'abandon.")
 
     def _build_demande_keyboard(self, demande: dict) -> InlineKeyboardMarkup:
-        """Construit le clavier d'actions avec insertion conditionnelle du bouton d'archivage."""
+        """Construit le clavier d'actions de la vue de suivi selon les règles de gestion."""
         demande_id = demande["id"]
         is_reussie = (demande.get("statut") == "✅ Réussie")
         sub_status = demande.get("reussie_substatus")
@@ -633,104 +632,135 @@ class StatutsManager:
         is_prio = bool(demande.get("prioritaire"))
         paiement_statut = demande.get("paiement_statut", "non_requis")
 
-        keyboard = [
+        buttons = [
+            # 1. 📌 CHANGER LE STATUT 📌
+            [InlineKeyboardButton("📌 CHANGER LE STATUT 📌", callback_data=f"change_status_{demande_id}")],
+            # 2. 👤 PROFIL | 💬 CONTACT
             [
-                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
-                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}"),
-            ],
-            [
-                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
+                InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}"),
+                InlineKeyboardButton("💬 CONTACT", callback_data=f"contacter_{demande_id}")
             ]
         ]
 
-        # Si le paiement est requis et toujours en attente, afficher le bouton de confirmation manuelle
         if is_prio and is_reussie and paiement_statut == "en_attente":
-            keyboard.insert(0, [
-                InlineKeyboardButton("💳 Confirmer la réception du paiement", callback_data=f"confirm_payment_prio_{demande_id}")
+            buttons.append([
+                InlineKeyboardButton("💰 VALIDER LE PAIEMENT 💰", callback_data=f"confirm_payment_prio_{demande_id}")
             ])
 
-        # Clôture & Archivage
-        if is_reussie and sub_status == "terminee":
+        if is_reussie:
             if not is_prio or paiement_statut == "paye":
                 if has_delivered:
-                    keyboard.insert(1, [
-                        InlineKeyboardButton("📦 Archiver le dossier", callback_data=f"status_archive_now_{demande_id}")
+                    buttons.append([
+                        InlineKeyboardButton("📦 ARCHIVER LE DOSSIER 📦", callback_data=f"status_archive_now_{demande_id}")
                     ])
                 else:
-                    keyboard.insert(1, [
-                        InlineKeyboardButton("⚠️ Transmettre le contenu d'abord", callback_data=f"contacter_{demande_id}")
+                    buttons.append([
+                        InlineKeyboardButton("📤 ENVOYER LE CONTENU 📤", callback_data=f"contacter_{demande_id}")
                     ])
 
-        keyboard.append([InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")])
-        return InlineKeyboardMarkup(keyboard)
+        buttons.append([
+            InlineKeyboardButton("🔍 TRIER", callback_data="suivi_sort_menu"),
+            InlineKeyboardButton("📮 DISPO", callback_data="demandes_disponibles")
+        ])
+        buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")])
+
+        return InlineKeyboardMarkup(buttons)
 
     async def _update_existing_text_message(self, query, demande: dict):
-        """Actualise le corps du message texte après transition d'état."""
-        priorite_icon = "💎" if demande.get("prioritaire") else "📝"
-        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_val = float(demande.get("montant") or 0.0)
-        montant_str = f" ({montant_val:.2f}€)" if demande.get("prioritaire") else ""
+        """Actualise le corps du message texte après transition d'état selon le gabarit calibré."""
+        from utils.validators import convert_utc_to_paris
+        import re
+
+        real_id = demande["id"]
+        is_prio = bool(demande.get("prioritaire"))
+        titre = f"💎  <b>Demande Prioritaire #{real_id}</b>" if is_prio else f"📝  <b>Demande Standard #{real_id}</b>"
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
-        nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-        
-        statut_display = self.db_manager.format_statut_display(
-            demande.get("statut", "📥 Reçue"),
-            demande.get("is_difficile", False),
-            demande.get("reussie_substatus")
-        )
-        statut_esc = html.escape(statut_display)
-        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
+        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
 
-        if demande.get("username"):
-            user_display = f"@{html.escape(demande['username'])}"
-        elif demande.get("user_first_name"):
-            user_display = html.escape(demande["user_first_name"])
-        else:
-            user_display = f"User {demande['user_id']}"
-
-        date_str = str(demande.get("date_creation", ""))[:16]
+        ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
+        ori_label = ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée")
+        loc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
 
         lines = [
-            f"💌 <b>Demande #{req_num}</b>\n",
-            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
-            f"📍 <b>Localisation :</b> {loc_esc}",
-            f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-            f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
-            f"🙋 <b>Demandeur :</b> {user_display}",
+            titre,
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"👤  <b>{nom_complet}{age_str}</b>",
+            f"📍  {ori_label} de {loc}"
         ]
 
-        if demande.get("prioritaire"):
-            p_statut = demande.get("paiement_statut", "non_requis")
-            if p_statut == "paye":
-                lines.append("💳 <b>Paiement :</b> 🟢 <i>Réglé et validé</i>")
-            elif p_statut == "en_attente":
-                lines.append(f"💳 <b>Paiement :</b> 🟡 <i>En attente de règlement ({montant_val:.2f} €)</i>")
+        if demande.get("details"):
+            det = html.escape(str(demande["details"]).strip())
+            lines.append(f"💬  <i>{det}</i>")
 
-        if demande.get("raison_abandon"):
-            lines.append(
-                f"\n⚠️ <b>HISTORIQUE - TENTATIVE(S) PRÉCÉDENTE(S) :</b>\n"
-                f"{demande['raison_abandon']}"
-            )
+        if is_prio:
+            montant_val = float(demande.get("montant") or 0.0)
+            lines.append(f"💰  <b>{montant_val:.2f} €</b>")
 
         reseaux = []
         if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]))
-            reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
+            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Instagram :</b> @{ig}")
         if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]))
-            reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
+            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+
         if reseaux:
-            lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
+            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
+            lines.extend(reseaux)
 
-        if demande.get("details"):
-            det = str(demande["details"])
-            det_court = (det[:150] + "...") if len(det) > 150 else det
-            lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
+        statut_label = self.db_manager.format_statut_display(
+            demande.get("statut", "⏳ En attente"),
+            demande.get("is_difficile", False),
+            demande.get("reussie_substatus")
+        )
+        lines.append("\n───────  <b>STATUT</b>  ──────")
+        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
 
-        lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
+        def fmt_dt(val):
+            if not val:
+                return ""
+            try:
+                return convert_utc_to_paris(val).strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                return str(val)[:16]
+
+        dt_mod = demande.get("date_modification")
+        if dt_mod:
+            lines.append(f" <i>{fmt_dt(dt_mod)}</i>")
+
+        if is_prio:
+            p_statut = demande.get("paiement_statut", "non_requis")
+            if p_statut == "paye":
+                lines.append("\n🟢 <b>Réglé et validé</b>")
+            elif p_statut == "en_attente":
+                lines.append("\n🟡 <b>En attente de règlement</b>")
+
+        admin_id = demande.get("admin_en_charge")
+        if admin_id:
+            alias = html.escape(str(self.db_manager.get_staff_alias(admin_id) or f"Staff_{admin_id}"))
+            lines.append(f"\n<b>Géré par :</b> <b>{alias}</b>")
+
+        lines.append("\n───────  <b>INFOS</b>  ───────")
+        dt_crea = demande.get("date_creation")
+        lines.append(f"<b>Déposé le :</b>  {fmt_dt(dt_crea)}")
+
+        demandeur = f"@{html.escape(demande['username'])}" if demande.get("username") else (
+            html.escape(str(demande.get("user_first_name") or f"User {demande['user_id']}"))
+        )
+        lines.append(f"<b>Par :</b>  {demandeur} (<code>{demande['user_id']}</code>)")
+
+        ancien_alias = demande.get("ancien_admin_alias")
+        raw_reason = demande.get("raison_abandon")
+        if ancien_alias or raw_reason:
+            alias_str = html.escape(str(ancien_alias or "Opérateur"))
+            clean_r = re.sub(r"<[^>]+>", "", str(raw_reason or "Non précisée")).strip()
+            lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
+            lines.append("❌ Abandonné")
+            lines.append(f"{alias_str} le {fmt_dt(demande.get('date_modification'))}")
+            lines.append(f"<b>Raison :</b> {html.escape(clean_r)}")
 
         await query.edit_message_text(
             text="\n".join(lines),
@@ -740,48 +770,103 @@ class StatutsManager:
         )
 
     async def _update_photo_caption(self, query, demande: dict):
-        """Actualise la légende de l'image après transition d'état."""
-        priorite_icon = "💎" if demande.get("prioritaire") else "📝"
-        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_val = float(demande.get("montant") or 0.0)
-        montant_str = f" ({montant_val:.2f}€)" if demande.get("prioritaire") else ""
+        """Actualise la légende de l'image après transition d'état selon le gabarit calibré."""
+        from utils.validators import convert_utc_to_paris
+        import re
+
+        real_id = demande["id"]
+        is_prio = bool(demande.get("prioritaire"))
+        titre = f"💎  <b>Demande Prioritaire #{real_id}</b>" if is_prio else f"📝  <b>Demande Standard #{real_id}</b>"
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
-        nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-        
-        statut_display = self.db_manager.format_statut_display(
-            demande.get("statut", "📥 Reçue"),
+        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
+        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
+
+        ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
+        ori_label = ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée")
+        loc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
+
+        lines = [
+            titre,
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"👤  <b>{nom_complet}{age_str}</b>",
+            f"📍  {ori_label} de {loc}"
+        ]
+
+        if demande.get("details"):
+            det = html.escape(str(demande["details"]).strip())
+            lines.append(f"💬  <i>{det}</i>")
+
+        if is_prio:
+            montant_val = float(demande.get("montant") or 0.0)
+            lines.append(f"💰  <b>{montant_val:.2f} €</b>")
+
+        reseaux = []
+        if demande.get("instagram"):
+            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+        if demande.get("snapchat"):
+            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
+            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+
+        if reseaux:
+            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
+            lines.extend(reseaux)
+
+        statut_label = self.db_manager.format_statut_display(
+            demande.get("statut", "⏳ En attente"),
             demande.get("is_difficile", False),
             demande.get("reussie_substatus")
         )
-        statut_esc = html.escape(statut_display)
-        req_num = html.escape(str(demande.get("request_number", demande["id"])))
+        lines.append("\n───────  <b>STATUT</b>  ──────")
+        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
 
-        caption_lines = [
-            f"📷 <b>Photo de la demande #{req_num}</b>\n",
-            f"👤 {nom_complet} ({demande.get('age', '?')} ans) | {loc_esc}",
-            f"🎯 {priorite_icon} {type_str}{montant_str}",
-            f"📊 Statut : <code>{statut_esc}</code>"
-        ]
+        def fmt_dt(val):
+            if not val:
+                return ""
+            try:
+                return convert_utc_to_paris(val).strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                return str(val)[:16]
 
-        if demande.get("prioritaire"):
+        dt_mod = demande.get("date_modification")
+        if dt_mod:
+            lines.append(f" <i>{fmt_dt(dt_mod)}</i>")
+
+        if is_prio:
             p_statut = demande.get("paiement_statut", "non_requis")
             if p_statut == "paye":
-                caption_lines.append("💳 Paiement : 🟢 Réglé et validé")
+                lines.append("\n🟢 <b>Réglé et validé</b>")
             elif p_statut == "en_attente":
-                caption_lines.append(f"💳 Paiement : 🟡 En attente de règlement ({montant_val:.2f} €)")
+                lines.append("\n🟡 <b>En attente de règlement</b>")
 
-        if demande.get("raison_abandon"):
-            caption_lines.append(
-                "⚠️ <b>Relancée après tentative(s) sans suite</b>"
-            )
+        admin_id = demande.get("admin_en_charge")
+        if admin_id:
+            alias = html.escape(str(self.db_manager.get_staff_alias(admin_id) or f"Staff_{admin_id}"))
+            lines.append(f"\n<b>Géré par :</b> <b>{alias}</b>")
 
-        caption = "\n".join(caption_lines)
+        lines.append("\n───────  <b>INFOS</b>  ───────")
+        dt_crea = demande.get("date_creation")
+        lines.append(f"<b>Déposé le :</b>  {fmt_dt(dt_crea)}")
+
+        demandeur = f"@{html.escape(demande['username'])}" if demande.get("username") else (
+            html.escape(str(demande.get("user_first_name") or f"User {demande['user_id']}"))
+        )
+        lines.append(f"<b>Par :</b>  {demandeur} (<code>{demande['user_id']}</code>)")
+
+        ancien_alias = demande.get("ancien_admin_alias")
+        raw_reason = demande.get("raison_abandon")
+        if ancien_alias or raw_reason:
+            alias_str = html.escape(str(ancien_alias or "Opérateur"))
+            clean_r = re.sub(r"<[^>]+>", "", str(raw_reason or "Non précisée")).strip()
+            lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
+            lines.append("❌ Abandonné")
+            lines.append(f"{alias_str} le {fmt_dt(demande.get('date_modification'))}")
+            lines.append(f"<b>Raison :</b> {html.escape(clean_r)}")
 
         await query.edit_message_caption(
-            caption=caption,
+            caption="\n".join(lines),
             parse_mode="HTML",
             reply_markup=self._build_demande_keyboard(demande),
         )

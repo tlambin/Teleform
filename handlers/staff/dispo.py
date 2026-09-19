@@ -492,7 +492,7 @@ class DispoManager:
         await self._render_clean_text(query, context, text, InlineKeyboardMarkup(keyboard))
 
     def _fetch_filtered_demandes(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> list:
-        """Exécute la requête SQL dynamique selon les permissions du staff, les filtres et l'anti-auto-prise."""
+        """Exécute la requête SQL dynamique selon les permissions du staff, les filtres et l'anti-auto-prise avec tri configuré."""
         filters = self._get_active_filters(context)
 
         join_params = [int(user_id)]
@@ -561,7 +561,10 @@ class DispoManager:
             LEFT JOIN users u ON d.user_id = u.user_id
             LEFT JOIN demandes_suivi ds ON d.id = ds.demande_id AND ds.admin_id = %s
             WHERE {' AND '.join(sql_where)}
-            ORDER BY d.prioritaire DESC, d.date_creation DESC
+            ORDER BY 
+                d.prioritaire DESC,
+                CASE WHEN d.prioritaire = 1 THEN d.montant END DESC,
+                d.date_creation ASC
         """
 
         full_params = tuple(join_params + where_params)

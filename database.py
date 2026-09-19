@@ -460,7 +460,6 @@ class DatabaseManager:
 
         try:
             with self.get_cursor() as cursor:
-                # Permissions de filtrage
                 perm_res = "all"
                 perm_type = "all"
                 perm_ori = "all"
@@ -475,7 +474,6 @@ class DatabaseManager:
                     perm_type = perms.get("perm_type") or "all"
                     perm_ori = perms.get("perm_orientation") or "all"
 
-                # 1. DISPONIBLE : '📥 Reçue', sans opérateur, excluant ses propres dépôts
                 dispo_clauses = ["statut = '📥 Reçue'", "admin_en_charge IS NULL", "user_id != %s"]
                 dispo_params: List[Any] = [uid]
 
@@ -501,8 +499,6 @@ class DatabaseManager:
                 r_dispo = cursor.fetchone()
                 counts["dispo"] = int(r_dispo["total"]) if r_dispo and r_dispo.get("total") else 0
 
-                # 2. SUIVIES : toutes les demandes assignées à cet opérateur encore présentes dans la table demandes
-                # (inclut les réussies en attente de livraison, de paiement ou d'auto-archivage)
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total FROM demandes
@@ -513,7 +509,6 @@ class DatabaseManager:
                 r_suivi = cursor.fetchone()
                 counts["suivies"] = int(r_suivi["total"]) if r_suivi and r_suivi.get("total") else 0
 
-                # 3. ARCHIVÉES : uniquement les dossiers officiellement basculés dans la table archives
                 cursor.execute(
                     """
                     SELECT COUNT(*) AS total FROM archives
@@ -957,7 +952,12 @@ class DatabaseManager:
         elif type_filter == "standard_only":
             query += " AND prioritaire = FALSE"
 
-        query += " ORDER BY prioritaire DESC, date_creation ASC"
+        query += """
+            ORDER BY 
+                prioritaire DESC,
+                CASE WHEN prioritaire = 1 THEN montant END DESC,
+                date_creation ASC
+        """
 
         try:
             with self.get_cursor() as cursor:
@@ -1887,8 +1887,8 @@ class DatabaseManager:
 
         if clean_statut == "✅ Réussie":
             if reussie_substatus == "terminee":
-                return "✅ Réussie (❎ Terminée)"
-            return "✅ Réussie (🟢 Active)"
+                return "✅ Réussie (Terminée)"
+            return "✅ Réussie (Active)"
 
         return clean_statut
 
