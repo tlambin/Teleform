@@ -32,32 +32,37 @@ class InterfaceManager:
     # ========== INTERFACE PRINCIPALE /start ==========
 
     def get_start_interface(self, user_id: int, first_name: str):
-        """Construit l'interface d'accueil selon la maquette."""
+        """Construit l'interface d'accueil adaptée au statut de l'utilisateur."""
         user_role = self._get_user_role(user_id)
         is_vip = self.db_manager.is_user_vip(user_id)
         first_name_esc = html.escape(str(first_name or "Utilisateur"))
 
-        badge_role_map = {
-            "owner": "👑 <b>Direction • Propriétaire</b>",
-            "admin": "🛡️ <b>Administration • Manager</b>",
-            "staff": "🦈 <b>Équipe • Opérateur</b>",
-            "user": "⭐ <b>Membre VIP</b>" if is_vip else "👤 <b>Espace Demandeur</b>"
-        }
-        role_badge = badge_role_map.get(user_role, "👤 <b>Espace Demandeur</b>")
+        if user_role == "owner":
+            header = "👑 PARABAIT 👑"
+            subtitle = f"Bienvenue {first_name_esc} - <i>propriétaire</i>"
+        elif user_role == "admin":
+            header = "🧠 PARABAIT 🧠"
+            subtitle = f"Bienvenue {first_name_esc} - <i>administrateur</i>"
+        elif user_role == "staff":
+            header = "🎣 PARABAIT 🎣"
+            subtitle = f"Bienvenue {first_name_esc} - <i>piégeur</i>"
+        elif is_vip:
+            header = "★ PARABAIT ★"
+            subtitle = f"Bienvenue {first_name_esc} - <i>VIP</i>"
+        else:
+            header = "✨ PARABAIT ✨"
+            subtitle = f"Bienvenue {first_name_esc}"
 
         welcome_msg = (
-            f"⚡ <b>PORTAIL PRINCIPAL</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"Bonjour <b>{first_name_esc}</b> !\n"
-            f"• <b>Statut :</b> {role_badge}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            "<i>Sélectionnez une option ci-dessous pour continuer :</i>"
+            f"<b>{header}</b>\n\n"
+            f"<b>{subtitle}</b>\n\n"
+            "<i>Sélectionnez une option ci-dessous pour continuer:</i>"
         )
 
-        # Ligne 1 : 🗳️ DÉPOSER | 🗂️ MES DEMANDES
+        # Ligne 1 : 🗳️ CRÉER | 🗂️ MES DEMANDES
         keyboard = [
             [
-                InlineKeyboardButton("🗳️ DÉPOSER", callback_data="new_demande"),
+                InlineKeyboardButton("🗳️ CRÉER", callback_data="new_demande"),
                 InlineKeyboardButton("🗂️ MES DEMANDES", callback_data="voir_demandes")
             ]
         ]
