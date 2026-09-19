@@ -190,20 +190,91 @@ class FormulaireManager:
 
     async def _check_service_active(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Vérifie si les demandes sont acceptées actuellement."""
-        if not self.config.are_demandes_enabled():
+        val_enabled = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
+        if val_enabled not in ("true", "1", "yes"):
             msg = (
-                "🚫 <b>Création de demandes suspendue</b>\n\n"
-                "Le service est momentanément désactivé par l'administration. "
-                "Merci de retenter ultérieurement."
+                "⛔ <b>DÉPÔTS TEMPORAIREMENT SUSPENDUS</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Les soumissions de demandes sont actuellement fermées par l'administration.\n\n"
+                "<i>Veuillez réessayer ultérieurement.</i>"
             )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]])
             if update.callback_query:
-                await update.callback_query.answer("🚫 Demandes désactivées", show_alert=True)
-            await self._edit_or_send(update, context, msg)
+                await update.callback_query.answer("⛔ Demandes suspendues", show_alert=True)
+            await self._edit_or_send(update, context, msg, reply_markup=kb)
             return False
         return True
 
+    async def _check_active_submission_allowed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Vérifie en temps réel si les demandes restent actives et si les quotas ne sont pas dépassés."""
+        user_id = update.effective_user.id
+        is_vip = self.db_manager.is_user_vip(user_id)
+
+        # 1. Contrôle en direct de la suspension des demandes
+        val_enabled = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
+        if val_enabled not in ("true", "1", "yes"):
+            msg_stop = (
+                "⛔ <b>CRÉATION INTERROMPUE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "La soumission des demandes vient d'être suspendue par l'administration.\n\n"
+                "<i>Votre saisie en cours est annulée. Veuillez réessayer ultérieurement.</i>"
+            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]])
+
+            if update.callback_query:
+                await update.callback_query.answer("⛔ Demandes suspendues.", show_alert=True)
+                try:
+                    await update.callback_query.edit_message_text(msg_stop, parse_mode="HTML", reply_markup=kb)
+                except Exception:
+                    await context.bot.send_message(chat_id=user_id, text=msg_stop, parse_mode="HTML", reply_markup=kb)
+            elif update.message:
+                await update.message.reply_text(msg_stop, parse_mode="HTML", reply_markup=kb)
+
+            context.user_data.pop("demande", None)
+            return False
+
+        # 2. Contrôle du quota utilisateur en direct (contourné pour VIP)
+        if not is_vip:
+            max_user = self.config.get_max_demandes_per_user()
+            if max_user > 0:
+                placeholders = ", ".join(["%s"] * len(self.ACTIVE_STATUSES))
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute(
+                        f"""
+                        SELECT COUNT(*) AS total FROM demandes 
+                        WHERE user_id = %s AND statut IN ({placeholders})
+                        """,
+                        (int(user_id), *self.ACTIVE_STATUSES)
+                    )
+                    row = cursor.fetchone()
+                    count_user = row["total"] if row else 0
+
+                if count_user >= max_user:
+                    msg_quota = (
+                        "⚠️ <b>QUOTA PERSONNEL ATTEINT</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"Le plafond autorisé est passé à <b>{max_user}</b> dossier(s).\n"
+                        f"Vous avez déjà <b>{count_user}</b> dossier(s) actif(s) en cours de traitement.\n\n"
+                        "<i>Cette création ne peut pas être finalisée pour le moment.</i>"
+                    )
+                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]])
+
+                    if update.callback_query:
+                        await update.callback_query.answer("⚠️ Quota maximal atteint.", show_alert=True)
+                        try:
+                            await update.callback_query.edit_message_text(msg_quota, parse_mode="HTML", reply_markup=kb)
+                        except Exception:
+                            await context.bot.send_message(chat_id=user_id, text=msg_quota, parse_mode="HTML", reply_markup=kb)
+                    elif update.message:
+                        await update.message.reply_text(msg_quota, parse_mode="HTML", reply_markup=kb)
+
+                    context.user_data.pop("demande", None)
+                    return False
+
+        return True
+
     async def _check_quotas(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-        """Vérifie que les quotas ne sont pas atteints (contourné si l'utilisateur est VIP)."""
+        """Vérifie que les quotas ne sont pas atteints avant d'entamer le formulaire."""
         if self.db_manager.is_user_vip(user_id):
             return True
 
@@ -335,6 +406,9 @@ class FormulaireManager:
 
     async def handle_orientation_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Intercepte et valide le choix d'orientation."""
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         query = update.callback_query
         if not query or not query.data:
             return self.ORIENTATION
@@ -372,6 +446,9 @@ class FormulaireManager:
         return self.PRENOM
 
     async def prenom(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.text:
             return self.PRENOM
 
@@ -396,6 +473,9 @@ class FormulaireManager:
             return self.PRENOM
 
     async def nom(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.text:
             return self.NOM
 
@@ -420,6 +500,9 @@ class FormulaireManager:
             return self.NOM
 
     async def skip_nom(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         context.user_data.setdefault("demande", {})["nom"] = None
         text = "⏭️ Nom ignoré.\n\nIndiquez son âge (entre 18 et 40 ans) :"
         kb = self.navigation.create_navigation_keyboard(self.AGE)
@@ -427,6 +510,9 @@ class FormulaireManager:
         return self.AGE
 
     async def age(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.text:
             return self.AGE
 
@@ -451,6 +537,9 @@ class FormulaireManager:
             return self.AGE
 
     async def localisation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.text:
             return self.LOCALISATION
 
@@ -475,6 +564,9 @@ class FormulaireManager:
             return self.LOCALISATION
 
     async def photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.photo:
             if update.message:
                 await update.message.reply_text(
@@ -510,6 +602,9 @@ class FormulaireManager:
 
     async def retry_instagram(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Permet de recommencer la saisie Instagram suite à un doublon."""
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         query = update.callback_query
         if query:
             await query.answer()
@@ -520,6 +615,9 @@ class FormulaireManager:
 
     async def retry_snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Permet de recommencer la saisie Snapchat suite à un doublon."""
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         query = update.callback_query
         if query:
             await query.answer()
@@ -531,6 +629,9 @@ class FormulaireManager:
         return self.SNAPCHAT
 
     async def instagram(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.text:
             return self.INSTAGRAM
 
@@ -600,6 +701,9 @@ class FormulaireManager:
             return self.INSTAGRAM
 
     async def skip_instagram(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         context.user_data.setdefault("demande", {})["instagram"] = None
         text = (
             "⏭️ Instagram ignoré.\n\n"
@@ -611,6 +715,9 @@ class FormulaireManager:
         return self.SNAPCHAT
 
     async def snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.text:
             return self.SNAPCHAT
 
@@ -693,6 +800,9 @@ class FormulaireManager:
             return self.SNAPCHAT
 
     async def skip_snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         demande = context.user_data.setdefault("demande", {})
 
         if not demande.get("instagram"):
@@ -715,6 +825,9 @@ class FormulaireManager:
         return self.DETAILS
 
     async def details(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.text:
             return self.DETAILS
 
@@ -751,6 +864,9 @@ class FormulaireManager:
             return self.DETAILS
 
     async def skip_details(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         context.user_data.setdefault("demande", {})["details"] = None
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("⭐ Oui - Prioritaire", callback_data="priorite_oui")],
@@ -767,6 +883,9 @@ class FormulaireManager:
         return self.PRIORITAIRE
 
     async def handle_priority_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         query = update.callback_query
         if not query:
             return self.PRIORITAIRE
@@ -788,6 +907,9 @@ class FormulaireManager:
         return await self.prompt_admin_selection_or_save(update, context)
 
     async def montant(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         if not update.message or not update.message.text:
             return self.MONTANT
 
@@ -809,6 +931,9 @@ class FormulaireManager:
 
     async def prompt_admin_selection_or_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Gère le choix du piégeur VIP en tenant compte du réglage automatique ou affiche le choix initial."""
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         user = update.effective_user
         if not user:
             return ConversationHandler.END
@@ -891,6 +1016,9 @@ class FormulaireManager:
 
     async def handle_vip_admin_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Intercepte le choix (Choisir vs Ne pas choisir, puis sélection de l'alias)."""
+        if not await self._check_active_submission_allowed(update, context):
+            return ConversationHandler.END
+
         query = update.callback_query
         if not query or not query.data:
             return self.CHOIX_ADMIN
@@ -938,6 +1066,9 @@ class FormulaireManager:
 
     async def save_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Enregistre la demande dans MySQL : '🎯 Assignée (VIP)' si piégeur ciblé, sinon '📥 Reçue'."""
+        if not await self._check_active_submission_allowed(update, context):
+            return
+
         demande = context.user_data.get("demande", {})
         user_id = update.effective_user.id if update.effective_user else None
 
