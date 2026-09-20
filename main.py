@@ -266,6 +266,50 @@ async def check_and_send_paid_delivery_reminders(context: ContextTypes.DEFAULT_T
         logger.error("Erreur lors de la vérification des rappels de livraison payée : %s", exc)
 
 
+async def check_and_send_unpaid_demande_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Rappel automatique aux demandeurs pour les demandes réussies en attente de paiement."""
+    db_manager = context.application.bot_data.get("db_manager")
+    if not db_manager:
+        return
+
+    try:
+        unpaid = db_manager.get_unpaid_reussie_demandes_for_reminder()
+        for dem in unpaid:
+            user_id = dem["user_id"]
+            dem_id = dem["id"]
+            req_num = html.escape(str(dem.get("request_number") or dem_id))
+            prenom = html.escape(str(dem.get("prenom") or "votre contact"))
+            montant = float(dem.get("montant") or 0.0)
+            stars_amount = max(1, int(montant * 50))
+
+            msg = (
+                f"🔔 <b>Rappel : Règlement de votre demande #{req_num}</b>\n\n"
+                f"La prestation concernant <b>{prenom}</b> est terminée avec succès ({montant:.2f} €).\n\n"
+                "👉 <b>Votre règlement est en attente :</b>\n"
+                "Dès confirmation de votre paiement, votre référent vous transmettra l'ensemble des contenus obtenus."
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"⭐ Régler en Stars ({stars_amount} ⭐)", callback_data=f"pay_stars_prio_{dem_id}")],
+                [InlineKeyboardButton("💬 Convenir d'un autre paiement", callback_data=f"pay_contact_prio_{dem_id}")],
+                [InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")]
+            ])
+
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=msg,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+                db_manager.mark_user_payment_reminder_sent(dem_id)
+                logger.info("Rappel d'impayé envoyé au demandeur %s pour le dossier #%s", user_id, req_num)
+            except Exception as notif_err:
+                logger.warning("Impossible d'envoyer le rappel d'impayé au client %s : %s", user_id, notif_err)
+
+    except Exception as exc:
+        logger.error("Erreur vérification rappels d'impayés demandeurs : %s", exc)
+
+
 # ==================== HANDLERS TELEGRAM STARS ====================
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -685,13 +729,13 @@ class TelegramBot:
         # Aiguillage Gouvernance & Administration (Admin/Owner + Modes Paiement Staff + Zone de Danger)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*)$",
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*)$",
         ))
 
-        # Aiguillage Traitement opérationnel des dossiers (Staff + Suppression admin_del_dispo_.* + Surveillance)
+        # Aiguillage Traitement opérationnel des dossiers (Staff + Suppression + Proposition prix + Signalement)
         app.add_handler(CallbackQueryHandler(
             self.staff_handlers.handle_staff_callbacks,
-            pattern=r"^(demandes_disponibles|dispo_.*|admin_del_dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|menu_surveillance_notifs|toggle_mon_.*|profil_.*|staff_view_demandes_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
+            pattern=r"^(demandes_disponibles|dispo_.*|admin_del_dispo_.*|admin_propose_prix_.*|staff_report_dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|menu_surveillance_notifs|toggle_mon_.*|profil_.*|staff_view_demandes_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
         ))
 
         # Menus d'interface et navigation (avec menu_mon_profil et bot_toggle_suspension)
@@ -741,6 +785,13 @@ class TelegramBot:
                 first=60,
             )
             logger.info("⏰ JobQueue activée : vérification quotidienne des livraisons payées en attente.")
+
+            app.job_queue.run_repeating(
+                check_and_send_unpaid_demande_reminders,
+                interval=21600,
+                first=75,
+            )
+            logger.info("⏰ JobQueue activée : vérification des rappels d'impayés client toutes les 6h.")
 
         async def post_init(application: Application):
             await self.setup_bot_commands(application)

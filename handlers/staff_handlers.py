@@ -89,11 +89,16 @@ class StaffHandlers:
                 await self._handle_vip_decline(query, context, demande_id, user_id)
                 return
 
-            # 1. Demandes disponibles, filtres et suppression administrative
+            # 1. Demandes disponibles, filtres, suppression, proposition de prix et signalement
             elif data == "demandes_disponibles":
                 await self.dispo.show_demandes_disponibles(update, context)
 
-            elif data.startswith("dispo_") or data.startswith("admin_del_dispo_"):
+            elif (
+                data.startswith("dispo_")
+                or data.startswith("admin_del_dispo_")
+                or data.startswith("admin_propose_prix_")
+                or data.startswith("staff_report_dispo_")
+            ):
                 await self.dispo.handle_callback_routing(update, context, data)
 
             # 2. Prise en charge d'une demande disponible -> statut "En attente" + notification
@@ -699,7 +704,6 @@ class StaffHandlers:
                     reply_markup=user_keyboard
                 )
 
-            # Vérification et marquage du contenu comme livré dans la base
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute("SELECT user_id, prenom FROM demandes WHERE id = %s", (demande_id,))
                 d_row = cursor.fetchone()
@@ -708,7 +712,6 @@ class StaffHandlers:
             if is_client_delivery:
                 self.db_manager.mark_content_delivered(demande_id)
 
-                # ==================== COPIE MIROIR AUX SUPERVISEURS (FILTRÉ SUR 'STAFF_MSG') ====================
                 try:
                     monitors = self.db_manager.get_monitoring_admins(action="staff_msg")
                     target_prenom = html.escape(str(d_row.get("prenom") or "la cible"))

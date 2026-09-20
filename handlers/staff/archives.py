@@ -97,7 +97,7 @@ class ArchivesManager:
 
         total = self.db_manager.get_archives_count(admin_id=admin_target)
         back_cb = "parametres" if is_global else "gerer_demandes"
-        back_label = "🔙 Paramètres" if is_global else "🔙 Menu Gestion"
+        back_label = "⬅️ RETOUR"
 
         if total == 0:
             if is_global:
@@ -133,7 +133,7 @@ class ArchivesManager:
                 await update.message.reply_text(caption, parse_mode="HTML", reply_markup=kb)
 
     def _format_archive_card(self, item: dict, page: int, total: int, is_global: bool = False) -> str:
-        """Formate la fiche d'une demande archivée."""
+        """Formate la fiche d'une demande archivée avec liens sociaux cliquables."""
         prenom = html.escape(str(item.get("prenom") or ""))
         nom = html.escape(str(item.get("nom") or ""))
         complet = f"{prenom} {nom}".strip() or "Non renseigné"
@@ -168,13 +168,17 @@ class ArchivesManager:
             else:
                 lines.append("👨‍💼 <b>Traité par :</b> <i>Non spécifié</i>")
 
+        # Liens sociaux interactifs
         reseaux = []
         if item.get("instagram"):
-            ig = html.escape(str(item["instagram"]))
-            reseaux.append(f"📷 @{ig}")
+            raw_ig = str(item["instagram"]).strip().lstrip("@")
+            ig_esc = html.escape(raw_ig)
+            reseaux.append(f'📷 <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
         if item.get("snapchat"):
-            snap = html.escape(str(item["snapchat"]))
-            reseaux.append(f"👻 {snap}")
+            raw_snap = str(item["snapchat"]).strip().lstrip("@")
+            snap_esc = html.escape(raw_snap)
+            reseaux.append(f'👻 <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
+
         if reseaux:
             lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
 
@@ -191,7 +195,6 @@ class ArchivesManager:
         """Génère la barre de navigation dans les archives."""
         prefix = "global_arch_page_" if is_global else "archive_page_"
         back_cb = "parametres" if is_global else "gerer_demandes"
-        back_text = "🔙 Paramètres" if is_global else "🔙 Gestion des Demandes"
 
         buttons = []
         nav = []
@@ -203,5 +206,5 @@ class ArchivesManager:
         if nav:
             buttons.append(nav)
 
-        buttons.append([InlineKeyboardButton(back_text, callback_data=back_cb)])
+        buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data=back_cb)])
         return InlineKeyboardMarkup(buttons)

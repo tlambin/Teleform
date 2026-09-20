@@ -378,13 +378,16 @@ class AdminHandlers:
             key_name = data.replace("toggle_", "")
             await self.config_manager.toggle_channel_setting(update, context, key_name)
 
-        # Délais & Archivage
+        # Délais, Auto-Archivage et Rappels
         elif data == "menu_delais" and (is_owner or privs.get("can_manage_delais", False)):
             await self.config_manager.show_delais_menu(update, context)
         elif data == "cfg_sub_archive_hours" and (is_owner or privs.get("can_manage_delais", False)):
             await self.config_manager.show_archive_hours_menu(update, context)
         elif data == "cfg_sub_reminder_days" and (is_owner or privs.get("can_manage_delais", False)):
             await self.config_manager.show_reminder_days_menu(update, context)
+        elif data == "cfg_sub_payrem_days" and (is_owner or privs.get("can_manage_delais", False)):
+            await self.config_manager.show_payment_reminder_days_menu(update, context)
+
         elif data.startswith("set_arch_hours_") and (is_owner or privs.get("can_manage_delais", False)):
             try:
                 val = int(data.replace("set_arch_hours_", ""))
@@ -393,11 +396,21 @@ class AdminHandlers:
                 await self.config_manager.show_delais_menu(update, context)
             except Exception:
                 await query.answer("❌ Erreur valeur.", show_alert=True)
+
         elif data.startswith("set_rem_days_") and (is_owner or privs.get("can_manage_delais", False)):
             try:
                 val = int(data.replace("set_rem_days_", ""))
                 self.db_manager.set_delivery_reminder_days(val)
                 await query.answer(f"✅ Relance fixée à {val} jours !")
+                await self.config_manager.show_delais_menu(update, context)
+            except Exception:
+                await query.answer("❌ Erreur valeur.", show_alert=True)
+
+        elif data.startswith("set_payrem_days_") and (is_owner or privs.get("can_manage_delais", False)):
+            try:
+                val = int(data.replace("set_payrem_days_", ""))
+                self.db_manager.set_payment_reminder_days(val)
+                await query.answer(f"✅ Rappel impayé fixé à {val} jours !")
                 await self.config_manager.show_delais_menu(update, context)
             except Exception:
                 await query.answer("❌ Erreur valeur.", show_alert=True)
@@ -491,7 +504,6 @@ class AdminHandlers:
             staff_id = int(parts[2])
             action = parts[3]
 
-            # Bascule de la période d'essai
             if action == "trial" and len(parts) >= 5 and parts[4] == "toggle":
                 curr_trial = self.db_manager.is_staff_trial(staff_id)
                 new_trial = not curr_trial
@@ -501,7 +513,6 @@ class AdminHandlers:
                 await self.show_staff_permissions_menu(update, context, staff_id)
                 return
 
-            # Permissions classiques (reseaux, type, orientation)
             cle = f"perm_{action}"
             valeur = "_".join(parts[4:])
 
@@ -515,7 +526,6 @@ class AdminHandlers:
     # ==================== PERMISSIONS ADMIN (MANAGERS & CO-OWNERS) ====================
 
     async def show_admin_permissions_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
-        """Affiche et gère les droits managériaux ou la co-gérance (Owner only)."""
         query = update.callback_query
         if not query:
             return
@@ -524,7 +534,6 @@ class AdminHandlers:
         alias = html.escape(str(self.db_manager.get_staff_alias(admin_id)))
         privs = self.db_manager.get_admin_privileges(admin_id)
 
-        # Vérification si l'administrateur cible est l'Owner principal
         primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
         is_primary_owner = (int(admin_id) == int(primary_owner_id))
 
@@ -555,7 +564,6 @@ class AdminHandlers:
             ],
         ]
 
-        # L'Owner principal ne peut pas voir son rôle suprême basculé
         if not is_primary_owner:
             keyboard.append([
                 InlineKeyboardButton(f"Rôle Suprême : {st_owner}", callback_data=f"set_permadmin_{admin_id}_is_owner"),
@@ -572,7 +580,6 @@ class AdminHandlers:
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def handle_set_admin_permission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        """Bascule un droit en base et rafraîchit le cache."""
         query = update.callback_query
         if not query or not self.config.is_owner(update.effective_user.id):
             return
@@ -582,7 +589,6 @@ class AdminHandlers:
             admin_id = int(parts[2])
             flag = "_".join(parts[3:])
 
-            # Protection supplémentaire : Empêcher de modifier le statut is_owner de l'Owner principal
             primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
             if int(admin_id) == int(primary_owner_id) and flag == "is_owner":
                 await query.answer("❌ Impossible de modifier le rôle du propriétaire principal.", show_alert=True)
@@ -608,7 +614,6 @@ class AdminHandlers:
         return await self.staff_manager.traiter_staff_ajouter(update, context)
 
     async def handle_recruit_config_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Relais du callback de pré-configuration vers StaffManager."""
         return await self.staff_manager.handle_recruit_config_callback(update, context)
 
     async def cancel_staff_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

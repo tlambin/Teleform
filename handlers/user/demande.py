@@ -229,7 +229,7 @@ class DemandeManager:
             await self._send_error_message(update, context, edit_message)
 
     def _format_demande_card(self, demande: dict, current_page: int, total_pages: int) -> str:
-        """Formate la fiche côté utilisateur avec numérotation propre et calibrage strict des traits."""
+        """Formate la fiche côté utilisateur avec liens sociaux interactifs."""
         num_client = total_pages - current_page
 
         is_prio = bool(demande.get("prioritaire"))
@@ -260,14 +260,16 @@ class DemandeManager:
             montant = float(demande.get("montant") or 0.0)
             lines.append(f"💰  <b>{montant:.2f} €</b>")
 
-        # Réseaux sociaux
+        # Réseaux sociaux avec liens cliquables
         reseaux = []
         if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+            raw_ig = str(demande["instagram"]).strip().lstrip("@")
+            ig_esc = html.escape(raw_ig)
+            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
         if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
+            snap_esc = html.escape(raw_snap)
+            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
 
         if reseaux:
             lines.append("\n🌐  <b>SES RÉSEAUX</b>")
@@ -501,14 +503,16 @@ class DemandeManager:
             montant = float(item.get("montant") or 0.0)
             lines.append(f"💰  <b>{montant:.2f} €</b>")
 
-        # Réseaux
+        # Réseaux avec liens cliquables
         reseaux = []
         if item.get("instagram"):
-            ig = html.escape(str(item["instagram"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+            raw_ig = str(item["instagram"]).strip().lstrip("@")
+            ig_esc = html.escape(raw_ig)
+            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
         if item.get("snapchat"):
-            snap = html.escape(str(item["snapchat"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+            raw_snap = str(item["snapchat"]).strip().lstrip("@")
+            snap_esc = html.escape(raw_snap)
+            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
 
         if reseaux:
             lines.append("\n🌐  <b>SES RÉSEAUX</b>")
@@ -528,19 +532,30 @@ class DemandeManager:
         lines.append("\n───────  <b>INFOS</b>  ───────")
         lines.append(f"<b>Déposé le :</b>  {format_datetime_fr(dt_crea)}")
 
-        # Bloc HISTORIQUE
+        # Bloc HISTORIQUE avec différenciation '🗑️ Supprimée', '❌ Abandonnée' et '❌ Annulée'
         statut_raw = str(item.get("statut") or "").lower()
         admin_charge = item.get("admin_en_charge")
-        alias_admin = html.escape(str(self.db_manager.get_staff_alias(admin_charge) if admin_charge else "Opérateur"))
+        alias_admin = html.escape(str(self.db_manager.get_staff_alias(admin_charge) if admin_charge else "Direction"))
 
         lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
-        if "abandon" in statut_raw or "annul" in statut_raw:
+        if "supprim" in statut_raw:
             dt_ev = item.get("date_archivage") or item.get("date_modification")
             date_ev_str = format_datetime_fr(dt_ev) if dt_ev else "Date inconnue"
             raw_reason = item.get("raison_abandon") or item.get("details")
             raison = clean_reason_text(raw_reason)
 
-            lines.append("❌ Abandonné")
+            lines.append("🗑️ Supprimée")
+            lines.append(f"{alias_admin} le {date_ev_str}")
+            lines.append(f"<b>Raison :</b> {raison}")
+
+        elif "abandon" in statut_raw or "annul" in statut_raw:
+            dt_ev = item.get("date_archivage") or item.get("date_modification")
+            date_ev_str = format_datetime_fr(dt_ev) if dt_ev else "Date inconnue"
+            raw_reason = item.get("raison_abandon") or item.get("details")
+            raison = clean_reason_text(raw_reason)
+
+            label_hist = "❌ Abandonnée" if "abandon" in statut_raw else "❌ Annulée"
+            lines.append(label_hist)
             lines.append(f"{alias_admin} le {date_ev_str}")
             lines.append(f"<b>Raison :</b> {raison}")
         else:

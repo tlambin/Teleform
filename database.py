@@ -235,6 +235,7 @@ class DatabaseManager:
                 date_livraison DATETIME DEFAULT NULL,
                 last_delivery_reminder DATETIME DEFAULT NULL,
                 last_payment_delivery_reminder DATETIME DEFAULT NULL,
+                last_payment_reminder DATETIME DEFAULT NULL,
                 admin_en_charge BIGINT DEFAULT NULL,
                 ancien_admin_alias VARCHAR(64) DEFAULT NULL,
                 raison_abandon TEXT DEFAULT NULL,
@@ -346,6 +347,7 @@ class DatabaseManager:
             ("demandes", "date_livraison", "DATETIME DEFAULT NULL"),
             ("demandes", "last_delivery_reminder", "DATETIME DEFAULT NULL"),
             ("demandes", "last_payment_delivery_reminder", "DATETIME DEFAULT NULL"),
+            ("demandes", "last_payment_reminder", "DATETIME DEFAULT NULL"),
             ("demandes", "admin_en_charge", "BIGINT DEFAULT NULL"),
             ("demandes", "ancien_admin_alias", "VARCHAR(64) DEFAULT NULL"),
             ("demandes", "raison_abandon", "TEXT DEFAULT NULL"),
@@ -422,6 +424,7 @@ class DatabaseManager:
                         ('max_demandes_per_user', '3'),
                         ('auto_archive_hours', '72'),
                         ('delivery_reminder_days', '7'),
+                        ('payment_reminder_days', '7'),
                         ('allow_hetero_insta', 'true'),
                         ('allow_hetero_snap', 'true'),
                         ('allow_gay_insta', 'true'),
@@ -1453,7 +1456,54 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur horodatage rappel livraison post-paiement demande %s : %s", demande_id, exc)
 
-    # ==================== GESTION DE L'ANNULATION UNIQUE (ARCHIVAGE) ====================
+    # ==================== RAPPEL DE PAIEMENT CLIENT ====================
+
+    def get_payment_reminder_days(self) -> int:
+        val = self.get_config_value("payment_reminder_days", "7")
+        try:
+            return max(1, int(val))
+        except (ValueError, TypeError):
+            return 7
+
+    def set_payment_reminder_days(self, days: int) -> bool:
+        val = max(1, int(days))
+        return self.set_config_value("payment_reminder_days", str(val))
+
+    def get_unpaid_reussie_demandes_for_reminder(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Extrait les demandes prioritaires réussies en attente de paiement à relancer."""
+        effective_days = days if days is not None else self.get_payment_reminder_days()
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, user_id, request_number, prenom, montant, admin_en_charge, last_payment_reminder
+                    FROM demandes
+                    WHERE statut = '✅ Réussie'
+                      AND prioritaire = TRUE
+                      AND paiement_statut = 'en_attente'
+                      AND (
+                          (last_payment_reminder IS NULL AND TIMESTAMPDIFF(DAY, date_modification, NOW()) >= %s)
+                          OR (last_payment_reminder IS NOT NULL AND TIMESTAMPDIFF(DAY, last_payment_reminder, NOW()) >= %s)
+                      )
+                    """,
+                    (effective_days, effective_days)
+                )
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur extraction demandes impayées pour rappel client : %s", exc)
+            return []
+
+    def mark_user_payment_reminder_sent(self, demande_id: int):
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE demandes SET last_payment_reminder = NOW() WHERE id = %s",
+                    (int(demande_id),)
+                )
+        except Exception as exc:
+            logger.error("Erreur horodatage last_payment_reminder demande %s : %s", demande_id, exc)
+
+    # ==================== GESTION DE L'ANNULATION ET DE LA SUPPRESSION ====================
 
     def archiver_demande_annulee(self, demande_id: int, raison: str, archive_par_user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Archive définitivement une demande sous le statut unique '❌ Annulée' avec son motif."""
@@ -1510,6 +1560,63 @@ class DatabaseManager:
                 return demande
         except Exception as exc:
             logger.error("Erreur archivage annulation demande %s : %s", demande_id, exc)
+            return None
+
+    def archiver_demande_supprimee(self, demande_id: int, raison: str = "Suppression du dossier") -> Optional[Dict[str, Any]]:
+        """Archive définitivement une demande supprimée sous le statut unique '🗑️ Supprimée'."""
+        clean_raison = str(raison or "Non précisée").strip()
+        try:
+            with self.transaction() as cursor:
+                cursor.execute("SELECT * FROM demandes WHERE id = %s", (int(demande_id),))
+                demande = cursor.fetchone()
+                if not demande:
+                    return None
+
+                details_existant = demande.get("details") or ""
+                details_notes = f"{details_existant}\n[Motif suppression : {clean_raison}]".strip()
+
+                cursor.execute(
+                    """
+                    INSERT INTO archives (
+                        original_id, user_id, admin_en_charge, orientation, prenom, nom, age, localisation,
+                        photo_id, instagram, snapchat, details, prioritaire,
+                        montant, statut, is_difficile, reussie_substatus, paiement_statut,
+                        has_delivered_content, date_livraison, date_creation, date_archivage
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    )
+                    """,
+                    (
+                        demande["id"],
+                        demande["user_id"],
+                        demande.get("admin_en_charge"),
+                        demande.get("orientation", "hetero"),
+                        demande.get("prenom"),
+                        demande.get("nom"),
+                        demande.get("age"),
+                        demande.get("localisation"),
+                        demande.get("photo_id"),
+                        demande.get("instagram"),
+                        demande.get("snapchat"),
+                        details_notes,
+                        demande.get("prioritaire", False),
+                        demande.get("montant", 0.0),
+                        "🗑️ Supprimée",
+                        False,
+                        None,
+                        demande.get("paiement_statut", "non_requis"),
+                        False,
+                        None,
+                        demande.get("date_creation"),
+                    )
+                )
+
+                cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (int(demande_id),))
+                cursor.execute("DELETE FROM demandes WHERE id = %s", (int(demande_id),))
+
+                return demande
+        except Exception as exc:
+            logger.error("Erreur archivage suppression demande %s : %s", demande_id, exc)
             return None
 
     # ==================== DÉLAIS PARAMÉTRABLES ====================

@@ -268,7 +268,7 @@ class EditionManager:
             )
 
     async def handle_confirm_delete(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
-        """Supprime la demande et ses dépendances après confirmation via transaction atomique."""
+        """Archive définitivement la demande sous le statut '🗑️ Supprimée'."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -284,17 +284,14 @@ class EditionManager:
             await self._update_view(query, "❌ Action non autorisée.")
             return
 
-        demande = self._get_request_details(demande_id)
-        if not demande:
-            await self._update_view(query, "❌ Demande introuvable.")
-            return
+        # Archivage dédié avec statut '🗑️ Supprimée'
+        demande = self.db_manager.archiver_demande_supprimee(
+            demande_id=demande_id,
+            raison="Supprimée par le demandeur"
+        )
 
-        try:
-            with self.db_manager.transaction() as cursor:
-                cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
-                cursor.execute("DELETE FROM demandes WHERE id = %s", (demande_id,))
-
-            logger.info("Demande #%s supprimée par l'utilisateur %s", demande_id, update.effective_user.id)
+        if demande:
+            logger.info("Demande #%s archivée sous '🗑️ Supprimée' par l'utilisateur %s", demande_id, update.effective_user.id)
             num_demande = demande.get("request_number", demande_id)
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes"),
@@ -302,12 +299,12 @@ class EditionManager:
             ]])
             await self._update_view(
                 query,
-                f"✅ <b>Demande n°{html.escape(str(num_demande))} supprimée avec succès.</b>",
+                f"🗑️ <b>Demande n°{html.escape(str(num_demande))} supprimée et archivée sous « 🗑️ Supprimée ».</b>\n\n"
+                "Une place vient d'être libérée dans votre quota.",
                 reply_markup=kb
             )
-        except Exception as exc:
-            logger.error("Erreur suppression demande %s : %s", demande_id, exc, exc_info=True)
-            await self._update_view(query, "❌ Une erreur technique est survenue lors de la suppression.")
+        else:
+            await self._update_view(query, "❌ Demande introuvable ou déjà prise en charge.")
 
     def _verify_request_ownership(self, demande_id: int, user_id: int) -> bool:
         """Contrôle la correspondance entre l'utilisateur et le créateur de la demande."""

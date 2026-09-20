@@ -81,7 +81,7 @@ class DispoManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("DispoManager initialisé avec gabarit calibré")
+        logger.info("DispoManager initialisé avec disposition conforme et flux tarif/signalement")
 
     def _get_active_filters(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les filtres de la session utilisateur."""
@@ -107,6 +107,7 @@ class DispoManager:
 
         filters = self._get_active_filters(context)
         user_id = update.effective_user.id
+        is_admin = self.db_manager.is_admin(user_id)
         is_trial = self.db_manager.is_staff_trial(user_id)
 
         # 1. Prise en charge d'une demande
@@ -115,9 +116,9 @@ class DispoManager:
             await self.assign_demande_to_admin(update, context, demande_id)
             return
 
-        # 2. Suppression administrative
+        # 2. Suppression administrative (Admin / Owner)
         elif data.startswith("admin_del_dispo_"):
-            if not self.db_manager.is_admin(user_id):
+            if not is_admin:
                 await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
                 return
 
@@ -127,8 +128,46 @@ class DispoManager:
             msg = (
                 f"🗑️ <b>SUPPRESSION DU DOSSIER #{demande_id}</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Indiquez au clavier le <b>motif de suppression</b> (non-conformité, etc.) :\n\n"
-                "<i>Ce motif sera consigné dans l'archive et envoyé au client.</i>"
+                "Indiquez au clavier le <b>motif de suppression</b> (non-conformité, cible introuvable, etc.) :\n\n"
+                "<i>Ce motif sera consigné dans l'archive sous le statut « 🗑️ Supprimée » et notifié au client.</i>"
+            )
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Annuler", callback_data="demandes_disponibles")
+            ]])
+            await self._render_clean_text(query, context, msg, kb)
+            return
+
+        # 3. Proposer un prix (Admin / Owner uniquement)
+        elif data.startswith("admin_propose_prix_"):
+            if not is_admin:
+                await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
+                return
+
+            demande_id = int(data.replace("admin_propose_prix_", ""))
+            context.user_data["waiting_admin_propose_prix"] = demande_id
+
+            msg = (
+                f"💰 <b>PROPOSER UN TARIF (Dossier #{demande_id})</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Indiquez au clavier le <b>montant en euros</b> requis pour réaliser cette prestation (ex : <code>25</code> ou <code>30.50</code>) :\n\n"
+                "<i>Le client recevra une notification lui proposant ce montant pour basculer son dossier en Prioritaire.</i>"
+            )
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Annuler", callback_data="demandes_disponibles")
+            ]])
+            await self._render_clean_text(query, context, msg, kb)
+            return
+
+        # 4. Signaler une demande (Staff standard non-admin)
+        elif data.startswith("staff_report_dispo_"):
+            demande_id = int(data.replace("staff_report_dispo_", ""))
+            context.user_data["waiting_staff_report_reason"] = demande_id
+
+            msg = (
+                f"⚠️ <b>SIGNALER LA DEMANDE #{demande_id}</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Indiquez au clavier la <b>raison de votre signalement</b> aux administrateurs\n"
+                "(ex : <i>« Demande irréalisable sans rémunération »</i>, <i>« Compte inaccessible »</i>, etc.) :"
             )
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("❌ Annuler", callback_data="demandes_disponibles")
@@ -140,40 +179,40 @@ class DispoManager:
             await query.answer("🔒 Période d'essai : vous devez traiter la demande assignée au hasard.", show_alert=True)
             return
 
-        # 3. Menu filtres
+        # 5. Menu filtres
         elif data == "dispo_filters_menu":
             await self.show_filters_menu(update, context)
             return
 
-        # 4. Bascule Filtre Orientation
+        # 6. Bascule Filtre Orientation
         elif data.startswith("dispo_filter_ori_"):
             val = data.replace("dispo_filter_ori_", "")
             filters["orientation"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 5. Bascule Filtre Réseaux
+        # 7. Bascule Filtre Réseaux
         elif data.startswith("dispo_filter_net_"):
             val = data.replace("dispo_filter_net_", "")
             filters["reseau"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 6. Bascule Filtre Âge
+        # 8. Bascule Filtre Âge
         elif data.startswith("dispo_filter_age_"):
             val = data.replace("dispo_filter_age_", "")
             filters["age_range"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 7. Bascule Filtre Priorité
+        # 9. Bascule Filtre Priorité
         elif data.startswith("dispo_filter_type_"):
             val = data.replace("dispo_filter_type_", "")
             filters["type_demande"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 8. Reset Filtres
+        # 10. Reset Filtres
         elif data == "dispo_filter_reset":
             context.user_data["dispo_filters"] = {
                 "orientation": "all",
@@ -185,7 +224,7 @@ class DispoManager:
             await self.show_filters_menu(update, context)
             return
 
-        # 9. Recherche textuelle
+        # 11. Recherche textuelle
         elif data == "dispo_search_prompt":
             context.user_data["waiting_dispo_search"] = True
             msg = (
@@ -209,12 +248,12 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=0)
             return
 
-        # 11. Pioche aléatoire
+        # 12. Pioche aléatoire
         elif data == "dispo_random":
             await self.show_random_demande(update, context)
             return
 
-        # 12. Pagination standard
+        # 13. Pagination standard
         elif data.startswith("dispo_prev_") or data.startswith("dispo_next_"):
             parts = data.split("_")
             curr = int(parts[2])
@@ -742,7 +781,7 @@ class DispoManager:
                     )
 
     def _format_trial_demande_card(self, demande: dict) -> str:
-        """Formate la fiche d'une demande pour un membre à l'essai."""
+        """Formate la fiche d'une demande pour un membre à l'essai avec liens sociaux cliquables."""
         label_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
         ori_label = label_map.get(demande.get("orientation", "hetero"), "Hétéro")
 
@@ -771,13 +810,16 @@ class DispoManager:
             montant_val = float(demande.get("montant") or 0.0)
             lines.append(f"💰  <b>{montant_val:.2f} €</b>")
 
+        # Réseaux sociaux avec liens cliquables
         reseaux = []
         if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+            raw_ig = str(demande["instagram"]).strip().lstrip("@")
+            ig_esc = html.escape(raw_ig)
+            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
         if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
+            snap_esc = html.escape(raw_snap)
+            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
 
         if reseaux:
             lines.append("\n🌐  <b>SES RÉSEAUX</b>")
@@ -816,7 +858,7 @@ class DispoManager:
         return "\n".join(lines)
 
     def _format_demande_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche d'une demande disponible pour le staff selon la maquette avec le vrai ID."""
+        """Formate la fiche d'une demande disponible pour le staff avec liens sociaux cliquables."""
         real_id = demande["id"]
         is_prio = bool(demande.get("prioritaire"))
         titre = f"💎  <b>Demande Prioritaire #{real_id} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{real_id} ({page + 1}/{total})</b>"
@@ -845,20 +887,22 @@ class DispoManager:
             montant_val = float(demande.get("montant") or 0.0)
             lines.append(f"💰  <b>{montant_val:.2f} €</b>")
 
-        # Réseaux sociaux
+        # Réseaux sociaux avec liens cliquables
         reseaux = []
         if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+            raw_ig = str(demande["instagram"]).strip().lstrip("@")
+            ig_esc = html.escape(raw_ig)
+            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
         if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
+            snap_esc = html.escape(raw_snap)
+            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
 
         if reseaux:
             lines.append("\n🌐  <b>SES RÉSEAUX</b>")
             lines.extend(reseaux)
 
-        # Statut opérationnel avec puces et date en dessous
+        # Statut opérationnel
         statut_label = self.db_manager.format_statut_display(
             demande.get("statut", "📥 Reçue"),
             demande.get("is_difficile", False),
@@ -881,7 +925,7 @@ class DispoManager:
         )
         lines.append(f"<b>Par :</b>  {demandeur} (<code>{demande['user_id']}</code>)")
 
-        # Bloc HISTORIQUE (barres calibrées)
+        # Bloc HISTORIQUE
         ancien_alias = demande.get("ancien_admin_alias")
         raw_reason = demande.get("raison_abandon")
         if ancien_alias or raw_reason:
@@ -915,20 +959,25 @@ class DispoManager:
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
         """Construit le clavier des demandes disponibles selon la maquette exacte."""
         demande_id = demande["id"]
+        is_admin = self.db_manager.is_admin(user_id)
+
         buttons = [
             # 1. ❤️ PRENDRE EN CHARGE ❤️
-            [InlineKeyboardButton("❤️ PRENDRE EN CHARGE ❤️", callback_data=f"suivre_demande_{demande_id}")],
-            # 2. 👤 PROFIL | 🎲 AU HASARD
-            [
-                InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}"),
-                InlineKeyboardButton("🎲 AU HASARD", callback_data="dispo_random")
-            ]
+            [InlineKeyboardButton("❤️ PRENDRE EN CHARGE ❤️", callback_data=f"suivre_demande_{demande_id}")]
         ]
 
-        # 3. 🗑️ SUPPRIMER 🗑️ (admin/owner uniquement via db_manager)
-        if self.db_manager.is_admin(user_id):
+        # 2. 👤 PROFIL | 🗑️ SUPPRIMER (Admin) OU 👤 PROFIL | ⚠️ SIGNALER (Staff)
+        row_profil = [InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}")]
+        if is_admin:
+            row_profil.append(InlineKeyboardButton("🗑️ SUPPRIMER", callback_data=f"admin_del_dispo_{demande_id}"))
+        else:
+            row_profil.append(InlineKeyboardButton("⚠️ SIGNALER", callback_data=f"staff_report_dispo_{demande_id}"))
+        buttons.append(row_profil)
+
+        # 3. 💰 PROPOSER UN PRIX 💰 (Admin / Owner uniquement)
+        if is_admin:
             buttons.append([
-                InlineKeyboardButton("🗑️ SUPPRIMER 🗑️", callback_data=f"admin_del_dispo_{demande_id}")
+                InlineKeyboardButton("💰 PROPOSER UN PRIX 💰", callback_data=f"admin_propose_prix_{demande_id}")
             ])
 
         # 4. ⬅️ PRÉCÉDENTE | SUIVANTE ➡️
@@ -940,10 +989,10 @@ class DispoManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # 5. 🔍 TRIER | 💌 SUIVIE
+        # 5. 🔍 TRIER | 🎲 AU HASARD (remplace le bouton SUIVIE)
         buttons.append([
             InlineKeyboardButton("🔍 TRIER", callback_data="dispo_filters_menu"),
-            InlineKeyboardButton("💌 SUIVIE", callback_data="demandes_suivies")
+            InlineKeyboardButton("🎲 AU HASARD", callback_data="dispo_random")
         ])
 
         # 6. ⬅️ RETOUR

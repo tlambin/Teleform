@@ -584,11 +584,11 @@ class UserHandlers:
             elif data.startswith("archiver_demande_"):
                 await query.answer()
                 demande_id = int(data.replace("archiver_demande_", ""))
-                demande = self.db_manager.archiver_demande_annulee(demande_id, "Abandonnée par le demandeur")
+                demande = self.db_manager.archiver_demande_supprimee(demande_id, "Abandonnée par le demandeur")
                 if demande:
                     await query.edit_message_text(
                         "🗑️ <b>Demande classée sans suite.</b>\n\n"
-                        "Votre demande a été archivée. Une place vient d'être libérée dans votre quota.",
+                        "Votre demande a été archivée sous « 🗑️ Supprimée ». Une place vient d'être libérée dans votre quota.",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[
                             InlineKeyboardButton("🗳️ Nouvelle demande", callback_data="new_demande"),
@@ -900,7 +900,7 @@ class UserHandlers:
                 labels = {
                     "hetero_insta": "Max Insta Hétéro",
                     "hetero_snap": "Max Snap Hétéro",
-                    "gay_insta": "Max Insta Gay",
+                    "gay_insta": "Max Snap Gay",
                     "gay_snap": "Max Snap Gay",
                 }
                 await query.edit_message_text(
@@ -941,6 +941,106 @@ class UserHandlers:
     async def handle_text_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Aiguillage central des messages texte et médias hors commandes."""
         if not update.message:
+            return
+
+        # ==================== PROPOSITION DE PRIX ADMIN (DISPO) ====================
+        if update.message.text and context.user_data and context.user_data.get("waiting_admin_propose_prix"):
+            if self.config.is_admin(update.effective_user.id):
+                demande_id = context.user_data.pop("waiting_admin_propose_prix")
+                raw_montant = update.message.text.strip().replace(",", ".").replace("€", "")
+
+                try:
+                    montant = float(raw_montant)
+                    if montant <= 0:
+                        raise ValueError()
+                except ValueError:
+                    context.user_data["waiting_admin_propose_prix"] = demande_id
+                    await update.message.reply_text(
+                        "❌ Veuillez saisir un montant valide supérieur à 0 (ex : <code>25</code> ou <code>30.50</code>) :",
+                        parse_mode="HTML"
+                    )
+                    return
+
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute("SELECT id, request_number, prenom, user_id FROM demandes WHERE id = %s", (demande_id,))
+                    dem = cursor.fetchone()
+
+                if not dem:
+                    await update.message.reply_text("❌ Demande introuvable.")
+                    return
+
+                req_num = dem.get("request_number", demande_id)
+                prenom = html.escape(str(dem.get("prenom") or "votre contact"))
+                stars_amount = max(1, int(montant * 50))
+
+                client_alert = (
+                    f"💡 <b>Proposition de prise en charge prioritaire (Dossier #{req_num})</b>\n\n"
+                    f"L'équipe a examiné votre demande concernant <b>{prenom}</b>.\n"
+                    f"Ce dossier peut être pris en charge immédiatement en formule prioritaire pour un montant de <b>{montant:.2f} €</b> ({stars_amount} ⭐).\n\n"
+                    "Si vous acceptez cette proposition, choisissez votre moyen de règlement ci-dessous :"
+                )
+                client_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"⭐ Régler en Stars ({stars_amount} ⭐)", callback_data=f"pay_stars_prio_{demande_id}")],
+                    [InlineKeyboardButton("💬 Convenir d'un autre paiement", callback_data=f"pay_contact_prio_{demande_id}")],
+                    [InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")]
+                ])
+
+                try:
+                    self.db_manager.update_demande_montant(demande_id, montant)
+                    await context.bot.send_message(chat_id=dem["user_id"], text=client_alert, parse_mode="HTML", reply_markup=client_kb)
+                    await update.message.reply_text(
+                        f"✅ <b>Proposition de {montant:.2f} € transmise au demandeur pour le dossier #{req_num} !</b>",
+                        parse_mode="HTML"
+                    )
+                except Exception as err:
+                    logger.error("Erreur envoi proposition tarif client : %s", err)
+                    await update.message.reply_text("❌ Erreur lors de l'envoi au demandeur.")
+                return
+
+        # ==================== SIGNALEMENT D'UNE DEMANDE DISPO PAR LE STAFF ====================
+        if update.message.text and context.user_data and context.user_data.get("waiting_staff_report_reason"):
+            demande_id = context.user_data.pop("waiting_staff_report_reason")
+            motif = update.message.text.strip()
+            staff_user = update.effective_user
+            staff_alias = self.db_manager.get_staff_alias(staff_user.id)
+            staff_alias_esc = html.escape(str(staff_alias))
+            motif_esc = html.escape(motif)
+
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT id, request_number, prenom FROM demandes WHERE id = %s", (demande_id,))
+                dem = cursor.fetchone()
+
+            if not dem:
+                await update.message.reply_text("❌ Demande introuvable.")
+                return
+
+            req_num = dem.get("request_number", demande_id)
+            prenom = html.escape(str(dem.get("prenom") or ""))
+
+            admin_alert = (
+                f"🚨 <b>SIGNALEMENT D'UNE DEMANDE DISPONIBLE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Opérateur :</b> {staff_alias_esc} (<code>{staff_user.id}</code>)\n"
+                f"• <b>Dossier concerné :</b> #{req_num} ({prenom})\n"
+                f"• <b>Motif du signalement :</b>\n« <i>{motif_esc}</i> »\n\n"
+                "<i>Actions administratives rapides :</i>"
+            )
+            admin_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("💰 Proposer un tarif", callback_data=f"admin_propose_prix_{demande_id}"),
+                    InlineKeyboardButton("🗑️ Supprimer", callback_data=f"admin_del_dispo_{demande_id}")
+                ],
+                [InlineKeyboardButton("📄 Voir le dossier", callback_data=f"retour_texte_{demande_id}")]
+            ])
+
+            monitors = self.db_manager.get_monitoring_admins()
+            for admin_id in monitors:
+                try:
+                    await context.bot.send_message(chat_id=admin_id, text=admin_alert, parse_mode="HTML", reply_markup=admin_kb)
+                except Exception:
+                    pass
+
+            await update.message.reply_text("✅ <b>Signalement transmis à l'administration avec succès !</b>", parse_mode="HTML")
             return
 
         # ==================== CONVERSION DEMANDE EN PRIORITAIRE ====================
@@ -1168,18 +1268,18 @@ class UserHandlers:
             if self.config.is_admin(update.effective_user.id):
                 demande_id = context.user_data.pop("waiting_admin_del_reason")
                 raison = update.message.text.strip()
-                demande = self.db_manager.archiver_demande_annulee(demande_id, f"Suppression admin : {raison}")
+                demande = self.db_manager.archiver_demande_supprimee(demande_id, f"Suppression admin : {raison}")
                 if demande:
                     req_num = demande.get("request_number", demande_id)
                     await update.message.reply_text(
-                        f"✅ <b>Demande #{req_num} supprimée et archivée sous « ❌ Annulée ».</b>",
+                        f"✅ <b>Demande #{req_num} supprimée et archivée sous « 🗑️ Supprimée ».</b>",
                         parse_mode="HTML"
                     )
                     try:
                         await context.bot.send_message(
                             chat_id=demande["user_id"],
                             text=(
-                                f"❌ <b>Votre demande #{req_num} a été annulée par l'administration.</b>\n\n"
+                                f"🗑️ <b>Votre demande #{req_num} a été supprimée par l'administration.</b>\n\n"
                                 f"<b>Motif :</b> {html.escape(raison)}"
                             ),
                             parse_mode="HTML"

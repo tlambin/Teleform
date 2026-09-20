@@ -612,7 +612,7 @@ class SuiviManager:
                     )
 
     def _format_suivi_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche du dossier suivi par le staff selon le gabarit calibré et avec le vrai ID."""
+        """Formate la fiche du dossier suivi par le staff avec liens sociaux cliquables."""
         real_id = demande["id"]
         is_prio = bool(demande.get("prioritaire"))
         titre = f"💎  <b>Demande Prioritaire #{real_id} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{real_id} ({page + 1}/{total})</b>"
@@ -641,14 +641,16 @@ class SuiviManager:
             montant_val = float(demande.get("montant") or 0.0)
             lines.append(f"💰  <b>{montant_val:.2f} €</b>")
 
-        # Réseaux
+        # Réseaux sociaux cliquables
         reseaux = []
         if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+            raw_ig = str(demande["instagram"]).strip().lstrip("@")
+            ig_esc = html.escape(raw_ig)
+            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
         if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
+            snap_esc = html.escape(raw_snap)
+            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
 
         if reseaux:
             lines.append("\n🌐  <b>SES RÉSEAUX</b>")

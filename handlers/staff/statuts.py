@@ -19,7 +19,7 @@ class StatutsManager:
         logger.info("StatutsManager initialisé avec support Staff/Admin, Surveillance et Dénouement Période d'essai")
 
     async def show_status_change_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Affiche le panneau principal de paramétrage du statut selon le plan exact."""
+        """Affiche le panneau principal de paramétrage du statut avec logique stricte de progression."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -49,28 +49,43 @@ class StatutsManager:
             statut_display = self.db_manager.format_statut_display(current_status, is_diff, reussie_sub)
             is_photo_message = bool(query.message and query.message.photo)
 
-            keyboard = [
-                # Ligne 1 : ⏳ EN ATTENTE | 🔄 EN COURS
-                [
-                    InlineKeyboardButton("⏳ EN ATTENTE", callback_data=f"status_apply_{demande_id}_attente"),
-                    InlineKeyboardButton("🔄 EN COURS", callback_data=f"status_apply_{demande_id}_encours")
-                ]
-            ]
+            keyboard = []
 
-            # Ligne 2 : Option Difficile affichée UNIQUEMENT si le dossier est En attente ou En cours
-            if current_status in ("⏳ En attente", "🔄 En cours"):
+            # ==================== RÈGLES DE TRANSITION STRICTES ====================
+            # 1. Dossier réussi : aucune régression possible vers En attente ou En cours
+            if current_status == "✅ Réussie":
+                keyboard.append([
+                    InlineKeyboardButton("✅ MODIFIER SOUS-STATUT RÉUSSIE", callback_data=f"status_sub_reussie_{demande_id}")
+                ])
+                keyboard.append([
+                    InlineKeyboardButton("❌ ABANDONNER", callback_data=f"status_prompt_abandon_{demande_id}")
+                ])
+
+            # 2. Dossier en cours : peut aller vers Réussie ou Abandonner, mais NE PEUT PLUS revenir en En attente
+            elif current_status == "🔄 En cours":
+                keyboard.append([
+                    InlineKeyboardButton("✅ RÉUSSIE", callback_data=f"status_sub_reussie_{demande_id}"),
+                    InlineKeyboardButton("❌ ABANDONNER", callback_data=f"status_prompt_abandon_{demande_id}")
+                ])
                 diff_label = "⚠️ DIFFICILE : OUI" if is_diff else "⚠️ DIFFICILE : NON"
                 keyboard.append([
                     InlineKeyboardButton(diff_label, callback_data=f"status_toggle_diff_{demande_id}")
                 ])
 
-            # Ligne 3 : ✅ RÉUSSIE | ❌ ABANDONNER
-            keyboard.append([
-                InlineKeyboardButton("✅ RÉUSSIE", callback_data=f"status_sub_reussie_{demande_id}"),
-                InlineKeyboardButton("❌ ABANDONNER", callback_data=f"status_prompt_abandon_{demande_id}")
-            ])
+            # 3. Dossier en attente (ou Assignée VIP) : peut passer En cours, Réussie ou Abandonner
+            else:
+                keyboard.append([
+                    InlineKeyboardButton("🔄 EN COURS", callback_data=f"status_apply_{demande_id}_encours")
+                ])
+                diff_label = "⚠️ DIFFICILE : OUI" if is_diff else "⚠️ DIFFICILE : NON"
+                keyboard.append([
+                    InlineKeyboardButton(diff_label, callback_data=f"status_toggle_diff_{demande_id}")
+                ])
+                keyboard.append([
+                    InlineKeyboardButton("✅ RÉUSSIE", callback_data=f"status_sub_reussie_{demande_id}"),
+                    InlineKeyboardButton("❌ ABANDONNER", callback_data=f"status_prompt_abandon_{demande_id}")
+                ])
 
-            # Ligne 4 : ⬅️ RETOUR
             keyboard.append([
                 InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
             ])
@@ -99,7 +114,7 @@ class StatutsManager:
             logger.error("Erreur affichage menu changement statut : %s", exc, exc_info=True)
 
     async def show_reussie_suboptions(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Affiche le sous-panneau de sélection pour le statut ✅ Réussie selon le plan exact."""
+        """Affiche le sous-panneau de sélection pour le statut ✅ Réussie."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
@@ -225,7 +240,7 @@ class StatutsManager:
         nouveau_statut: str,
         reussie_substatus: str = None
     ):
-        """Met à jour le statut, actualise les suivis, alerte le demandeur et informe les administrateurs superviseurs."""
+        """Met à jour le statut, actualise les suivis, alerte le demandeur et informe les superviseurs."""
         staff_id = query.from_user.id
         staff_alias = self.db_manager.get_staff_alias(staff_id)
 
@@ -245,8 +260,18 @@ class StatutsManager:
             await query.answer("❌ Demande introuvable.", show_alert=True)
             return
 
-        real_id = demande["id"]
         old_status = demande["statut"]
+
+        # ==================== GARDE-FOUS SERVEUR ANTI-RÉGRESSION ====================
+        if old_status == "✅ Réussie" and nouveau_statut in ("⏳ En attente", "🔄 En cours"):
+            await query.answer("🚫 Un dossier réussi ne peut plus repasser en attente ou en cours.", show_alert=True)
+            return
+
+        if old_status == "🔄 En cours" and nouveau_statut == "⏳ En attente":
+            await query.answer("🚫 Un dossier en cours ne peut pas redevenir en attente.", show_alert=True)
+            return
+
+        real_id = demande["id"]
         old_diff = bool(demande.get("is_difficile", False))
         old_sub = demande.get("reussie_substatus")
         old_label = self.db_manager.format_statut_display(old_status, old_diff, old_sub)
@@ -308,7 +333,6 @@ class StatutsManager:
 
         # ==================== ALERTE SURVEILLANCE STAFF (ADMINS) ====================
         try:
-            # Filtrage selon le statut : 'reussite' ou 'changement_statut'
             action_tag = "reussite" if nouveau_statut == "✅ Réussie" else "changement_statut"
             monitors = self.db_manager.get_monitoring_admins(action=action_tag)
 
@@ -396,7 +420,7 @@ class StatutsManager:
                     f"⚠️ <b>Action requise (Demande #{req_num})</b>\n\n"
                     f"La demande a été déclarée <b>Réussie (Terminée)</b>.\n\n"
                     f"👉 Vous devez <b>obligatoirement envoyer le contenu obtenu</b> à l'utilisateur.\n"
-                    "<i>Le bouton d'archivage sera débloqué dès votre premier envoi (et la demande s'auto-archivera sous 72h).</i>"
+                    "<i>Le bouton d'archivage sera débloqué dès votre premier envoi (et la demande s'auto-archivera sous le délai configuré).</i>"
                 )
                 remind_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("💬 Transmettre le contenu maintenant", callback_data=f"contacter_{demande_id}")],
@@ -408,7 +432,7 @@ class StatutsManager:
                 remind_text = (
                     f"📦 <b>Dossier #{req_num} prêt pour l'archivage</b>\n\n"
                     "Le contenu a bien été livré. Vous pouvez archiver ce dossier immédiatement pour clore la fiche, "
-                    "ou le laisser s'archiver automatiquement dans 72h."
+                    "ou le laisser s'archiver automatiquement."
                 )
                 remind_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("📦 ARCHIVER LE DOSSIER 📦", callback_data=f"status_archive_now_{demande_id}")],
@@ -434,8 +458,6 @@ class StatutsManager:
         success = self.db_manager.archiver_demande_reussie(demande_id)
         if success:
             real_id = demande["id"]
-            staff_alias = self.db_manager.get_staff_alias(staff_id)
-
             await query.answer(f"✅ Demande #{real_id} archivée avec succès !")
             back_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")
@@ -566,7 +588,6 @@ class StatutsManager:
             except Exception as notif_exc:
                 logger.warning("Échec envoi motif abandon à %s : %s", user_id_demande, notif_exc)
 
-            # Notification de surveillance aux administrateurs (Filtrée sur 'abandon')
             try:
                 monitors = self.db_manager.get_monitoring_admins(action="abandon")
                 alert_abandon = (
@@ -612,15 +633,12 @@ class StatutsManager:
         """Construit le clavier d'actions de la vue de suivi selon les règles de gestion."""
         demande_id = demande["id"]
         is_reussie = (demande.get("statut") == "✅ Réussie")
-        sub_status = demande.get("reussie_substatus")
         has_delivered = bool(demande.get("has_delivered_content", False))
         is_prio = bool(demande.get("prioritaire"))
         paiement_statut = demande.get("paiement_statut", "non_requis")
 
         buttons = [
-            # 1. 📌 CHANGER LE STATUT 📌
             [InlineKeyboardButton("📌 CHANGER LE STATUT 📌", callback_data=f"change_status_{demande_id}")],
-            # 2. 👤 PROFIL | 💬 CONTACT
             [
                 InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}"),
                 InlineKeyboardButton("💬 CONTACT", callback_data=f"contacter_{demande_id}")
@@ -652,7 +670,7 @@ class StatutsManager:
         return InlineKeyboardMarkup(buttons)
 
     async def _update_existing_text_message(self, query, demande: dict):
-        """Actualise le corps du message texte après transition d'état selon le gabarit calibré."""
+        """Actualise le corps du message texte après transition d'état avec liens sociaux cliquables."""
         from utils.validators import convert_utc_to_paris
         import re
 
@@ -684,13 +702,16 @@ class StatutsManager:
             montant_val = float(demande.get("montant") or 0.0)
             lines.append(f"💰  <b>{montant_val:.2f} €</b>")
 
+        # Réseaux sociaux cliquables
         reseaux = []
         if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+            raw_ig = str(demande["instagram"]).strip().lstrip("@")
+            ig_esc = html.escape(raw_ig)
+            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
         if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
+            snap_esc = html.escape(raw_snap)
+            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
 
         if reseaux:
             lines.append("\n🌐  <b>SES RÉSEAUX</b>")
@@ -755,7 +776,7 @@ class StatutsManager:
         )
 
     async def _update_photo_caption(self, query, demande: dict):
-        """Actualise la légende de l'image après transition d'état selon le gabarit calibré."""
+        """Actualise la légende de l'image après transition d'état avec liens sociaux cliquables."""
         from utils.validators import convert_utc_to_paris
         import re
 
@@ -787,13 +808,16 @@ class StatutsManager:
             montant_val = float(demande.get("montant") or 0.0)
             lines.append(f"💰  <b>{montant_val:.2f} €</b>")
 
+        # Réseaux sociaux cliquables
         reseaux = []
         if demande.get("instagram"):
-            ig = html.escape(str(demande["instagram"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Instagram :</b> @{ig}")
+            raw_ig = str(demande["instagram"]).strip().lstrip("@")
+            ig_esc = html.escape(raw_ig)
+            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
         if demande.get("snapchat"):
-            snap = html.escape(str(demande["snapchat"]).strip().lstrip("@"))
-            reseaux.append(f"• <b>Snapchat :</b> {snap}")
+            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
+            snap_esc = html.escape(raw_snap)
+            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
 
         if reseaux:
             lines.append("\n🌐  <b>SES RÉSEAUX</b>")

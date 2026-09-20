@@ -284,7 +284,7 @@ class InterfaceManager:
     # ========== SOUS-MENU GESTION DU BOT (Admin & Owner) ==========
 
     def get_gerer_bot_menu(self):
-        """Menu de contrôle du bot système."""
+        """Menu de contrôle du bot système avec mise à jour exacte des boutons."""
         val_demandes = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
         demandes_ouvertes = val_demandes in ("true", "1", "yes")
 
@@ -307,15 +307,15 @@ class InterfaceManager:
             # 1. SUSPENDRE / RÉACTIVER LES DEMANDES
             [InlineKeyboardButton(label_suspension, callback_data="bot_toggle_suspension")],
 
-            # 2. ⌛ LIMITES | ⚖️ QUOTAS
+            # 2. 🌡️ QUOTAS | 🎯 CIBLES (au lieu d'anciens LIMITES / QUOTAS)
             [
-                InlineKeyboardButton("⌛ LIMITES", callback_data="menu_limits"),
-                InlineKeyboardButton("⚖️ QUOTAS", callback_data="menu_channels")
+                InlineKeyboardButton("🌡️ QUOTAS", callback_data="menu_limits"),
+                InlineKeyboardButton("🎯 CIBLES", callback_data="menu_channels")
             ],
 
-            # 3. 📦 ARCHIVAGE | 🛠️ MAINTENANCE
+            # 3. ⏳ DÉLAIS | 🛠️ MAINTENANCE (au lieu de 📦 ARCHIVAGE)
             [
-                InlineKeyboardButton("📦 ARCHIVAGE", callback_data="menu_delais"),
+                InlineKeyboardButton("⏳ DÉLAIS", callback_data="menu_delais"),
                 InlineKeyboardButton("🛠️ MAINTENANCE", callback_data="maintenance")
             ],
 
@@ -409,10 +409,10 @@ class InterfaceManager:
         ]
         return text, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU CANAUX & COMBINAISONS (Toggles ON/OFF) ==========
+    # ========== SOUS-MENU CANAUX & CIBLES (Toggles ON/OFF) ==========
 
     def get_channels_menu(self):
-        """Menu interactif de bascule pour les quatre canaux combinés (Hétéro/Gay × Insta/Snap)."""
+        """Menu interactif de bascule pour les quatre canaux/cibles combinés (Hétéro/Gay × Insta/Snap)."""
         h_insta = str(self.db_manager.get_config_value("allow_hetero_insta", "true")).lower() == "true"
         h_snap = str(self.db_manager.get_config_value("allow_hetero_snap", "true")).lower() == "true"
         g_insta = str(self.db_manager.get_config_value("allow_gay_insta", "true")).lower() == "true"
@@ -436,9 +436,9 @@ class InterfaceManager:
         ]
 
         text = (
-            "🎛️ <b>FLUX OPÉRATIONNELS COMBINÉS</b>\n"
+            "🎯 <b>CIBLES & FLUX OPÉRATIONNELS</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Activez ou coupez les nouveaux dépôts par canal spécifique :\n\n"
+            "Activez ou coupez les nouveaux dépôts par cible spécifique :\n\n"
             f"• <b>Insta Hétéro :</b> {'✅ Ouvert' if h_insta else '❌ Coupé'}\n"
             f"• <b>Snap Hétéro :</b> {'✅ Ouvert' if h_snap else '❌ Coupé'}\n"
             f"• <b>Insta Gay :</b> {'✅ Ouvert' if g_insta else '❌ Coupé'}\n"
@@ -447,10 +447,10 @@ class InterfaceManager:
         )
         return text, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU QUOTAS & LIMITES (Matrice) ==========
+    # ========== SOUS-MENU PLAFONDS & QUOTAS ==========
 
     def get_limits_menu(self):
-        """Ajustement rapide des quotas globaux, par client et par canal combiné."""
+        """Ajustement rapide des quotas globaux, par client et par cible."""
         max_total = self.config.get_max_total_demandes()
         max_user = self.config.get_max_demandes_per_user()
 
@@ -463,7 +463,7 @@ class InterfaceManager:
             return f"<b>{val}</b>" if val > 0 else "<i>Illimité</i>"
 
         message = (
-            "⚙️ <b>PLAFONDS & QUOTAS APPLICATIFS</b>\n"
+            "🌡️ <b>PLAFONDS & QUOTAS APPLICATIFS</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"🌐 <b>Plafond total simultané :</b> {fmt(max_total)}\n"
             f"👤 <b>Plafond par demandeur :</b> {fmt(max_user)}\n\n"
