@@ -387,6 +387,8 @@ class AdminHandlers:
             await self.config_manager.show_reminder_days_menu(update, context)
         elif data == "cfg_sub_payrem_days" and (is_owner or privs.get("can_manage_delais", False)):
             await self.config_manager.show_payment_reminder_days_menu(update, context)
+        elif data == "cfg_sub_remun_days" and (is_owner or privs.get("can_manage_delais", False)):
+            await self.config_manager.show_remun_expiration_days_menu(update, context)
 
         elif data.startswith("set_arch_hours_") and (is_owner or privs.get("can_manage_delais", False)):
             try:
@@ -411,6 +413,15 @@ class AdminHandlers:
                 val = int(data.replace("set_payrem_days_", ""))
                 self.db_manager.set_payment_reminder_days(val)
                 await query.answer(f"✅ Rappel impayé fixé à {val} jours !")
+                await self.config_manager.show_delais_menu(update, context)
+            except Exception:
+                await query.answer("❌ Erreur valeur.", show_alert=True)
+
+        elif data.startswith("set_remun_days_") and (is_owner or privs.get("can_manage_delais", False)):
+            try:
+                val = int(data.replace("set_remun_days_", ""))
+                self.db_manager.set_remun_expiration_days(val)
+                await query.answer(f"✅ Délai rémunération fixé à {val} jours !")
                 await self.config_manager.show_delais_menu(update, context)
             except Exception:
                 await query.answer("❌ Erreur valeur.", show_alert=True)

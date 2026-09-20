@@ -266,7 +266,139 @@ class UserHandlers:
                 )
                 return
 
-            # ==================== CONVERSION EN PRIORITAIRE ====================
+            # ==================== CYCLE RÉMUNÉRATION (DEMANDE STANDARD) ====================
+            elif data.startswith("user_accept_remun_std_"):
+                await query.answer()
+                demande_id = int(data.replace("user_accept_remun_std_", ""))
+                context.user_data["waiting_client_std_remun_amount"] = demande_id
+
+                prompt_text = (
+                    f"💰 <b>Allocation d'un montant (Dossier #{demande_id})</b>\n\n"
+                    "Indiquez au clavier le <b>montant</b> que vous êtes prêt à allouer pour cette demande (en €) :\n\n"
+                    "<i>Votre dossier sera automatiquement converti en priorité et proposé aux piégeurs.</i>"
+                )
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Annuler", callback_data="voir_demandes")
+                ]])
+                await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=kb)
+                return
+
+            elif data.startswith("user_refuse_remun_std_"):
+                await query.answer()
+                demande_id = int(data.replace("user_refuse_remun_std_", ""))
+                demande = self.db_manager.archiver_demande_annulee(
+                    demande_id=demande_id,
+                    raison="Refus de rémunération formulé par le demandeur"
+                )
+                if demande:
+                    req_num = demande.get("request_number", demande_id)
+                    await query.edit_message_text(
+                        f"❌ <b>Dossier #{req_num} abandonné et clôturé.</b>\n\n"
+                        "Votre quota de demandes actives a été libéré.",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")
+                        ]])
+                    )
+                else:
+                    await query.answer("❌ Demande introuvable.", show_alert=True)
+                return
+
+            # ==================== CYCLE RÉMUNÉRATION (DEMANDE PRIORITAIRE) ====================
+            elif data.startswith("user_accept_remun_prio_"):
+                await query.answer()
+                demande_id = int(data.replace("user_accept_remun_prio_", ""))
+                assigned_demande = self.db_manager.accept_proposed_price_and_assign(demande_id)
+
+                if assigned_demande:
+                    req_num = assigned_demande.get("request_number", demande_id)
+                    nouveau_montant = assigned_demande["nouveau_montant"]
+                    staff_id = assigned_demande["staff_id"]
+                    staff_alias = self.db_manager.get_staff_alias(staff_id)
+                    prenom = html.escape(str(assigned_demande.get("prenom") or ""))
+
+                    await query.edit_message_text(
+                        f"🎉 <b>Tarif accepté ({nouveau_montant:.2f} €) !</b>\n\n"
+                        f"Votre dossier #{req_num} concernant <b>{prenom}</b> a été pris en charge immédiatement par <b>{html.escape(str(staff_alias))}</b>.\n"
+                        "Il est désormais en statut <b>⏳ En attente</b> dans vos demandes en cours.",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("📋 Consulter mes demandes", callback_data="voir_demandes")
+                        ]])
+                    )
+
+                    try:
+                        alert_staff = (
+                            f"🎉 <b>PROPOSITION DE PRIX ACCEPTÉE ! (Dossier #{req_num})</b>\n\n"
+                            f"Le demandeur a validé votre tarif de <b>{nouveau_montant:.2f} €</b> pour <b>{prenom}</b>.\n"
+                            "Le dossier est maintenant présent dans vos <b>Demandes suivies</b> sous le statut <b>⏳ En attente</b>."
+                        )
+                        kb_staff = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📄 Ouvrir le dossier", callback_data=f"retour_texte_{demande_id}")],
+                            [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
+                        ])
+                        await context.bot.send_message(
+                            chat_id=staff_id,
+                            text=alert_staff,
+                            parse_mode="HTML",
+                            reply_markup=kb_staff
+                        )
+                    except Exception as err_s:
+                        logger.warning("Impossible de notifier le staff de l'acceptation du prix : %s", err_s)
+                else:
+                    await query.answer("❌ Offre introuvable ou dossier déjà attribué.", show_alert=True)
+                return
+
+            elif data.startswith("user_refuse_remun_prio_"):
+                await query.answer()
+                demande_id = int(data.replace("user_refuse_remun_prio_", ""))
+
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id, request_number, prenom, montant, proposed_price, proposed_by FROM demandes WHERE id = %s",
+                        (demande_id,)
+                    )
+                    dem = cursor.fetchone()
+
+                if dem:
+                    req_num = dem.get("request_number", demande_id)
+                    staff_id = dem.get("proposed_by")
+                    montant_initial = float(dem.get("montant") or 0.0)
+                    prenom = html.escape(str(dem.get("prenom") or ""))
+
+                    self.db_manager.clear_demande_proposed_price(demande_id)
+
+                    await query.edit_message_text(
+                        f"ℹ️ <b>Proposition refusée.</b>\n\n"
+                        f"Votre dossier #{req_num} reste actif en file d'attente à son tarif initial de <b>{montant_initial:.2f} €</b>.",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")
+                        ]])
+                    )
+
+                    if staff_id:
+                        try:
+                            alert_staff = (
+                                f"ℹ️ <b>Proposition de prix refusée (Dossier #{req_num})</b>\n\n"
+                                f"Le client a décliné votre offre de revalorisation pour <b>{prenom}</b>.\n"
+                                f"Le dossier reste disponible dans la file d'attente à <b>{montant_initial:.2f} €</b>."
+                            )
+                            await context.bot.send_message(
+                                chat_id=staff_id,
+                                text=alert_staff,
+                                parse_mode="HTML",
+                                reply_markup=InlineKeyboardMarkup([[
+                                    InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")
+                                ]])
+                            )
+                        except Exception as err_s:
+                            logger.warning("Impossible de notifier le staff du refus de prix : %s", err_s)
+                else:
+                    await query.answer("❌ Demande introuvable.", show_alert=True)
+                return
+
+            # ==================== CONVERSION EN PRIORITAIRE CLASSIQUE ====================
             elif data.startswith("upgrade_prio_"):
                 await query.answer()
                 demande_id = int(data.replace("upgrade_prio_", ""))
@@ -900,7 +1032,7 @@ class UserHandlers:
                 labels = {
                     "hetero_insta": "Max Insta Hétéro",
                     "hetero_snap": "Max Snap Hétéro",
-                    "gay_insta": "Max Snap Gay",
+                    "gay_insta": "Max Insta Gay",
                     "gay_snap": "Max Snap Gay",
                 }
                 await query.edit_message_text(
@@ -943,59 +1075,100 @@ class UserHandlers:
         if not update.message:
             return
 
-        # ==================== PROPOSITION DE PRIX ADMIN (DISPO) ====================
-        if update.message.text and context.user_data and context.user_data.get("waiting_admin_propose_prix"):
-            if self.config.is_admin(update.effective_user.id):
-                demande_id = context.user_data.pop("waiting_admin_propose_prix")
-                raw_montant = update.message.text.strip().replace(",", ".").replace("€", "")
+        # ==================== SAISIE REVALORISATION TARIF PAR LE STAFF (DEMANDE DISPO PRIO) ====================
+        if update.message.text and context.user_data and context.user_data.get("waiting_staff_revalorisation_prix"):
+            sess = context.user_data.pop("waiting_staff_revalorisation_prix")
+            demande_id = sess["demande_id"]
+            current_montant = sess["current_montant"]
+            staff_id = sess["staff_id"]
+            raw_montant = update.message.text.strip().replace(",", ".").replace("€", "")
 
-                try:
-                    montant = float(raw_montant)
-                    if montant <= 0:
-                        raise ValueError()
-                except ValueError:
-                    context.user_data["waiting_admin_propose_prix"] = demande_id
-                    await update.message.reply_text(
-                        "❌ Veuillez saisir un montant valide supérieur à 0 (ex : <code>25</code> ou <code>30.50</code>) :",
-                        parse_mode="HTML"
-                    )
-                    return
+            try:
+                nouveau_prix = float(raw_montant)
+                if nouveau_prix <= current_montant:
+                    raise ValueError()
+            except ValueError:
+                context.user_data["waiting_staff_revalorisation_prix"] = sess
+                await update.message.reply_text(
+                    f"❌ Veuillez saisir un montant valide strictement supérieur au montant actuel (minimum : <code>{current_montant + 1:.2f} €</code>) :",
+                    parse_mode="HTML"
+                )
+                return
 
-                with self.db_manager.get_cursor() as cursor:
-                    cursor.execute("SELECT id, request_number, prenom, user_id FROM demandes WHERE id = %s", (demande_id,))
-                    dem = cursor.fetchone()
+            ok = self.db_manager.set_demande_proposed_price(demande_id, staff_id, nouveau_prix)
+            if not ok:
+                await update.message.reply_text("❌ Erreur technique lors de l'enregistrement de l'offre.")
+                return
 
-                if not dem:
-                    await update.message.reply_text("❌ Demande introuvable.")
-                    return
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT id, request_number, prenom, user_id FROM demandes WHERE id = %s", (demande_id,))
+                dem = cursor.fetchone()
 
+            if dem:
                 req_num = dem.get("request_number", demande_id)
                 prenom = html.escape(str(dem.get("prenom") or "votre contact"))
-                stars_amount = max(1, int(montant * 50))
+                alias_staff = self.db_manager.get_staff_alias(staff_id)
 
                 client_alert = (
-                    f"💡 <b>Proposition de prise en charge prioritaire (Dossier #{req_num})</b>\n\n"
-                    f"L'équipe a examiné votre demande concernant <b>{prenom}</b>.\n"
-                    f"Ce dossier peut être pris en charge immédiatement en formule prioritaire pour un montant de <b>{montant:.2f} €</b> ({stars_amount} ⭐).\n\n"
-                    "Si vous acceptez cette proposition, choisissez votre moyen de règlement ci-dessous :"
+                    f"💰 <b>Proposition de revalorisation (Dossier #{req_num})</b>\n\n"
+                    f"L'opérateur <b>{html.escape(str(alias_staff))}</b> souhaite prendre en charge votre dossier concernant <b>{prenom}</b> !\n\n"
+                    f"Compte tenu de la difficulté de la cible, il vous propose de réaliser la prestation pour un tarif de <b>{nouveau_prix:.2f} €</b> "
+                    f"(au lieu de <code>{current_montant:.2f} €</code>).\n\n"
+                    "• <b>Accepter :</b> Le dossier sera immédiatement pris en charge par cet opérateur sous le statut ⏳ En attente.\n"
+                    "• <b>Refuser :</b> Votre demande reste active au tarif de base dans les disponibles pour le reste de l'équipe."
                 )
                 client_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"⭐ Régler en Stars ({stars_amount} ⭐)", callback_data=f"pay_stars_prio_{demande_id}")],
-                    [InlineKeyboardButton("💬 Convenir d'un autre paiement", callback_data=f"pay_contact_prio_{demande_id}")],
-                    [InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")]
+                    [
+                        InlineKeyboardButton(f"✅ Accepter ({nouveau_prix:.2f} €)", callback_data=f"user_accept_remun_prio_{demande_id}"),
+                        InlineKeyboardButton("❌ Refuser", callback_data=f"user_refuse_remun_prio_{demande_id}")
+                    ]
                 ])
 
                 try:
-                    self.db_manager.update_demande_montant(demande_id, montant)
                     await context.bot.send_message(chat_id=dem["user_id"], text=client_alert, parse_mode="HTML", reply_markup=client_kb)
                     await update.message.reply_text(
-                        f"✅ <b>Proposition de {montant:.2f} € transmise au demandeur pour le dossier #{req_num} !</b>",
+                        f"✅ <b>Proposition de {nouveau_prix:.2f} € envoyée au demandeur pour le dossier #{req_num} !</b>\n"
+                        "Vous serez notifié dès qu'il aura accepté ou refusé l'offre.",
                         parse_mode="HTML"
                     )
                 except Exception as err:
                     logger.error("Erreur envoi proposition tarif client : %s", err)
-                    await update.message.reply_text("❌ Erreur lors de l'envoi au demandeur.")
+                    await update.message.reply_text("❌ Impossible de transmettre la proposition au demandeur.")
+            return
+
+        # ==================== SAISIE MONTANT RÉMUNÉRATION PAR LE CLIENT (DEMANDE DISPO STANDARD) ====================
+        if update.message.text and context.user_data and context.user_data.get("waiting_client_std_remun_amount"):
+            demande_id = context.user_data.pop("waiting_client_std_remun_amount")
+            raw_montant = update.message.text.strip().replace(",", ".").replace("€", "")
+
+            try:
+                montant = float(raw_montant)
+                if montant <= 0:
+                    raise ValueError()
+            except ValueError:
+                context.user_data["waiting_client_std_remun_amount"] = demande_id
+                await update.message.reply_text(
+                    "❌ Veuillez saisir un montant valide supérieur à 0 (ex : <code>15</code> ou <code>25.00</code>) :",
+                    parse_mode="HTML"
+                )
                 return
+
+            user_id = update.effective_user.id
+            ok, msg_result = self.db_manager.upgrade_demande_to_prioritaire(demande_id, user_id, montant)
+
+            if ok:
+                await update.message.reply_text(
+                    f"🎉 <b>Rémunération enregistrée !</b>\n\n"
+                    f"Votre dossier #{demande_id} est désormais <b>💎 Prioritaire</b> avec une gratification de <b>{montant:.2f} €</b>.\n"
+                    "Il est à présent proposé en priorité à l'ensemble de l'équipe !",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")
+                    ]])
+                )
+            else:
+                await update.message.reply_text(f"⚠️ {msg_result}")
+            return
 
         # ==================== SIGNALEMENT D'UNE DEMANDE DISPO PAR LE STAFF ====================
         if update.message.text and context.user_data and context.user_data.get("waiting_staff_report_reason"):
@@ -1023,11 +1196,11 @@ class UserHandlers:
                 f"• <b>Opérateur :</b> {staff_alias_esc} (<code>{staff_user.id}</code>)\n"
                 f"• <b>Dossier concerné :</b> #{req_num} ({prenom})\n"
                 f"• <b>Motif du signalement :</b>\n« <i>{motif_esc}</i> »\n\n"
-                "<i>Actions administratives rapides :</i>"
+                "<i>Actions administratives directes :</i>"
             )
             admin_kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("💰 Proposer un tarif", callback_data=f"admin_propose_prix_{demande_id}"),
+                    InlineKeyboardButton("💰 Rémunération", callback_data=f"dispo_ask_remun_std_{demande_id}"),
                     InlineKeyboardButton("🗑️ Supprimer", callback_data=f"admin_del_dispo_{demande_id}")
                 ],
                 [InlineKeyboardButton("📄 Voir le dossier", callback_data=f"retour_texte_{demande_id}")]
@@ -1043,7 +1216,7 @@ class UserHandlers:
             await update.message.reply_text("✅ <b>Signalement transmis à l'administration avec succès !</b>", parse_mode="HTML")
             return
 
-        # ==================== CONVERSION DEMANDE EN PRIORITAIRE ====================
+        # ==================== CONVERSION DEMANDE EN PRIORITAIRE CLASSIQUE ====================
         if update.message.text and context.user_data and context.user_data.get("waiting_upgrade_prio_amount"):
             demande_id = context.user_data.pop("waiting_upgrade_prio_amount")
             raw_montant = update.message.text.strip().replace(",", ".")

@@ -310,6 +310,68 @@ async def check_and_send_unpaid_demande_reminders(context: ContextTypes.DEFAULT_
         logger.error("Erreur vérification rappels d'impayés demandeurs : %s", exc)
 
 
+async def check_and_auto_abandon_expired_remun_demandes(context: ContextTypes.DEFAULT_TYPE):
+    """Archive automatiquement sous '❌ Abandonnée' les demandes dont la proposition de rémunération a expiré sans réponse."""
+    db_manager = context.application.bot_data.get("db_manager")
+    if not db_manager:
+        return
+
+    try:
+        days = db_manager.get_remun_expiration_days()
+        expired = db_manager.get_expired_remun_demandes_for_abandon(days=days)
+
+        for dem in expired:
+            dem_id = dem["id"]
+            user_id = dem["user_id"]
+            req_num = html.escape(str(dem.get("request_number") or dem_id))
+            prenom = html.escape(str(dem.get("prenom") or "la cible"))
+            staff_id = dem.get("proposed_by")
+
+            raison = f"Délai expiré : absence de réponse à la demande de rémunération ({days} jours)"
+            archived = db_manager.archiver_demande_annulee(demande_id=dem_id, raison=raison)
+
+            if archived:
+                logger.info("❌ Demande #%s abandonnée automatiquement pour délai de rémunération expiré (%sj).", req_num, days)
+
+                # Notification client
+                try:
+                    msg_client = (
+                        f"❌ <b>Dossier #{req_num} abandonné et clôturé</b>\n\n"
+                        f"Votre demande concernant <b>{prenom}</b> a été clôturée automatiquement suite à l'absence de réponse "
+                        f"à la proposition de rémunération sous un délai de {days} jours.\n\n"
+                        "Votre quota de demandes actives a été libéré."
+                    )
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=msg_client,
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")
+                        ]])
+                    )
+                except Exception as notif_user_err:
+                    logger.warning("Impossible de notifier le client %s de l'abandon de rémunération : %s", user_id, notif_user_err)
+
+                # Notification opérateur (si l'offre émanait d'un membre précis)
+                if staff_id:
+                    try:
+                        msg_staff = (
+                            f"ℹ️ <b>Dossier #{req_num} clôturé pour expiration ({days}j)</b>\n\n"
+                            f"Le client n'a pas répondu à votre proposition de rémunération concernant <b>{prenom}</b> dans le délai imparti.\n"
+                            "Le dossier a été clôturé et archivé sous « ❌ Abandonnée »."
+                        )
+                        await context.bot.send_message(
+                            chat_id=staff_id,
+                            text=msg_staff,
+                            parse_mode="HTML"
+                        )
+                    except Exception as notif_staff_err:
+                        logger.warning("Impossible de notifier le staff %s de l'abandon de rémunération : %s", staff_id, notif_staff_err)
+
+    except Exception as exc:
+        logger.error("Erreur lors de la vérification de l'abandon automatique pour délai de rémunération : %s", exc)
+
+
 # ==================== HANDLERS TELEGRAM STARS ====================
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -726,16 +788,16 @@ class TelegramBot:
         app.add_handler(CommandHandler("toggle_demandes", self.admin_handlers.toggle_demandes, filters=filters.ChatType.PRIVATE))
         app.add_handler(CommandHandler("maintenance", self.admin_handlers.run_maintenance, filters=filters.ChatType.PRIVATE))
 
-        # Aiguillage Gouvernance & Administration (Admin/Owner + Modes Paiement Staff + Zone de Danger)
+        # Aiguillage Gouvernance & Administration (Admin/Owner + Délais Rémunération + Zone de Danger)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*)$",
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|set_remun_days_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*)$",
         ))
 
-        # Aiguillage Traitement opérationnel des dossiers (Staff + Suppression + Proposition prix + Signalement)
+        # Aiguillage Traitement opérationnel des dossiers (Staff + Suppression + Rémunération + Signalement)
         app.add_handler(CallbackQueryHandler(
             self.staff_handlers.handle_staff_callbacks,
-            pattern=r"^(demandes_disponibles|dispo_.*|admin_del_dispo_.*|admin_propose_prix_.*|staff_report_dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|menu_surveillance_notifs|toggle_mon_.*|profil_.*|staff_view_demandes_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
+            pattern=r"^(demandes_disponibles|dispo_.*|dispo_remun_pending_info|admin_del_dispo_.*|dispo_ask_remun_.*|staff_report_dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|menu_surveillance_notifs|toggle_mon_.*|profil_.*|staff_view_demandes_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
         ))
 
         # Menus d'interface et navigation (avec menu_mon_profil et bot_toggle_suspension)
@@ -744,10 +806,10 @@ class TelegramBot:
             pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|menu_mon_profil|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|bot_toggle_suspension|menu_danger_zone|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|limit_.*|stat_access_denied|arch_access_denied)$",
         ))
 
-        # Callbacks utilisateurs / clients
+        # Callbacks utilisateurs / clients (inclus les réponses accept/refuse rémunération standard et prioritaire)
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
-            pattern=r"^(check_subscription|nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|menu_vip_settings|vip_set_assign_.*|vip_pick_auto_staff|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|upgrade_prio_.*|pay_stars_prio_.*|pay_contact_prio_.*)$",
+            pattern=r"^(check_subscription|nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|menu_vip_settings|vip_set_assign_.*|vip_pick_auto_staff|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|upgrade_prio_.*|pay_stars_prio_.*|pay_contact_prio_.*|user_accept_remun_.*|user_refuse_remun_.*)$",
         ))
 
         # Réception des messages & médias : STRICTEMENT PRIVÉ (ignore totalement le groupe)
@@ -792,6 +854,13 @@ class TelegramBot:
                 first=75,
             )
             logger.info("⏰ JobQueue activée : vérification des rappels d'impayés client toutes les 6h.")
+
+            app.job_queue.run_repeating(
+                check_and_auto_abandon_expired_remun_demandes,
+                interval=21600,
+                first=90,
+            )
+            logger.info("⏰ JobQueue activée : vérification des abandons de rémunération expirée toutes les 6h.")
 
         async def post_init(application: Application):
             await self.setup_bot_commands(application)

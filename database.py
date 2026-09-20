@@ -240,6 +240,9 @@ class DatabaseManager:
                 ancien_admin_alias VARCHAR(64) DEFAULT NULL,
                 raison_abandon TEXT DEFAULT NULL,
                 last_vip_reminder DATETIME DEFAULT NULL,
+                proposed_price DECIMAL(10, 2) DEFAULT NULL,
+                proposed_by BIGINT DEFAULT NULL,
+                remun_asked_at DATETIME DEFAULT NULL,
                 date_creation DATETIME DEFAULT CURRENT_TIMESTAMP,
                 date_modification DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 request_number INT DEFAULT NULL,
@@ -354,6 +357,9 @@ class DatabaseManager:
             ("demandes", "request_number", "INT DEFAULT NULL"),
             ("demandes", "date_modification", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
             ("demandes", "last_vip_reminder", "DATETIME DEFAULT NULL"),
+            ("demandes", "proposed_price", "DECIMAL(10, 2) DEFAULT NULL"),
+            ("demandes", "proposed_by", "BIGINT DEFAULT NULL"),
+            ("demandes", "remun_asked_at", "DATETIME DEFAULT NULL"),
             ("archives", "admin_en_charge", "BIGINT DEFAULT NULL"),
             ("archives", "orientation", "VARCHAR(16) DEFAULT 'hetero'"),
             ("archives", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -425,6 +431,7 @@ class DatabaseManager:
                         ('auto_archive_hours', '72'),
                         ('delivery_reminder_days', '7'),
                         ('payment_reminder_days', '7'),
+                        ('remun_expiration_days', '7'),
                         ('allow_hetero_insta', 'true'),
                         ('allow_hetero_snap', 'true'),
                         ('allow_gay_insta', 'true'),
@@ -468,10 +475,139 @@ class DatabaseManager:
             logger.error("Erreur lors de la création des tables : %s", exc)
             raise
 
+    # ==================== GESTION DES OFFRES DE RÉMUNÉRATION ====================
+
+    def set_demande_proposed_price(self, demande_id: int, proposed_by: Optional[int], amount: Optional[float] = None) -> bool:
+        """Enregistre une sollicitation ou un montant proposé avec horodatage de départ."""
+        try:
+            val_montant = round(float(amount), 2) if amount is not None else None
+            p_by = int(proposed_by) if proposed_by is not None else None
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET proposed_price = %s,
+                        proposed_by = %s,
+                        remun_asked_at = NOW(),
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (val_montant, p_by, int(demande_id))
+                )
+            return True
+        except Exception as exc:
+            logger.error("Erreur enregistrement proposition de prix demande %s : %s", demande_id, exc)
+            return False
+
+    def clear_demande_proposed_price(self, demande_id: int) -> bool:
+        """Efface la proposition de prix en attente et son horodatage."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET proposed_price = NULL,
+                        proposed_by = NULL,
+                        remun_asked_at = NULL,
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (int(demande_id),)
+                )
+            return True
+        except Exception as exc:
+            logger.error("Erreur effacement proposition de prix demande %s : %s", demande_id, exc)
+            return False
+
+    def accept_proposed_price_and_assign(self, demande_id: int) -> Optional[Dict[str, Any]]:
+        """Valide le nouveau tarif, passe en '⏳ En attente' et assigne à l'initiateur de l'offre."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, request_number, user_id, prenom, montant, proposed_price, proposed_by
+                    FROM demandes WHERE id = %s FOR UPDATE
+                    """,
+                    (int(demande_id),)
+                )
+                dem = cursor.fetchone()
+                if not dem or not dem.get("proposed_price") or not dem.get("proposed_by"):
+                    return None
+
+                staff_id = int(dem["proposed_by"])
+                nouveau_prix = float(dem["proposed_price"])
+
+                cursor.execute(
+                    """
+                    UPDATE demandes
+                    SET montant = %s,
+                        prioritaire = TRUE,
+                        statut = '⏳ En attente',
+                        admin_en_charge = %s,
+                        proposed_price = NULL,
+                        proposed_by = NULL,
+                        remun_asked_at = NULL,
+                        date_modification = NOW()
+                    WHERE id = %s
+                    """,
+                    (nouveau_prix, staff_id, int(demande_id))
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                    VALUES (%s, %s, NOW(), NOW(), 'active')
+                    ON DUPLICATE KEY UPDATE
+                        admin_id = VALUES(admin_id),
+                        derniere_action = NOW(),
+                        statut_suivi = 'active'
+                    """,
+                    (int(demande_id), staff_id)
+                )
+
+                dem["nouveau_montant"] = nouveau_prix
+                dem["staff_id"] = staff_id
+                return dem
+        except Exception as exc:
+            logger.error("Erreur acceptation et assignation offre prix demande %s : %s", demande_id, exc)
+            return None
+
+    def get_remun_expiration_days(self) -> int:
+        val = self.get_config_value("remun_expiration_days", "7")
+        try:
+            return max(1, int(val))
+        except (ValueError, TypeError):
+            return 7
+
+    def set_remun_expiration_days(self, days: int) -> bool:
+        val = max(1, int(days))
+        return self.set_config_value("remun_expiration_days", str(val))
+
+    def get_expired_remun_demandes_for_abandon(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Extrait les demandes dont la proposition de rémunération n'a pas reçu de réponse sous X jours."""
+        effective_days = days if days is not None else self.get_remun_expiration_days()
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, user_id, request_number, prenom, proposed_by, proposed_price
+                    FROM demandes
+                    WHERE statut = '📥 Reçue'
+                      AND admin_en_charge IS NULL
+                      AND remun_asked_at IS NOT NULL
+                      AND TIMESTAMPDIFF(DAY, remun_asked_at, NOW()) >= %s
+                    """,
+                    (effective_days,)
+                )
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur extraction demandes avec délai de rémunération expiré : %s", exc)
+            return []
+
     # ==================== COMPTEURS MENUS GESTION DES DEMANDES ====================
 
     def get_staff_demandes_counts(self, user_id: int) -> Dict[str, int]:
-        """Calcule les compteurs : disponibles (selon perms), suivies actives (toutes celles en cours de traitement), et strictement archivées."""
+        """Calcule les compteurs : disponibles (selon perms), suivies actives, et archivées."""
         counts = {"dispo": 0, "suivies": 0, "archives": 0}
         uid = int(user_id)
         is_own = self.is_owner(uid)
@@ -751,10 +887,7 @@ class DatabaseManager:
             return False
 
     def get_monitoring_admins(self, action: Optional[str] = None) -> List[int]:
-        """
-        Retourne les admins autorisés à surveiller le staff, filtrés selon leur choix pour l'action donnée :
-        'prise_en_charge', 'changement_statut', 'abandon', 'reussite', 'staff_msg', 'user_msg'.
-        """
+        """Retourne les admins autorisés à surveiller le staff."""
         admins_eligibles = set()
         primary_owner = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
         if primary_owner:
@@ -980,7 +1113,7 @@ class DatabaseManager:
         query = """
             SELECT id, request_number, user_id, prenom, nom, age, localisation,
                    photo_id, instagram, snapchat, details, prioritaire, montant,
-                   statut, orientation, date_creation
+                   statut, orientation, proposed_price, proposed_by, remun_asked_at, date_creation
             FROM demandes
             WHERE statut = '📥 Reçue'
               AND user_id != %s
@@ -1005,7 +1138,7 @@ class DatabaseManager:
             query += " AND prioritaire = FALSE"
 
         query += """
-            ORDER BY 
+            ORDER BY
                 prioritaire DESC,
                 CASE WHEN prioritaire = 1 THEN montant END DESC,
                 date_creation ASC
@@ -1411,6 +1544,9 @@ class DatabaseManager:
                     UPDATE demandes
                     SET prioritaire = TRUE,
                         montant = %s,
+                        proposed_price = NULL,
+                        proposed_by = NULL,
+                        remun_asked_at = NULL,
                         date_modification = NOW()
                     WHERE id = %s
                     """,

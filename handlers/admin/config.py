@@ -22,6 +22,7 @@ class ConfigManager:
         "auto_archive_hours": "72",
         "delivery_reminder_days": "7",
         "payment_reminder_days": "7",
+        "remun_expiration_days": "7",
         "allow_hetero_insta": "true",
         "allow_hetero_snap": "true",
         "allow_gay_insta": "true",
@@ -35,7 +36,7 @@ class ConfigManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("ConfigManager initialisé avec support Délais, Quotas & Rappels")
+        logger.info("ConfigManager initialisé avec support Délais, Quotas, Rappels & Rémunération")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou supprime la photo existante pour émettre du texte."""
@@ -241,6 +242,7 @@ class ConfigManager:
         hours = self.db_manager.get_auto_archive_hours()
         days = self.db_manager.get_delivery_reminder_days()
         pay_days = self.db_manager.get_payment_reminder_days()
+        remun_days = self.db_manager.get_remun_expiration_days()
 
         text = (
             "⏳ <b>CONFIGURATION DES DÉLAIS DU SYSTÈME</b>\n"
@@ -248,6 +250,7 @@ class ConfigManager:
             f"• 📦 <b>Auto-archivage post-livraison :</b> <code>{hours}h</code>\n"
             f"• 🚚 <b>Rappel livraison (Staff) :</b> <code>{days} jours</code>\n"
             f"• 💰 <b>Rappel impayé (Demandeur) :</b> <code>{pay_days} jours</code>\n"
+            f"• ⏳ <b>Délai réponse rémunération :</b> <code>{remun_days} jours</code>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "<i>Cliquez sur une option pour modifier sa valeur :</i>"
         )
@@ -257,7 +260,8 @@ class ConfigManager:
                 InlineKeyboardButton(f"🚚 Rappel Livraison ({days}j)", callback_data="cfg_sub_reminder_days")
             ],
             [
-                InlineKeyboardButton(f"💰 Rappel Impayé Client ({pay_days}j)", callback_data="cfg_sub_payrem_days")
+                InlineKeyboardButton(f"💰 Rappel Impayé Client ({pay_days}j)", callback_data="cfg_sub_payrem_days"),
+                InlineKeyboardButton(f"⏳ Délai Rémunération ({remun_days}j)", callback_data="cfg_sub_remun_days")
             ],
             [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
         ]
@@ -347,6 +351,36 @@ class ConfigManager:
         text = (
             "💰 <b>Fréquence du rappel d'impayé (Demandeur)</b>\n\n"
             f"Actuelle : Tous les <b>{current} jours</b>."
+        )
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def show_remun_expiration_days_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Sous-menu pour choisir le délai de réponse accordé au demandeur avant abandon automatique."""
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+
+        current = self.db_manager.get_remun_expiration_days()
+
+        def b_lbl(name: str, val: int) -> str:
+            return f"✅ {name}" if current == val else name
+
+        keyboard = [
+            [
+                InlineKeyboardButton(b_lbl("3 jours", 3), callback_data="set_remun_days_3"),
+                InlineKeyboardButton(b_lbl("5 jours", 5), callback_data="set_remun_days_5"),
+            ],
+            [
+                InlineKeyboardButton(b_lbl("7 jours", 7), callback_data="set_remun_days_7"),
+                InlineKeyboardButton(b_lbl("14 jours", 14), callback_data="set_remun_days_14"),
+            ],
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_delais")]
+        ]
+        text = (
+            "⏳ <b>Délai avant abandon pour non-réponse à la rémunération</b>\n\n"
+            f"Actuel : <b>{current} jours</b>.\n\n"
+            "<i>Passé ce délai sans réponse du demandeur, la demande sera classée sous « ❌ Abandonnée » avec explication.</i>"
         )
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 

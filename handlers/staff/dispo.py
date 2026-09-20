@@ -81,7 +81,7 @@ class DispoManager:
         self.db_manager = db_manager
         self.config = config
         self.notifs_manager = NotifsManager(db_manager, config)
-        logger.info("DispoManager initialisé avec disposition conforme et flux tarif/signalement")
+        logger.info("DispoManager initialisé avec disposition conforme et indicateur de rémunération")
 
     def _get_active_filters(self, context: ContextTypes.DEFAULT_TYPE) -> dict:
         """Récupère ou initialise les filtres de la session utilisateur."""
@@ -110,6 +110,11 @@ class DispoManager:
         is_admin = self.db_manager.is_admin(user_id)
         is_trial = self.db_manager.is_staff_trial(user_id)
 
+        # 0. Information proposition de rémunération déjà en attente
+        if data == "dispo_remun_pending_info":
+            await query.answer("⏳ Une demande de rémunération a déjà été transmise au client. En attente de sa réponse.", show_alert=True)
+            return
+
         # 1. Prise en charge d'une demande
         if data.startswith("suivre_demande_"):
             demande_id = int(data.replace("suivre_demande_", ""))
@@ -137,20 +142,94 @@ class DispoManager:
             await self._render_clean_text(query, context, msg, kb)
             return
 
-        # 3. Proposer un prix (Admin / Owner uniquement)
-        elif data.startswith("admin_propose_prix_"):
+        # 3. Rémunération : Demande Standard (Admin/Owner -> Solliciter rémunération au client)
+        elif data.startswith("dispo_ask_remun_std_"):
             if not is_admin:
                 await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
                 return
 
-            demande_id = int(data.replace("admin_propose_prix_", ""))
-            context.user_data["waiting_admin_propose_prix"] = demande_id
+            demande_id = int(data.replace("dispo_ask_remun_std_", ""))
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT id, request_number, prenom, user_id FROM demandes WHERE id = %s",
+                    (demande_id,)
+                )
+                dem = cursor.fetchone()
+
+            if not dem:
+                await query.answer("❌ Demande introuvable.", show_alert=True)
+                return
+
+            req_num = dem.get("request_number", demande_id)
+            prenom = html.escape(str(dem.get("prenom") or "votre contact"))
+            client_id = dem["user_id"]
+            days_exp = self.db_manager.get_remun_expiration_days()
+
+            text_client = (
+                f"💰 <b>Proposition de prise en charge (Dossier #{req_num})</b>\n\n"
+                f"L'équipe a examiné votre demande concernant <b>{prenom}</b>.\n"
+                "En raison de la complexité du profil, ce dossier nécessite une <b>rémunération</b> "
+                "pour être pris en charge par nos piégeurs.\n\n"
+                "Acceptez-vous d'allouer une gratification pour cette demande ?\n\n"
+                "• <b>Oui :</b> Vous choisirez le montant que vous souhaitez allouer.\n"
+                f"• <b>Non (ou sans réponse sous {days_exp} jours) :</b> Votre demande sera abandonnée et votre quota sera libéré."
+            )
+            kb_client = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Oui, allouer un montant", callback_data=f"user_accept_remun_std_{demande_id}"),
+                    InlineKeyboardButton("❌ Non, abandonner", callback_data=f"user_refuse_remun_std_{demande_id}")
+                ]
+            ])
+
+            try:
+                self.db_manager.set_demande_proposed_price(demande_id, proposed_by=user_id, amount=None)
+                await context.bot.send_message(
+                    chat_id=client_id,
+                    text=text_client,
+                    parse_mode="HTML",
+                    reply_markup=kb_client
+                )
+                await query.answer("✅ Demande de rémunération transmise au client !", show_alert=True)
+                await self.show_demandes_disponibles_page(update, context, page=0)
+            except Exception as err:
+                logger.error("Erreur envoi demande rémunération client : %s", err)
+                await query.answer("❌ Erreur lors de l'envoi au demandeur.", show_alert=True)
+            return
+
+        # 4. Rémunération : Demande Prioritaire (Staff habilité -> Proposer une plus grosse somme)
+        elif data.startswith("dispo_ask_remun_prio_"):
+            perms = self.db_manager.get_staff_permissions(user_id)
+            can_prio = (perms.get("perm_type") in ("all", "prio_only") or is_admin)
+            if not can_prio:
+                await query.answer("❌ Vous n'avez pas la permission de traiter les dossiers prioritaires.", show_alert=True)
+                return
+
+            demande_id = int(data.replace("dispo_ask_remun_prio_", ""))
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT id, request_number, prenom, montant FROM demandes WHERE id = %s",
+                    (demande_id,)
+                )
+                dem = cursor.fetchone()
+
+            if not dem:
+                await query.answer("❌ Demande introuvable.", show_alert=True)
+                return
+
+            montant_actuel = float(dem.get("montant") or 0.0)
+            context.user_data["waiting_staff_revalorisation_prix"] = {
+                "demande_id": demande_id,
+                "current_montant": montant_actuel,
+                "staff_id": user_id
+            }
 
             msg = (
-                f"💰 <b>PROPOSER UN TARIF (Dossier #{demande_id})</b>\n"
+                f"💰 <b>REVALORISATION DU TARIF (Dossier #{demande_id})</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Indiquez au clavier le <b>montant en euros</b> requis pour réaliser cette prestation (ex : <code>25</code> ou <code>30.50</code>) :\n\n"
-                "<i>Le client recevra une notification lui proposant ce montant pour basculer son dossier en Prioritaire.</i>"
+                f"• <b>Tarif actuel :</b> <code>{montant_actuel:.2f} €</code>\n\n"
+                "Indiquez au clavier le <b>nouveau montant</b> que vous réclamez pour traiter ce dossier\n"
+                f"(strictement supérieur à <code>{montant_actuel:.2f} €</code>) :\n\n"
+                "<i>Le client recevra la proposition. S'il accepte, le dossier vous sera automatiquement assigné.</i>"
             )
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("❌ Annuler", callback_data="demandes_disponibles")
@@ -158,7 +237,7 @@ class DispoManager:
             await self._render_clean_text(query, context, msg, kb)
             return
 
-        # 4. Signaler une demande (Staff standard non-admin)
+        # 5. Signaler une demande (Staff standard non-admin)
         elif data.startswith("staff_report_dispo_"):
             demande_id = int(data.replace("staff_report_dispo_", ""))
             context.user_data["waiting_staff_report_reason"] = demande_id
@@ -179,40 +258,40 @@ class DispoManager:
             await query.answer("🔒 Période d'essai : vous devez traiter la demande assignée au hasard.", show_alert=True)
             return
 
-        # 5. Menu filtres
+        # 6. Menu filtres
         elif data == "dispo_filters_menu":
             await self.show_filters_menu(update, context)
             return
 
-        # 6. Bascule Filtre Orientation
+        # 7. Bascule Filtre Orientation
         elif data.startswith("dispo_filter_ori_"):
             val = data.replace("dispo_filter_ori_", "")
             filters["orientation"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 7. Bascule Filtre Réseaux
+        # 8. Bascule Filtre Réseaux
         elif data.startswith("dispo_filter_net_"):
             val = data.replace("dispo_filter_net_", "")
             filters["reseau"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 8. Bascule Filtre Âge
+        # 9. Bascule Filtre Âge
         elif data.startswith("dispo_filter_age_"):
             val = data.replace("dispo_filter_age_", "")
             filters["age_range"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 9. Bascule Filtre Priorité
+        # 10. Bascule Filtre Priorité
         elif data.startswith("dispo_filter_type_"):
             val = data.replace("dispo_filter_type_", "")
             filters["type_demande"] = val
             await self.show_filters_menu(update, context)
             return
 
-        # 10. Reset Filtres
+        # 11. Reset Filtres
         elif data == "dispo_filter_reset":
             context.user_data["dispo_filters"] = {
                 "orientation": "all",
@@ -224,7 +303,7 @@ class DispoManager:
             await self.show_filters_menu(update, context)
             return
 
-        # 11. Recherche textuelle
+        # 12. Recherche textuelle
         elif data == "dispo_search_prompt":
             context.user_data["waiting_dispo_search"] = True
             msg = (
@@ -248,12 +327,12 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=0)
             return
 
-        # 12. Pioche aléatoire
+        # 13. Pioche aléatoire
         elif data == "dispo_random":
             await self.show_random_demande(update, context)
             return
 
-        # 13. Pagination standard
+        # 14. Pagination standard
         elif data.startswith("dispo_prev_") or data.startswith("dispo_next_"):
             parts = data.split("_")
             curr = int(parts[2])
@@ -314,6 +393,9 @@ class DispoManager:
                         admin_en_charge = %s,
                         is_difficile = FALSE,
                         reussie_substatus = NULL,
+                        proposed_price = NULL,
+                        proposed_by = NULL,
+                        remun_asked_at = NULL,
                         date_modification = NOW()
                     WHERE id = %s
                     """,
@@ -915,6 +997,11 @@ class DispoManager:
         if dt_mod:
             lines.append(f" <i>{format_datetime_fr(dt_mod)}</i>")
 
+        # Mention de rémunération sollicitée
+        remun_asked_at = demande.get("remun_asked_at")
+        if remun_asked_at:
+            lines.append(f" ⏳ <i>Rémunération sollicitée le {format_date_fr(remun_asked_at)}</i>")
+
         # Infos dossier & Demandeur
         lines.append("\n───────  <b>INFOS</b>  ───────")
         dt_crea = demande.get("date_creation")
@@ -957,9 +1044,11 @@ class DispoManager:
         return "\n".join(lines)
 
     def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
-        """Construit le clavier des demandes disponibles selon la maquette exacte."""
+        """Construit le clavier des demandes disponibles selon la maquette exacte avec bouton RÉMUNÉRATION dynamique."""
         demande_id = demande["id"]
         is_admin = self.db_manager.is_admin(user_id)
+        is_prio = bool(demande.get("prioritaire"))
+        is_remun_asked = bool(demande.get("remun_asked_at"))
 
         buttons = [
             # 1. ❤️ PRENDRE EN CHARGE ❤️
@@ -974,11 +1063,23 @@ class DispoManager:
             row_profil.append(InlineKeyboardButton("⚠️ SIGNALER", callback_data=f"staff_report_dispo_{demande_id}"))
         buttons.append(row_profil)
 
-        # 3. 💰 PROPOSER UN PRIX 💰 (Admin / Owner uniquement)
-        if is_admin:
+        # 3. 💰 RÉMUNÉRATION 💰 ou ⏳ RÉMUNÉRATION DEMANDÉE
+        perms = self.db_manager.get_staff_permissions(user_id)
+        can_handle_prio = (perms.get("perm_type") in ("all", "prio_only") or is_admin)
+
+        if is_remun_asked:
             buttons.append([
-                InlineKeyboardButton("💰 PROPOSER UN PRIX 💰", callback_data=f"admin_propose_prix_{demande_id}")
+                InlineKeyboardButton("⏳ RÉMUNÉRATION DEMANDÉE", callback_data="dispo_remun_pending_info")
             ])
+        else:
+            if not is_prio and is_admin:
+                buttons.append([
+                    InlineKeyboardButton("💰 RÉMUNÉRATION 💰", callback_data=f"dispo_ask_remun_std_{demande_id}")
+                ])
+            elif is_prio and can_handle_prio:
+                buttons.append([
+                    InlineKeyboardButton("💰 RÉMUNÉRATION 💰", callback_data=f"dispo_ask_remun_prio_{demande_id}")
+                ])
 
         # 4. ⬅️ PRÉCÉDENTE | SUIVANTE ➡️
         nav_row = []
@@ -989,7 +1090,7 @@ class DispoManager:
         if nav_row:
             buttons.append(nav_row)
 
-        # 5. 🔍 TRIER | 🎲 AU HASARD (remplace le bouton SUIVIE)
+        # 5. 🔍 TRIER | 🎲 AU HASARD
         buttons.append([
             InlineKeyboardButton("🔍 TRIER", callback_data="dispo_filters_menu"),
             InlineKeyboardButton("🎲 AU HASARD", callback_data="dispo_random")
