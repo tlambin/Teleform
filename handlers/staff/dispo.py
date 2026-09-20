@@ -310,7 +310,7 @@ class DispoManager:
             )
 
             try:
-                monitors = self.db_manager.get_monitoring_admins()
+                monitors = self.db_manager.get_monitoring_admins(action="prise_en_charge")
                 target_prenom = html.escape(str(demande.get("prenom") or "la cible"))
                 alias_esc = html.escape(str(staff_alias))
 

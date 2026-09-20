@@ -1274,7 +1274,7 @@ class UserHandlers:
         await self.compte.handle_text_messages(update, context)
 
     async def _handle_user_reply_relay(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Transmet la réponse de l'utilisateur vers l'opérateur référent."""
+        """Transmet la réponse de l'utilisateur vers l'opérateur référent avec notification de surveillance."""
         reply_info = context.user_data.pop("replying_to_admin", None)
         if not reply_info:
             return
@@ -1322,6 +1322,47 @@ class UserHandlers:
                     parse_mode="HTML",
                     reply_markup=admin_keyboard,
                 )
+
+            # ==================== ALERTE SURVEILLANCE (USER_MSG) ====================
+            try:
+                monitors = self.db_manager.get_monitoring_admins(action="user_msg")
+                alias_staff = self.db_manager.get_staff_alias(admin_id)
+                alias_staff_esc = html.escape(str(alias_staff or "Opérateur"))
+
+                alert_text = (
+                    f"📩 <b>SURVEILLANCE — RÉPONSE DU DEMANDEUR</b>\n\n"
+                    f"• <b>Demandeur :</b> {user_label_esc}{badge_vip}\n"
+                    f"• <b>Dossier :</b> #{demande_id}\n"
+                    f"• <b>Opérateur :</b> {alias_staff_esc} (<code>{admin_id}</code>)"
+                    f"{corps}"
+                )
+                kb_spy = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📄 Voir le dossier", callback_data=f"retour_texte_{demande_id}")]
+                ])
+
+                for mon_id in monitors:
+                    if int(mon_id) not in (int(user.id), int(admin_id)):
+                        try:
+                            if msg.photo or msg.video or msg.document:
+                                await context.bot.copy_message(
+                                    chat_id=mon_id,
+                                    from_chat_id=msg.chat_id,
+                                    message_id=msg.message_id,
+                                    caption=alert_text,
+                                    parse_mode="HTML",
+                                    reply_markup=kb_spy
+                                )
+                            else:
+                                await context.bot.send_message(
+                                    chat_id=mon_id,
+                                    text=alert_text,
+                                    parse_mode="HTML",
+                                    reply_markup=kb_spy
+                                )
+                        except Exception:
+                            pass
+            except Exception as mon_err:
+                logger.warning("Erreur surveillance user_msg : %s", mon_err)
 
             await msg.reply_text(
                 "✅ <b>Votre message a été transmis à votre référent !</b>",

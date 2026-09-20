@@ -112,7 +112,7 @@ class StaffHandlers:
             elif data == "menu_notifs":
                 await self.notifs.show_notifs_menu(update, context)
 
-            elif data.startswith("pref_"):
+            elif data.startswith("pref_") or data.startswith("toggle_mon_") or data == "menu_surveillance_notifs":
                 await self.notifs.handle_callback_routing(update, context, data)
 
             # 5. Photos et affichage texte
@@ -608,7 +608,7 @@ class StaffHandlers:
         return True
 
     async def _dispatch_media_batch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Envoie l'ensemble du lot au destinataire, valide la livraison et envoie une copie miroir aux superviseurs."""
+        """Envoie l'ensemble du lot au destinataire, valide la livraison et envoie une copie miroir aux superviseurs autorisés."""
         query = update.callback_query
         session = context.user_data.pop("contact_session", None)
 
@@ -708,9 +708,9 @@ class StaffHandlers:
             if is_client_delivery:
                 self.db_manager.mark_content_delivered(demande_id)
 
-                # ==================== COPIE MIROIR AUX SUPERVISEURS (SURVEILLANCE STAFF) ====================
+                # ==================== COPIE MIROIR AUX SUPERVISEURS (FILTRÉ SUR 'STAFF_MSG') ====================
                 try:
-                    monitors = self.db_manager.get_monitoring_admins()
+                    monitors = self.db_manager.get_monitoring_admins(action="staff_msg")
                     target_prenom = html.escape(str(d_row.get("prenom") or "la cible"))
 
                     header_monitor = (

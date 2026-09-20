@@ -156,7 +156,7 @@ class StatutsManager:
             if data.startswith("status_apply_reussie_"):
                 parts = data.split("_")
                 demande_id = int(parts[3])
-                sub_type = parts[4]  # active ou terminee
+                sub_type = parts[4]
                 await self._apply_status_change(query, context, demande_id, "✅ Réussie", reussie_substatus=sub_type)
                 return
 
@@ -308,7 +308,10 @@ class StatutsManager:
 
         # ==================== ALERTE SURVEILLANCE STAFF (ADMINS) ====================
         try:
-            monitors = self.db_manager.get_monitoring_admins()
+            # Filtrage selon le statut : 'reussite' ou 'changement_statut'
+            action_tag = "reussite" if nouveau_statut == "✅ Réussie" else "changement_statut"
+            monitors = self.db_manager.get_monitoring_admins(action=action_tag)
+
             target_prenom = html.escape(str(demande.get("prenom") or "la cible"))
             staff_alias_esc = html.escape(str(staff_alias))
             nouveau_statut_display = self.db_manager.format_statut_display(nouveau_statut, new_diff, reussie_substatus)
@@ -432,24 +435,6 @@ class StatutsManager:
         if success:
             real_id = demande["id"]
             staff_alias = self.db_manager.get_staff_alias(staff_id)
-
-            # Notification de surveillance aux administrateurs
-            try:
-                monitors = self.db_manager.get_monitoring_admins()
-                alert_arch = (
-                    f"🗄️ <b>SURVEILLANCE STAFF — DOSSIER ARCHIVÉ</b>\n\n"
-                    f"• <b>Opérateur :</b> {html.escape(str(staff_alias))} (<code>{staff_id}</code>)\n"
-                    f"• <b>Dossier :</b> #{real_id} ({html.escape(str(demande.get('prenom') or 'la cible'))})\n"
-                    "• <b>Statut :</b> Archivé avec succès."
-                )
-                for mon_id in monitors:
-                    if int(mon_id) != int(staff_id):
-                        try:
-                            await context.bot.send_message(chat_id=mon_id, text=alert_arch, parse_mode="HTML")
-                        except Exception:
-                            pass
-            except Exception as mon_err:
-                logger.warning("Erreur surveillance archivage : %s", mon_err)
 
             await query.answer(f"✅ Demande #{real_id} archivée avec succès !")
             back_kb = InlineKeyboardMarkup([[
@@ -581,9 +566,9 @@ class StatutsManager:
             except Exception as notif_exc:
                 logger.warning("Échec envoi motif abandon à %s : %s", user_id_demande, notif_exc)
 
-            # Notification de surveillance aux administrateurs
+            # Notification de surveillance aux administrateurs (Filtrée sur 'abandon')
             try:
-                monitors = self.db_manager.get_monitoring_admins()
+                monitors = self.db_manager.get_monitoring_admins(action="abandon")
                 alert_abandon = (
                     f"⚠️ <b>SURVEILLANCE STAFF — ABANDON DE DOSSIER</b>\n\n"
                     f"• <b>Opérateur :</b> {staff_alias_esc} (<code>{staff_id}</code>)\n"

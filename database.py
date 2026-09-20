@@ -201,6 +201,7 @@ class DatabaseManager:
                 alias VARCHAR(64) NOT NULL,
                 is_owner BOOLEAN DEFAULT FALSE,
                 is_vip BOOLEAN DEFAULT FALSE,
+                is_paused BOOLEAN DEFAULT FALSE,
                 can_manage_staff BOOLEAN DEFAULT TRUE,
                 can_manage_vips BOOLEAN DEFAULT TRUE,
                 can_view_stats BOOLEAN DEFAULT TRUE,
@@ -300,7 +301,13 @@ class DatabaseManager:
                 rappel_heure INT DEFAULT 18,
                 rappel_jour_semaine INT DEFAULT 6,
                 rappel_jour_mois INT DEFAULT 1,
-                last_rappel_date DATE DEFAULT NULL
+                last_rappel_date DATE DEFAULT NULL,
+                monitor_prise_en_charge BOOLEAN DEFAULT TRUE,
+                monitor_changement_statut BOOLEAN DEFAULT TRUE,
+                monitor_abandon BOOLEAN DEFAULT TRUE,
+                monitor_reussite BOOLEAN DEFAULT TRUE,
+                monitor_staff_msg BOOLEAN DEFAULT TRUE,
+                monitor_user_msg BOOLEAN DEFAULT TRUE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
             """
@@ -324,6 +331,7 @@ class DatabaseManager:
             ("staff", "accept_direct", "BOOLEAN DEFAULT TRUE"),
             ("admins", "is_owner", "BOOLEAN DEFAULT FALSE"),
             ("admins", "is_vip", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "is_paused", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_manage_staff", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_manage_vips", "BOOLEAN DEFAULT TRUE"),
             ("admins", "can_view_stats", "BOOLEAN DEFAULT TRUE"),
@@ -358,6 +366,12 @@ class DatabaseManager:
             ("admin_preferences", "rappel_jour_semaine", "INT DEFAULT 6"),
             ("admin_preferences", "rappel_jour_mois", "INT DEFAULT 1"),
             ("admin_preferences", "last_rappel_date", "DATE DEFAULT NULL"),
+            ("admin_preferences", "monitor_prise_en_charge", "BOOLEAN DEFAULT TRUE"),
+            ("admin_preferences", "monitor_changement_statut", "BOOLEAN DEFAULT TRUE"),
+            ("admin_preferences", "monitor_abandon", "BOOLEAN DEFAULT TRUE"),
+            ("admin_preferences", "monitor_reussite", "BOOLEAN DEFAULT TRUE"),
+            ("admin_preferences", "monitor_staff_msg", "BOOLEAN DEFAULT TRUE"),
+            ("admin_preferences", "monitor_user_msg", "BOOLEAN DEFAULT TRUE"),
             ("users", "is_vip", "BOOLEAN DEFAULT FALSE"),
             ("users", "vip_until", "DATETIME DEFAULT NULL"),
             ("users", "vip_auto_assign", "VARCHAR(32) DEFAULT 'prompt'"),
@@ -420,6 +434,7 @@ class DatabaseManager:
                         ('required_group_id', '0'),
                         ('group_subscription_link', '@parascriptionbot'),
                         ('support_contact', '@ContactParaBot'),
+                        ('owner_is_paused', 'false'),
                     ]
                     for k, v in default_configs:
                         cursor.execute(
@@ -732,21 +747,55 @@ class DatabaseManager:
             logger.error("Erreur mise à jour privilège admin %s (%s) : %s", user_id, priv_key, exc)
             return False
 
-    def get_monitoring_admins(self) -> List[int]:
-        """Retourne la liste des admins autorisés à surveiller l'activité du staff (Owners + Admins avec droit)."""
-        admins = set()
+    def get_monitoring_admins(self, action: Optional[str] = None) -> List[int]:
+        """
+        Retourne les admins autorisés à surveiller le staff, filtrés selon leur choix pour l'action donnée :
+        'prise_en_charge', 'changement_statut', 'abandon', 'reussite', 'staff_msg', 'user_msg'.
+        """
+        admins_eligibles = set()
         primary_owner = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
         if primary_owner:
-            admins.add(int(primary_owner))
+            admins_eligibles.add(int(primary_owner))
 
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("SELECT user_id FROM admins WHERE is_owner = TRUE OR can_monitor_staff = TRUE")
                 for r in cursor.fetchall():
-                    admins.add(int(r["user_id"]))
+                    admins_eligibles.add(int(r["user_id"]))
         except Exception as exc:
             logger.error("Erreur récupération admins moniteurs : %s", exc)
-        return list(admins)
+            return []
+
+        if not action:
+            return list(admins_eligibles)
+
+        col_map = {
+            "prise_en_charge": "monitor_prise_en_charge",
+            "changement_statut": "monitor_changement_statut",
+            "abandon": "monitor_abandon",
+            "reussite": "monitor_reussite",
+            "staff_msg": "monitor_staff_msg",
+            "user_msg": "monitor_user_msg",
+        }
+        target_col = col_map.get(action)
+        if not target_col:
+            return list(admins_eligibles)
+
+        destinataires = []
+        try:
+            with self.get_cursor() as cursor:
+                for uid in admins_eligibles:
+                    cursor.execute(
+                        f"SELECT {target_col} FROM admin_preferences WHERE user_id = %s",
+                        (uid,)
+                    )
+                    row = cursor.fetchone()
+                    if not row or row.get(target_col) is None or bool(row[target_col]):
+                        destinataires.append(uid)
+            return destinataires
+        except Exception as exc:
+            logger.error("Erreur filtrage préférences surveillance (%s) : %s", action, exc)
+            return list(admins_eligibles)
 
     # ==================== TABLE CONFIG DYNAMIQUE ====================
 
@@ -1577,35 +1626,87 @@ class DatabaseManager:
 
     lock_admin_alias = lock_staff_alias
 
-    # ==================== MODE PAUSE STAFF ====================
+    # ==================== MODE PAUSE MULTI-RÔLES (STAFF, ADMIN, OWNER) ====================
 
     def is_staff_paused(self, user_id: int) -> bool:
-        cache_key = f"staff_paused_{user_id}"
+        """Vérifie si un membre (Owner, Admin ou Staff) est actuellement en pause."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        cache_key = f"staff_paused_{uid}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
             return cached
 
+        # 1. Cas du Propriétaire (Owner) : persisté dans la table config
+        if self.is_owner(uid):
+            val = str(self.get_config_value("owner_is_paused", "false")).lower()
+            is_paused = val in ("true", "1", "yes")
+            self._set_cached_value(cache_key, is_paused)
+            return is_paused
+
+        # 2. Cas des Administrateurs / Managers : persisté dans la table admins
+        if self.is_admin(uid):
+            try:
+                with self.get_cursor() as cursor:
+                    cursor.execute("SELECT is_paused FROM admins WHERE user_id = %s", (uid,))
+                    row = cursor.fetchone()
+                    if row and row.get("is_paused") is not None:
+                        is_paused = bool(row["is_paused"])
+                        self._set_cached_value(cache_key, is_paused)
+                        return is_paused
+            except Exception as exc:
+                logger.debug("Info contrôle pause admin %s : %s", uid, exc)
+
+        # 3. Cas du Staff opérationnel standard : persisté dans la table staff
         try:
             with self.get_cursor() as cursor:
-                cursor.execute("SELECT is_paused FROM staff WHERE user_id = %s", (int(user_id),))
+                cursor.execute("SELECT is_paused FROM staff WHERE user_id = %s", (uid,))
                 row = cursor.fetchone()
                 val = bool(row.get("is_paused")) if row else False
                 self._set_cached_value(cache_key, val)
                 return val
         except Exception as exc:
-            logger.error("Erreur vérification pause staff %s : %s", user_id, exc)
+            logger.error("Erreur vérification pause staff %s : %s", uid, exc)
             return False
 
     is_admin_paused = is_staff_paused
 
     def set_staff_pause_status(self, user_id: int, paused: bool) -> bool:
+        """Active ou désactive le mode pause pour n'importe quel rôle."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        # 1. Sauvegarde pour l'Owner
+        if self.is_owner(uid):
+            val_str = "true" if paused else "false"
+            ok = self.set_config_value("owner_is_paused", val_str)
+            self.clear_cache(f"staff_paused_{uid}")
+            return ok
+
+        # 2. Sauvegarde pour un Admin
+        if self.is_admin(uid):
+            try:
+                with self.transaction() as cursor:
+                    cursor.execute("UPDATE admins SET is_paused = %s WHERE user_id = %s", (bool(paused), uid))
+                self.clear_cache(f"staff_paused_{uid}")
+                return True
+            except Exception as exc:
+                logger.error("Erreur modification pause admin %s : %s", uid, exc)
+                return False
+
+        # 3. Sauvegarde pour le Staff
         try:
             with self.transaction() as cursor:
-                cursor.execute("UPDATE staff SET is_paused = %s WHERE user_id = %s", (paused, int(user_id)))
-            self.clear_cache(f"staff_paused_{user_id}")
+                cursor.execute("UPDATE staff SET is_paused = %s WHERE user_id = %s", (bool(paused), uid))
+            self.clear_cache(f"staff_paused_{uid}")
             return True
         except Exception as exc:
-            logger.error("Erreur modification pause staff %s : %s", user_id, exc)
+            logger.error("Erreur modification pause staff %s : %s", uid, exc)
             return False
 
     set_admin_pause_status = set_staff_pause_status
@@ -2054,7 +2155,13 @@ class DatabaseManager:
             "rappel_heure": 18,
             "rappel_jour_semaine": 6,
             "rappel_jour_mois": 1,
-            "last_rappel_date": None
+            "last_rappel_date": None,
+            "monitor_prise_en_charge": True,
+            "monitor_changement_statut": True,
+            "monitor_abandon": True,
+            "monitor_reussite": True,
+            "monitor_staff_msg": True,
+            "monitor_user_msg": True,
         }
         cache_key = f"admin_prefs_{user_id}"
         cached = self._get_cached_value(cache_key)
@@ -2072,11 +2179,13 @@ class DatabaseManager:
                         """
                         INSERT INTO admin_preferences (
                             user_id, notif_new_mode, rappel_mode, rappel_freq,
-                            rappel_heure, rappel_jour_semaine, rappel_jour_mois
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            rappel_heure, rappel_jour_semaine, rappel_jour_mois,
+                            monitor_prise_en_charge, monitor_changement_statut,
+                            monitor_abandon, monitor_reussite, monitor_staff_msg, monitor_user_msg
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
                         """,
-                        (user_id, "sound", "sound", "daily", 18, 6, 1)
+                        (user_id, "sound", "sound", "daily", 18, 6, 1, True, True, True, True, True, True)
                     )
             self._set_cached_value(cache_key, default_prefs)
             return default_prefs
@@ -2087,7 +2196,9 @@ class DatabaseManager:
     def update_admin_preference(self, user_id: int, key: str, value: Any) -> bool:
         allowed_keys = {
             "notif_new_mode", "rappel_mode", "rappel_freq", "rappel_heure",
-            "rappel_jour_semaine", "rappel_jour_mois", "last_rappel_date"
+            "rappel_jour_semaine", "rappel_jour_mois", "last_rappel_date",
+            "monitor_prise_en_charge", "monitor_changement_statut",
+            "monitor_abandon", "monitor_reussite", "monitor_staff_msg", "monitor_user_msg"
         }
         if key not in allowed_keys:
             return False

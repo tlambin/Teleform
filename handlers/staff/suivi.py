@@ -314,7 +314,7 @@ class SuiviManager:
                 logger.warning("Impossible de notifier le client %s de la validation paiement : %s", dem["user_id"], e_notif)
 
             try:
-                monitors = self.db_manager.get_monitoring_admins()
+                monitors = self.db_manager.get_monitoring_admins(action="reussite")
                 alert_pay = (
                     f"💰 <b>SURVEILLANCE STAFF — PAIEMENT ENCAISSÉ</b>\n\n"
                     f"• <b>Opérateur :</b> {alias_esc} (<code>{staff_id}</code>)\n"

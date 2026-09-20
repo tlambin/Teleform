@@ -46,7 +46,7 @@ class NotifsManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("NotifsManager initialisé avec support Staff/Admin & Paiement Prio")
+        logger.info("NotifsManager initialisé avec support Staff/Admin, Surveillance & Paiement Prio")
 
     # ==================== NOTIFICATIONS UTILISATEURS ====================
 
@@ -75,7 +75,6 @@ class NotifsManager:
             new_esc = html.escape(nouveau_libelle)
             explication_esc = html.escape(get_statut_explication(new_status, is_difficile, reussie_substatus))
 
-            # Contrôle du statut de paiement pour les demandes prioritaires
             is_prio = False
             montant = 0.0
             paiement_statut = "non_requis"
@@ -102,7 +101,6 @@ class NotifsManager:
 
             keyboard_buttons = []
 
-            # Cas particulier : Demande Prioritaire réussie en attente de paiement
             needs_payment = (new_status == "✅ Réussie" and is_prio and montant > 0 and paiement_statut == "en_attente")
 
             if needs_payment:
@@ -261,6 +259,13 @@ class NotifsManager:
 
             keyboard.append(timing_row)
 
+        # Accès au sous-panneau de surveillance si le membre en a le droit
+        privs = self.db_manager.get_admin_privileges(user_id)
+        if privs.get("is_owner") or privs.get("can_monitor_staff"):
+            keyboard.append([
+                InlineKeyboardButton("👀 Alertes Surveillance Staff", callback_data="menu_surveillance_notifs")
+            ])
+
         keyboard.append([InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")])
 
         mode_new_str = {"sound": "🔊 Sonore", "silent": "🔇 Silencieuse", "off": "🔕 Désactivée"}.get(mode_new, "🔊 Sonore")
@@ -285,14 +290,111 @@ class NotifsManager:
         )
         return text, InlineKeyboardMarkup(keyboard)
 
+    # ==================== SOUS-PANNEAU SURVEILLANCE DU STAFF ====================
+
+    async def show_surveillance_notifs_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Affiche le menu de réglage des 6 notifications de surveillance pour les superviseurs."""
+        query = update.callback_query
+        user_id = update.effective_user.id
+
+        privs = self.db_manager.get_admin_privileges(user_id)
+        if not (privs.get("is_owner") or privs.get("can_monitor_staff")):
+            if query:
+                await query.answer("❌ Option réservée aux superviseurs.", show_alert=True)
+            return
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT monitor_prise_en_charge, monitor_changement_statut, monitor_abandon,
+                       monitor_reussite, monitor_staff_msg, monitor_user_msg
+                FROM admin_preferences WHERE user_id = %s
+                """,
+                (user_id,)
+            )
+            prefs = cursor.fetchone() or {}
+
+        p_pec = bool(prefs.get("monitor_prise_en_charge", True))
+        p_stat = bool(prefs.get("monitor_changement_statut", True))
+        p_ab = bool(prefs.get("monitor_abandon", True))
+        p_reu = bool(prefs.get("monitor_reussite", True))
+        p_smsg = bool(prefs.get("monitor_staff_msg", True))
+        p_umsg = bool(prefs.get("monitor_user_msg", True))
+
+        text = (
+            "👀 <b>SURVEILLANCE DU STAFF — ALERTES</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Activez ou coupez individuellement chaque type d'alerte :\n\n"
+            f"• <b>Prise en charge :</b> {'🔔 Activé' if p_pec else '🔕 Coupé'}\n"
+            f"• <b>Changement statut :</b> {'🔔 Activé' if p_stat else '🔕 Coupé'}\n"
+            f"• <b>Abandon dossier :</b> {'🔔 Activé' if p_ab else '🔕 Coupé'}\n"
+            f"• <b>Réussite dossier :</b> {'🔔 Activé' if p_reu else '🔕 Coupé'}\n"
+            f"• <b>Messages Staff (Envoyés) :</b> {'🔔 Activé' if p_smsg else '🔕 Coupé'}\n"
+            f"• <b>Messages Demandeur (Reçus) :</b> {'🔔 Activé' if p_umsg else '🔕 Coupé'}"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(f"{'🟢' if p_pec else '🔴'} Prise en charge", callback_data="toggle_mon_prise_en_charge"),
+                InlineKeyboardButton(f"{'🟢' if p_stat else '🔴'} Changement statut", callback_data="toggle_mon_changement_statut")
+            ],
+            [
+                InlineKeyboardButton(f"{'🟢' if p_ab else '🔴'} Abandons", callback_data="toggle_mon_abandon"),
+                InlineKeyboardButton(f"{'🟢' if p_reu else '🔴'} Réussites", callback_data="toggle_mon_reussite")
+            ],
+            [
+                InlineKeyboardButton(f"{'🟢' if p_smsg else '🔴'} Msg Staff", callback_data="toggle_mon_staff_msg"),
+                InlineKeyboardButton(f"{'🟢' if p_umsg else '🔴'} Msg Demandeur", callback_data="toggle_mon_user_msg")
+            ],
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_notifs")]
+        ])
+
+        await self._render_clean_menu(query, context, text, keyboard)
+
+    async def handle_surveillance_toggle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
+        """Bascule l'interrupteur d'alerte ciblé."""
+        query = update.callback_query
+        user_id = update.effective_user.id
+        col_name = f"monitor_{key}"
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(f"SELECT {col_name} FROM admin_preferences WHERE user_id = %s", (user_id,))
+            row = cursor.fetchone()
+            current = bool(row.get(col_name, True)) if row and row.get(col_name) is not None else True
+
+        new_val = not current
+        self.db_manager.update_admin_preference(user_id, col_name, new_val)
+        await query.answer(f"Option {'activée 🔔' if new_val else 'coupée 🔕'}")
+        await self.show_surveillance_notifs_menu(update, context)
+
+    # ==================== ROUTEUR DES CALLBACKS ====================
+
     async def handle_callback_routing(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Aiguillage des clics sur les préférences avec persistance et protection anti-400."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
-        await query.answer()
         user_id = int(update.effective_user.id)
+
+        # Sous-menu de surveillance
+        if data == "menu_surveillance_notifs":
+            await query.answer()
+            await self.show_surveillance_notifs_menu(update, context)
+            return
+
+        if data.startswith("toggle_mon_"):
+            key = data.replace("toggle_mon_", "")
+            await self.handle_surveillance_toggle(update, context, key)
+            return
+
+        # Retour menu principal des notifs
+        if data == "menu_notifs":
+            await query.answer()
+            await self.show_notifs_menu(update, context)
+            return
+
+        await query.answer()
 
         if data == "pref_new_sound":
             self.db_manager.update_admin_preference(user_id, "notif_new_mode", "sound")

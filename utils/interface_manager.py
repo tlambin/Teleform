@@ -56,7 +56,7 @@ class InterfaceManager:
         welcome_msg = (
             f"<b>{header}</b>\n\n"
             f"<b>{subtitle}</b>\n\n"
-            "<i>Sélectionnez une option ci-dessous pour continuer:</i>"
+            "<i>Sélectionnez une option ci-dessous pour continuer :</i>"
         )
 
         # Ligne 1 : 🗳️ CRÉER | 🗂️ MES DEMANDES
@@ -101,27 +101,23 @@ class InterfaceManager:
             "Accédez aux dossiers selon leur niveau d'assignation :"
         )
         keyboard = [
-            # 1. 📮 DISPONIBLE (X)
             [InlineKeyboardButton(f"📮 DISPONIBLE ({nb_dispo})", callback_data="demandes_disponibles")],
-            # 2. 💌 SUIVIES (Y)
             [InlineKeyboardButton(f"💌 SUIVIES ({nb_suivies})", callback_data="demandes_suivies")],
-            # 3. 📦 ARCHIVÉES (Z)
             [InlineKeyboardButton(f"📦 ARCHIVÉES ({nb_archives})", callback_data="demandes_archives")],
-            # Retour
             [InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")]
         ]
         return message, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU PARAMÈTRES (CONFORME MAQUETTE) ==========
+    # ========== MENU PARAMÈTRES (MAQUETTE CONFORME V2) ==========
 
     def get_parametres_menu(self, user_id: int):
-        """Construit le panneau de configuration selon la disposition exacte de la maquette."""
+        """Construit le panneau Paramètres général avec restriction d'accès aux stats et archives globales."""
         user_role = self._get_user_role(user_id)
         is_admin = (user_role in ["admin", "owner"])
         is_staff = (user_role in ["staff", "admin", "owner"])
         is_vip = self.db_manager.is_user_vip(user_id)
 
-        # Rôle standard / demandeur
+        # 1. Demandeur simple / Client
         if not is_staff:
             vip_mention = " <i>(Abonné VIP)</i>" if is_vip else ""
             message = (
@@ -131,63 +127,133 @@ class InterfaceManager:
             )
             keyboard = []
             if is_vip:
-                keyboard.append([InlineKeyboardButton("🎯 Gérer mon attribution VIP", callback_data="menu_vip_settings")])
+                keyboard.append([InlineKeyboardButton("✨ PRÉFÉRENCES VIP ✨", callback_data="menu_vip_settings")])
             else:
-                keyboard.append([InlineKeyboardButton("⭐ Boutique VIP", callback_data="menu_vip_shop")])
-            keyboard.append([InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")])
+                keyboard.append([InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")])
+            keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")])
             return message, InlineKeyboardMarkup(keyboard)
 
-        # Rôles opérationnels (Staff / Admin / Owner)
+        # 2. Staff / Admin / Owner
         message = (
             "⚙️ <b>PARAMÈTRES</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Sélectionnez un module de configuration :"
+            "Sélectionnez une rubrique :"
         )
         keyboard = []
 
-        # 1. 🤖 GESTION DU BOT (Admin & Owner)
+        # 1. 🤖 GESTION DU BOT 🤖 (Admin & Owner)
         if is_admin:
             keyboard.append([
-                InlineKeyboardButton("🤖 GESTION DU BOT", callback_data="gerer_bot")
+                InlineKeyboardButton("🤖 GESTION DU BOT 🤖", callback_data="gerer_bot")
             ])
 
-        # 2. 🧠 ADMINS | 🎣 PIÉGEURS (Staff)
+        # 2. 🧠 ADMINS | 🎣 PIÉGEURS (Admin & Owner)
         if is_admin:
             keyboard.append([
                 InlineKeyboardButton("🧠 ADMINS", callback_data="gerer_admins"),
                 InlineKeyboardButton("🎣 PIÉGEURS", callback_data="gerer_staff")
             ])
 
-        # 3. 🏷️ MODIFIER MON ALIAS 🏷️
+        # 3. 👤 MON PROFIL 👤 (Accessible à tout le staff / admins)
         keyboard.append([
-            InlineKeyboardButton("🏷️ MODIFIER MON ALIAS 🏷️", callback_data="modifier_alias")
+            InlineKeyboardButton("👤 MON PROFIL 👤", callback_data="menu_mon_profil")
         ])
 
-        # 4. 📦 ARCHIVES | 🧮 STATS
+        # 4. 🧮 STATS | 📦 ARCHIVES (Générales - Uniquement Owner & Admins autorisés)
+        privs = self.db_manager.get_admin_privileges(user_id)
+        can_see_stats = is_admin and (privs.get("is_owner") or privs.get("can_view_stats"))
+        can_see_archives = is_admin and (privs.get("is_owner") or privs.get("can_view_archives"))
+
+        if can_see_stats or can_see_archives:
+            stats_btn = InlineKeyboardButton(
+                "🧮 STATS",
+                callback_data="bot_stats" if can_see_stats else "stat_access_denied"
+            )
+            archives_btn = InlineKeyboardButton(
+                "📦 ARCHIVES",
+                callback_data="admin_global_archives" if can_see_archives else "arch_access_denied"
+            )
+            keyboard.append([stats_btn, archives_btn])
+
+        # 5. ⭐ MEMBRES VIP ⭐ (Gestion du cercle VIP - Admin & Owner)
+        if is_admin:
+            keyboard.append([
+                InlineKeyboardButton("⭐ MEMBRES VIP ⭐", callback_data="gerer_vips")
+            ])
+
+        # 6. ✨ PRÉFÉRENCES VIP ✨ (si VIP) OU ⭐ DEVENIR VIP ⭐ (si non VIP)
+        if is_vip:
+            keyboard.append([
+                InlineKeyboardButton("✨ PRÉFÉRENCES VIP ✨", callback_data="menu_vip_settings")
+            ])
+        else:
+            keyboard.append([
+                InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")
+            ])
+
+        # 7. ⬅️ RETOUR
         keyboard.append([
-            InlineKeyboardButton("📦 ARCHIVES", callback_data="admin_global_archives" if is_admin else "demandes_archives"),
-            InlineKeyboardButton("🧮 STATS", callback_data="bot_stats" if is_admin else f"profil_admin_{user_id}")
+            InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")
         ])
 
-        # 5. 💰 PAIEMENT 💰
-        keyboard.append([
-            InlineKeyboardButton("💰 PAIEMENT 💰", callback_data="staff_payment_settings")
-        ])
+        return message, InlineKeyboardMarkup(keyboard)
 
-        # 6. ⭐ VIP | ✨ OPTIONS
-        keyboard.append([
-            InlineKeyboardButton("⭐ VIP", callback_data="gerer_vips" if is_admin else "menu_vip_shop"),
-            InlineKeyboardButton("✨ OPTIONS", callback_data="menu_vip_settings" if is_vip else "menu_vip_shop")
-        ])
+    # ========== SOUS-MENU MON PROFIL ==========
 
-        # 7. 🔔 NOTIFICATIONS 🔔
+    def get_mon_profil_menu(self, user_id: int):
+        """Construit le sous-menu individuel 'MON PROFIL'."""
+        user_role = self._get_user_role(user_id)
+        is_admin = (user_role in ["admin", "owner"])
+        is_paused = self.db_manager.is_staff_paused(user_id)
+        alias = self.db_manager.get_staff_alias(user_id) or f"Membre_{user_id}"
+
+        statut_dispo = "⏸️ <b>En pause</b>" if is_paused else "🟢 <b>En service</b>"
+
+        message = (
+            "👤 <b>MON PROFIL</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Identité :</b> <code>{html.escape(str(alias))}</code>\n"
+            f"• <b>Disponibilité :</b> {statut_dispo}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Gérez vos paramètres individuels :"
+        )
+        keyboard = []
+
+        # 1. 🔔 NOTIFICATIONS 🔔
         keyboard.append([
             InlineKeyboardButton("🔔 NOTIFICATIONS 🔔", callback_data="menu_notifs")
         ])
 
-        # Retour
+        # 2. ⏸️ SE METTRE EN PAUSE / ▶️ REPRENDRE LE SERVICE
+        if is_paused:
+            keyboard.append([
+                InlineKeyboardButton("▶️ REPRENDRE LE SERVICE ▶️", callback_data="admin_resume")
+            ])
+        else:
+            keyboard.append([
+                InlineKeyboardButton("⏸️ SE METTRE EN PAUSE ⏸️", callback_data="admin_pause_prompt")
+            ])
+
+        # 3. 🏷️ MODIFIER MON ALIAS 🏷️ (si admin ou staff non encore verrouillé)
+        if is_admin or self.db_manager.can_staff_edit_alias(user_id):
+            keyboard.append([
+                InlineKeyboardButton("🏷️ MODIFIER MON ALIAS 🏷️", callback_data="modifier_alias")
+            ])
+
+        # 4. 💰 MOYEN DE PAIEMENT 💰
         keyboard.append([
-            InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")
+            InlineKeyboardButton("💰 MOYEN DE PAIEMENT 💰", callback_data="staff_payment_settings")
+        ])
+
+        # 5. 🧮 MES STATS | 📦 MES ARCHIVES (Performances individuelles du membre)
+        keyboard.append([
+            InlineKeyboardButton("🧮 MES STATS", callback_data=f"profil_admin_{user_id}"),
+            InlineKeyboardButton("📦 MES ARCHIVES", callback_data="demandes_archives")
+        ])
+
+        # 6. ⬅️ RETOUR (vers Paramètres)
+        keyboard.append([
+            InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")
         ])
 
         return message, InlineKeyboardMarkup(keyboard)
@@ -211,14 +277,14 @@ class InterfaceManager:
         keyboard = [
             [InlineKeyboardButton(f"⭐ Telegram Stars : {st_stars}", callback_data="toggle_pay_staff_accept_stars")],
             [InlineKeyboardButton(f"💬 Paiement direct : {st_direct}", callback_data="toggle_pay_staff_accept_direct")],
-            [InlineKeyboardButton("🔙 Retour aux paramètres", callback_data="parametres")]
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")]
         ]
         return text, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU GESTION DU BOT (CONFORME MAQUETTE) ==========
+    # ========== SOUS-MENU GESTION DU BOT (Admin & Owner) ==========
 
     def get_gerer_bot_menu(self):
-        """Menu de contrôle du bot conforme à la maquette GESTION DU BOT avec état en tête."""
+        """Menu de contrôle du bot système."""
         val_demandes = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
         demandes_ouvertes = val_demandes in ("true", "1", "yes")
 
@@ -291,7 +357,7 @@ class InterfaceManager:
                 InlineKeyboardButton("🛡️ Vider Managers", callback_data="danger_purge_admins"),
                 InlineKeyboardButton("💥 PURGE TOTALE", callback_data="danger_purge_totale")
             ],
-            [InlineKeyboardButton("🔙 Retour gestion bot", callback_data="gerer_bot")]
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
         ]
         return text, InlineKeyboardMarkup(keyboard)
 
@@ -322,7 +388,7 @@ class InterfaceManager:
                 InlineKeyboardButton("🆔 Régler Chat ID", callback_data="set_cfg_group_id"),
                 InlineKeyboardButton("🔗 Régler Lien / Bot", callback_data="set_cfg_group_link")
             ],
-            [InlineKeyboardButton("🔙 Retour gestion bot", callback_data="gerer_bot")]
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
         ]
         return text, InlineKeyboardMarkup(keyboard)
 
@@ -339,7 +405,7 @@ class InterfaceManager:
         )
         keyboard = [
             [InlineKeyboardButton("✏️ Modifier le contact support", callback_data="set_cfg_support_contact")],
-            [InlineKeyboardButton("🔙 Retour gestion bot", callback_data="gerer_bot")]
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
         ]
         return text, InlineKeyboardMarkup(keyboard)
 
@@ -366,7 +432,7 @@ class InterfaceManager:
                 InlineKeyboardButton(b_gi, callback_data="toggle_allow_gay_insta"),
                 InlineKeyboardButton(b_gs, callback_data="toggle_allow_gay_snap"),
             ],
-            [InlineKeyboardButton("🔙 Retour gestion bot", callback_data="gerer_bot")]
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
         ]
 
         text = (
@@ -432,7 +498,7 @@ class InterfaceManager:
                 InlineKeyboardButton("✏️ Saisie libre Client", callback_data="limit_input_user"),
             ],
             [
-                InlineKeyboardButton("🔙 Retour gestion bot", callback_data="gerer_bot")
+                InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")
             ]
         ]
 
@@ -499,12 +565,12 @@ class InterfaceManager:
                 InlineKeyboardButton("➕ Recruter un opérateur", callback_data="staff_ajouter"),
                 InlineKeyboardButton("➖ Révoquer un opérateur", callback_data="staff_supprimer")
             ])
-            keyboard.append([InlineKeyboardButton("🔙 Retour aux paramètres", callback_data="parametres")])
+            keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
 
         except Exception as exc:
             logger.error("Erreur menu gestion staff : %s", exc, exc_info=True)
             message = "👥 <b>Gestion de l'Équipe Staff</b>\n\n❌ Erreur de lecture de la base."
-            keyboard = [[InlineKeyboardButton("🔙 Retour aux paramètres", callback_data="parametres")]]
+            keyboard = [[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]]
 
         return message, InlineKeyboardMarkup(keyboard)
 
@@ -562,16 +628,16 @@ class InterfaceManager:
                 InlineKeyboardButton("➕ Nommer un manager", callback_data="admin_ajouter"),
                 InlineKeyboardButton("➖ Révoquer un manager", callback_data="admin_supprimer")
             ])
-            keyboard.append([InlineKeyboardButton("🔙 Retour aux paramètres", callback_data="parametres")])
+            keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
 
         except Exception as exc:
             logger.error("Erreur génération menu admins : %s", exc, exc_info=True)
             message = "🛡️ <b>Gestion des Administrateurs</b>\n\n❌ Erreur de lecture des données."
-            keyboard = [[InlineKeyboardButton("🔙 Retour aux paramètres", callback_data="parametres")]]
+            keyboard = [[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]]
 
         return message, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU GÉRER LES MEMBRES VIP ==========
+    # ========== SOUS-MENU GÉRER LES MEMBRES VIP (Admin & Owner) ==========
 
     def get_gerer_vips_menu(self):
         """Affiche la liste des membres VIP et les outils d'attribution."""
@@ -604,12 +670,12 @@ class InterfaceManager:
                 InlineKeyboardButton("➕ Promouvoir un membre", callback_data="owner_add_vip"),
                 InlineKeyboardButton("➖ Révoquer un accès VIP", callback_data="owner_remove_vip")
             ])
-            keyboard.append([InlineKeyboardButton("🔙 Retour aux paramètres", callback_data="parametres")])
+            keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
 
         except Exception as exc:
             logger.error("Erreur génération menu VIP : %s", exc, exc_info=True)
             message = "⭐ <b>Gestion des Membres VIP</b>\n\n❌ Erreur de lecture des données."
-            keyboard = [[InlineKeyboardButton("🔙 Retour aux paramètres", callback_data="parametres")]]
+            keyboard = [[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]]
 
         return message, InlineKeyboardMarkup(keyboard)
 
@@ -632,12 +698,12 @@ class InterfaceManager:
 
         if is_vip:
             keyboard.append([
-                InlineKeyboardButton("⚙️ Mes préférences de référent", callback_data="menu_vip_settings")
+                InlineKeyboardButton("✨ PRÉFÉRENCES VIP ✨", callback_data="menu_vip_settings")
             ])
 
         keyboard.extend([
             [InlineKeyboardButton("⭐ S'abonner pour 30 jours (250 ⭐️)", callback_data="buy_vip_month")],
-            [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]
         ])
         return message, InlineKeyboardMarkup(keyboard)
 
@@ -674,6 +740,7 @@ class InterfaceManager:
             "start_menu": lambda: self.get_start_interface(user_id, first_name),
             "gerer_demandes": lambda: self.get_gerer_demandes_menu(user_id),
             "parametres": lambda: self.get_parametres_menu(user_id),
+            "menu_mon_profil": lambda: self.get_mon_profil_menu(user_id),
             "staff_payment_settings": lambda: self.get_staff_payment_settings_menu(user_id),
             "gerer_staff": self.get_gerer_staff_menu,
             "gerer_admins": self.get_gerer_admins_menu,
