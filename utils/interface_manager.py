@@ -450,24 +450,24 @@ class InterfaceManager:
         group_id = self.db_manager.get_required_group_id()
         link = self.db_manager.get_group_subscription_link()
 
-        statut_badge = "🟢 <b>Active</b>" if is_enabled else "🔴 <b>Désactivée</b>"
-        toggle_btn_label = "🔴 Désactiver le contrôle" if is_enabled else "🟢 Activer le contrôle"
+        statut_badge = "🟢 <b>ACTIVE</b>" if is_enabled else "🔴 <b>DÉSACTIVÉE</b>"
+        toggle_btn_label = "🔴 DÉSACTIVER LE CONTRÔLE" if is_enabled else "🟢 ACTIVER LE CONTRÔLE"
         gid_str = f"<code>{group_id}</code>" if group_id != 0 else "<i>Non configuré (0)</i>"
 
         text = (
-            "📢 <b>ADHÉSION OBLIGATOIRE AU GROUPE</b>\n"
+            "📢 <b>ADHÉSION OBLIGATOIRE</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>État :</b> {statut_badge}\n"
-            f"• <b>Chat ID du groupe :</b> {gid_str}\n"
-            f"• <b>Lien d'inscription :</b> <code>{html.escape(link)}</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "<i>Si activé, tout utilisateur absent du groupe ne peut pas soumettre de demande.</i>"
+            "<i>Si activé, tout utilisateur absent du groupe ne peut pas utiliser le bot.</i>\n\n"
+            f"{statut_badge}\n\n"
+            f"<b>GROUPE :</b> {gid_str}\n"
+            f"<b>LIEN :</b> <code>{html.escape(link)}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
         keyboard = [
             [InlineKeyboardButton(toggle_btn_label, callback_data="toggle_cfg_group_enabled")],
             [
-                InlineKeyboardButton("🆔 Régler Chat ID", callback_data="set_cfg_group_id"),
-                InlineKeyboardButton("🔗 Régler Lien / Bot", callback_data="set_cfg_group_link")
+                InlineKeyboardButton("🆔 GROUPE", callback_data="set_cfg_group_id"),
+                InlineKeyboardButton("🔗 LIEN", callback_data="set_cfg_group_link")
             ],
             [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
         ]
@@ -485,24 +485,39 @@ class InterfaceManager:
             "<i>Ce lien/pseudo est communiqué aux demandeurs en cas d'interrogation ou de blocage.</i>"
         )
         keyboard = [
-            [InlineKeyboardButton("✏️ Modifier le contact support", callback_data="set_cfg_support_contact")],
+            [InlineKeyboardButton("✏️ MODIFIER", callback_data="set_cfg_support_contact")],
             [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
         ]
         return text, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU CANAUX & CIBLES (Toggles ON/OFF) ==========
+    # ========== SOUS-MENU GESTION DES CIBLES ==========
 
     def get_channels_menu(self):
-        """Menu interactif de bascule pour les quatre canaux/cibles combinés (Hétéro/Gay × Insta/Snap)."""
-        h_insta = str(self.db_manager.get_config_value("allow_hetero_insta", "true")).lower() == "true"
-        h_snap = str(self.db_manager.get_config_value("allow_hetero_snap", "true")).lower() == "true"
-        g_insta = str(self.db_manager.get_config_value("allow_gay_insta", "true")).lower() == "true"
-        g_snap = str(self.db_manager.get_config_value("allow_gay_snap", "true")).lower() == "true"
+        """Menu de gestion et d'activation des cibles avec les voyants positionnés avant le texte."""
+        hi = self.db_manager.is_channel_combination_allowed("hetero", "insta")
+        hs = self.db_manager.is_channel_combination_allowed("hetero", "snap")
+        gi = self.db_manager.is_channel_combination_allowed("gay", "insta")
+        gs = self.db_manager.is_channel_combination_allowed("gay", "snap")
 
-        b_hi = "🟢 Insta Hétéro" if h_insta else "🔴 Insta Hétéro"
-        b_hs = "🟢 Snap Hétéro" if h_snap else "🔴 Snap Hétéro"
-        b_gi = "🟢 Insta Gay" if g_insta else "🔴 Insta Gay"
-        b_gs = "🟢 Snap Gay" if g_snap else "🔴 Snap Gay"
+        def s_badge(val: bool) -> str:
+            return "🟢" if val else "🔴"
+
+        message = (
+            "🎯 <b>GESTION DES CIBLES</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Activer / Désactiver les demandes par cible :\n\n"
+            f"{s_badge(hi)} HÉTÉRO - INSTA\n"
+            f"{s_badge(hs)} HÉTÉRO - SNAP\n\n"
+            f"{s_badge(gi)} GAY - INSTA\n"
+            f"{s_badge(gs)} GAY - SNAP\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Les Bi s'orientent selon le réseau concerné.</i>"
+        )
+
+        b_hi = f"{s_badge(hi)} HÉTÉRO - INSTA"
+        b_hs = f"{s_badge(hs)} HÉTÉRO - SNAP"
+        b_gi = f"{s_badge(gi)} GAY - INSTA"
+        b_gs = f"{s_badge(gs)} GAY - SNAP"
 
         keyboard = [
             [
@@ -513,25 +528,17 @@ class InterfaceManager:
                 InlineKeyboardButton(b_gi, callback_data="toggle_allow_gay_insta"),
                 InlineKeyboardButton(b_gs, callback_data="toggle_allow_gay_snap"),
             ],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
+            [
+                InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")
+            ]
         ]
 
-        text = (
-            "🎯 <b>CIBLES & FLUX OPÉRATIONNELS</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Activez ou coupez les nouveaux dépôts par cible spécifique :\n\n"
-            f"• <b>Insta Hétéro :</b> {'✅ Ouvert' if h_insta else '❌ Coupé'}\n"
-            f"• <b>Snap Hétéro :</b> {'✅ Ouvert' if h_snap else '❌ Coupé'}\n"
-            f"• <b>Insta Gay :</b> {'✅ Ouvert' if g_insta else '❌ Coupé'}\n"
-            f"• <b>Snap Gay :</b> {'✅ Ouvert' if g_snap else '❌ Coupé'}\n\n"
-            "<i>(Les dossiers Bi s'orientent selon le réseau concerné)</i>"
-        )
-        return text, InlineKeyboardMarkup(keyboard)
+        return message, InlineKeyboardMarkup(keyboard)
 
-    # ========== SOUS-MENU PLAFONDS & QUOTAS ==========
+    # ========== SOUS-MENU QUOTAS ==========
 
     def get_limits_menu(self):
-        """Ajustement rapide des quotas globaux, par client et par cible."""
+        """Ajustement des quotas avec les blocs de contrôle directs par réseau."""
         max_total = self.config.get_max_total_demandes()
         max_user = self.config.get_max_demandes_per_user()
 
@@ -544,40 +551,45 @@ class InterfaceManager:
             return f"<b>{val}</b>" if val > 0 else "<i>Illimité</i>"
 
         message = (
-            "🌡️ <b>PLAFONDS & QUOTAS APPLICATIFS</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"🌐 <b>Plafond total simultané :</b> {fmt(max_total)}\n"
-            f"👤 <b>Plafond par demandeur :</b> {fmt(max_user)}\n\n"
-            "<b>Plafonds par canal :</b>\n"
-            f"• 📷 Insta Hétéro : {fmt(m_hi)} | 👻 Snap Hétéro : {fmt(m_hs)}\n"
-            f"• 📷 Insta Gay : {fmt(m_gi)} | 👻 Snap Gay : {fmt(m_gs)}\n"
+            "🌡️ <b>GESTION DES QUOTAS :</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🌐 <b>TOTAL :</b> {fmt(max_total)}\n"
+            f"👤 <b>CLIENT :</b> {fmt(max_user)}\n\n"
+            f"🕺 <b>HÉTÉRO :</b> {m_hi} INSTA | {m_hs} SNAP\n"
+            f"🏳️‍🌈 <b>GAY :</b> {m_gi} INSTA | {m_gs} SNAP\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Ajustez via les boutons ou saisissez une valeur précise :</i>"
         )
 
         keyboard = [
+            # 1. Bloc TOTAL
             [
-                InlineKeyboardButton("🌐 Total -5", callback_data="limit_total_sub5"),
-                InlineKeyboardButton("Illimité (0)", callback_data="limit_total_0"),
-                InlineKeyboardButton("Total +5", callback_data="limit_total_add5"),
+                InlineKeyboardButton("🌐 TOTAL", callback_data="limit_input_total")
             ],
             [
-                InlineKeyboardButton("👤 Client -1", callback_data="limit_user_sub1"),
-                InlineKeyboardButton("Défaut (3)", callback_data="limit_user_3"),
-                InlineKeyboardButton("Client +1", callback_data="limit_user_add1"),
+                InlineKeyboardButton("- 5", callback_data="limit_total_sub5"),
+                InlineKeyboardButton("ILLIMITÉ", callback_data="limit_total_0"),
+                InlineKeyboardButton("+ 5", callback_data="limit_total_add5"),
+            ],
+            # 2. Bloc CLIENT
+            [
+                InlineKeyboardButton("👤 CLIENT", callback_data="limit_input_user")
             ],
             [
-                InlineKeyboardButton("📷 Max Insta Hétéro", callback_data="limit_input_hetero_insta"),
-                InlineKeyboardButton("👻 Max Snap Hétéro", callback_data="limit_input_hetero_snap"),
+                InlineKeyboardButton("- 1", callback_data="limit_user_sub1"),
+                InlineKeyboardButton("DÉFAUT (3)", callback_data="limit_user_3"),
+                InlineKeyboardButton("+ 1", callback_data="limit_user_add1"),
+            ],
+            # 3. Lignes Cibles (Hétéro puis Gay)
+            [
+                InlineKeyboardButton("🕺 INSTA", callback_data="limit_input_hetero_insta"),
+                InlineKeyboardButton("🕺 SNAP", callback_data="limit_input_hetero_snap"),
             ],
             [
-                InlineKeyboardButton("📷 Max Insta Gay", callback_data="limit_input_gay_insta"),
-                InlineKeyboardButton("👻 Max Snap Gay", callback_data="limit_input_gay_snap"),
+                InlineKeyboardButton("🏳️‍🌈 INSTA", callback_data="limit_input_gay_insta"),
+                InlineKeyboardButton("🏳️‍🌈 SNAP", callback_data="limit_input_gay_snap"),
             ],
-            [
-                InlineKeyboardButton("✏️ Saisie libre Total", callback_data="limit_input_total"),
-                InlineKeyboardButton("✏️ Saisie libre Client", callback_data="limit_input_user"),
-            ],
+            # 4. Retour
             [
                 InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")
             ]
@@ -588,7 +600,7 @@ class InterfaceManager:
     # ========== SOUS-MENU GÉRER LE STAFF (Admins & Owner) ==========
 
     def get_gerer_staff_menu(self):
-        """Menu de gestion des employés/opérateurs (table staff) avec accès à leurs demandes et options."""
+        """Menu de gestion des employés/opérateurs (table staff) avec affichage visuel soigné."""
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
@@ -605,12 +617,23 @@ class InterfaceManager:
                 staff_members = cursor.fetchall()
 
             keyboard = []
+            nb_membres = len(staff_members)
+
+            # Boutons d'action globale en haut
+            keyboard.append([
+                InlineKeyboardButton("➕ RECRUTER", callback_data="staff_ajouter"),
+                InlineKeyboardButton("➖ VIRER", callback_data="staff_supprimer")
+            ])
 
             if not staff_members:
-                message = "👥 <b>ÉQUIPE OPÉRATIONNELLE (STAFF)</b>\n━━━━━━━━━━━━━━━━━━━━\n📭 Aucun opérateur enregistré."
+                message = (
+                    f"🎣 <b>GESTION DES PIÉGEURS ({nb_membres})</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "📭 Aucun piégeur enregistré dans l'équipe."
+                )
             else:
                 message = (
-                    f"👥 <b>ÉQUIPE OPÉRATIONNELLE ({len(staff_members)} membre{'s' if len(staff_members) > 1 else ''})</b>\n"
+                    f"🎣 <b>GESTION DES PIÉGEURS ({nb_membres})</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n\n"
                 )
                 for st in staff_members:
@@ -620,39 +643,50 @@ class InterfaceManager:
                     dt_added = st.get("date_added")
                     date_str = format_datetime_fr(dt_added)
                     par_qui = html.escape(str(st.get("nom_ajouteur") or "Direction"))
-                    alias_esc = html.escape(str(st.get("alias") or f"Staff_{st['user_id']}"))
+                    alias_raw = str(st.get("alias") or f"Piégeur_{st['user_id']}")
+                    alias_esc = html.escape(alias_raw)
 
-                    res_tag = st.get("perm_reseaux") or "all"
-                    type_tag = st.get("perm_type") or "all"
-                    ori_tag = st.get("perm_orientation") or "all"
+                    # Traduction propre et lisible des permissions (façon maquette)
+                    res_tag = str(st.get("perm_reseaux") or "all").lower()
+                    type_tag = str(st.get("perm_type") or "all").lower()
+                    ori_tag = str(st.get("perm_orientation") or "all").lower()
 
-                    res_label = {"all": "Tous réseaux", "insta": "Insta seul", "snap": "Snap seul"}.get(res_tag, str(res_tag))
-                    type_label = {"all": "Tous", "prio_only": "Prio", "standard_only": "Standard"}.get(type_tag, str(type_tag))
-                    ori_label = {"all": "Toutes", "hetero": "Hétéro/Bi", "gay": "Gay/Bi", "bi": "Bi"}.get(ori_tag, str(ori_tag))
-                    statut_dispo = "⏸️ <i>(En pause)</i>" if st.get("is_paused") else "🟢 <i>(En service)</i>"
-                    lock_badge = "🔓" if st.get("allow_self_prefs", True) else "🔒"
+                    res_map = {"insta": "sur Insta", "snap": "sur Snap", "all": "sur Insta et Snap"}
+                    ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi", "all": "Hétéro et Gay"}
+
+                    r_txt = res_map.get(res_tag, "sur Insta et Snap")
+                    o_txt = ori_map.get(ori_tag, "Hétéro et Gay")
+                    perm_readable = f"{o_txt} {r_txt}"
+                    if type_tag == "prio_only":
+                        perm_readable += ", prioritaire"
+                    elif type_tag == "standard_only":
+                        perm_readable += ", standard"
+
+                    statut_emoji = "⏸️" if st.get("is_paused") else "🟢"
+                    statut_texte = "En pause" if st.get("is_paused") else "En service"
 
                     message += (
-                        f"• <b>{alias_esc}</b> {statut_dispo} ({pseudo})\n"
-                        f"  🆔 <code>{st['user_id']}</code> | Recruté le {date_str} par {par_qui}\n"
-                        f"  🛡️ <i>Accès : {html.escape(res_label)} | {html.escape(type_label)} | {html.escape(ori_label)} (Prefs: {lock_badge})</i>\n\n"
+                        f"{statut_emoji} <b>{alias_esc}</b> (<i>{statut_texte}</i>)\n"
+                        f"🆔 <code>{st['user_id']}</code> - {pseudo}\n"
+                        f"Recruté le {date_str} par {par_qui}\n"
+                        f"🛡️ <i>{html.escape(perm_readable)}</i>\n\n"
                     )
 
+                    # Boutons individuels par piégeur (en majuscules)
                     keyboard.append([
-                        InlineKeyboardButton(f"📂 Dossiers ({st.get('alias', st['user_id'])})", callback_data=f"staff_view_demandes_{st['user_id']}_0"),
-                        InlineKeyboardButton(f"🛡️ Perms", callback_data=f"perm_staff_{st['user_id']}"),
-                        InlineKeyboardButton("📊 Stats", callback_data=f"profil_admin_{st['user_id']}")
+                        InlineKeyboardButton(f"📂 DOSSIERS : {alias_raw.upper()}", callback_data=f"staff_view_demandes_{st['user_id']}_0")
+                    ])
+                    keyboard.append([
+                        InlineKeyboardButton("🛡️ PERMISSIONS", callback_data=f"perm_staff_{st['user_id']}"),
+                        InlineKeyboardButton("📊 STATS", callback_data=f"profil_admin_{st['user_id']}")
                     ])
 
-            keyboard.append([
-                InlineKeyboardButton("➕ Recruter un opérateur", callback_data="staff_ajouter"),
-                InlineKeyboardButton("➖ Révoquer un opérateur", callback_data="staff_supprimer")
-            ])
+            # Bouton retour en bas
             keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
 
         except Exception as exc:
             logger.error("Erreur menu gestion staff : %s", exc, exc_info=True)
-            message = "👥 <b>Gestion de l'Équipe Staff</b>\n\n❌ Erreur de lecture de la base."
+            message = "🎣 <b>GESTION DES PIÉGEURS</b>\n━━━━━━━━━━━━━━━━━━━━\n❌ Erreur de lecture de la base."
             keyboard = [[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]]
 
         return message, InlineKeyboardMarkup(keyboard)
