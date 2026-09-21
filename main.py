@@ -22,6 +22,7 @@ from telegram import (
     InlineKeyboardMarkup,
     Update,
 )
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -38,6 +39,7 @@ from database import DatabaseManager
 from handlers.admin_handlers import AdminHandlers
 from handlers.staff_handlers import StaffHandlers
 from handlers.user_handlers import UserHandlers
+from utils.interface_manager import InterfaceManager
 
 # Logs console et fichier local
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
@@ -78,8 +80,8 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
 
     now_paris = datetime.now(PARIS_TZ)
     current_hour = now_paris.hour
-    current_weekday = now_paris.weekday()  # 0 = Lundi, 6 = Dimanche
-    current_monthday = now_paris.day        # 1 à 31
+    current_weekday = now_paris.weekday()
+    current_monthday = now_paris.day
     today_date = now_paris.date()
 
     admin_prefs_list = db_manager.get_all_admin_preferences()
@@ -333,7 +335,6 @@ async def check_and_auto_abandon_expired_remun_demandes(context: ContextTypes.DE
             if archived:
                 logger.info("❌ Demande #%s abandonnée automatiquement pour délai de rémunération expiré (%sj).", req_num, days)
 
-                # Notification client
                 try:
                     msg_client = (
                         f"❌ <b>Dossier #{req_num} abandonné et clôturé</b>\n\n"
@@ -352,7 +353,6 @@ async def check_and_auto_abandon_expired_remun_demandes(context: ContextTypes.DE
                 except Exception as notif_user_err:
                     logger.warning("Impossible de notifier le client %s de l'abandon de rémunération : %s", user_id, notif_user_err)
 
-                # Notification opérateur (si l'offre émanait d'un membre précis)
                 if staff_id:
                     try:
                         msg_staff = (
@@ -491,6 +491,7 @@ class TelegramBot:
         self.db_manager = db_manager
         self.config = config
         self.request = request
+        self.interface = InterfaceManager(config, db_manager)
         self.user_handlers = UserHandlers(self.config, db_manager)
         self.staff_handlers = StaffHandlers(self.config, db_manager)
         self.admin_handlers = AdminHandlers(self.config, db_manager)
@@ -515,14 +516,12 @@ class TelegramBot:
 
         await app.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
 
-        # Commandes pour le staff
         for staff_id in self.config.get_all_staff():
             try:
                 await app.bot.set_my_commands(staff_commands, scope=BotCommandScopeChat(chat_id=int(staff_id)))
             except Exception:
                 pass
 
-        # Commandes pour les admins et owners
         for admin_id in self.config.get_all_admins():
             try:
                 await app.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=int(admin_id)))
@@ -534,7 +533,6 @@ class TelegramBot:
         """Crée les ConversationHandlers du bot."""
         demande_handler = self.user_handlers.formulaire.get_conversation_handler()
 
-        # Modification d'alias (géré côté staff)
         modify_alias_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -555,12 +553,11 @@ class TelegramBot:
             per_user=True,
         )
 
-        # Contact Opérateur -> Direction
         contact_owner_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
                     self.staff_handlers.contact.start_contact_owner,
-                    pattern="^contacter_owner$",
+                    pattern=r"^contacter_owner$",
                 )
             ],
             states={
@@ -579,7 +576,6 @@ class TelegramBot:
             per_user=True,
         )
 
-        # Réponse Direction -> Opérateur
         owner_reply_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -603,12 +599,11 @@ class TelegramBot:
             per_user=True,
         )
 
-        # 1. Recrutement Staff avec pré-configuration interactive (Admin/Owner)
         add_staff_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
                     self.admin_handlers.staff_ajouter,
-                    pattern="^staff_ajouter$",
+                    pattern=r"^staff_ajouter$",
                 )
             ],
             states={
@@ -630,12 +625,11 @@ class TelegramBot:
             per_user=True,
         )
 
-        # 2. Révocation Staff (par Admin/Owner)
         remove_staff_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
                     self.admin_handlers.staff_supprimer,
-                    pattern="^staff_supprimer$",
+                    pattern=r"^staff_supprimer$",
                 )
             ],
             states={
@@ -645,7 +639,7 @@ class TelegramBot:
                 self.admin_handlers.WAITING_STAFF_CONFIRMATION: [
                     CallbackQueryHandler(
                         self.admin_handlers.confirmer_staff_suppression,
-                        pattern="^confirm_staff_remove$",
+                        pattern=r"^confirm_staff_remove$",
                     )
                 ],
             },
@@ -657,12 +651,11 @@ class TelegramBot:
             per_user=True,
         )
 
-        # 3. Nomination Admin/Manager (Owner only)
         add_admin_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
                     self.admin_handlers.admin_ajouter,
-                    pattern="^admin_ajouter$",
+                    pattern=r"^admin_ajouter$",
                 )
             ],
             states={
@@ -678,12 +671,11 @@ class TelegramBot:
             per_user=True,
         )
 
-        # 4. Révocation Admin (Owner only)
         remove_admin_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
                     self.admin_handlers.admin_supprimer,
-                    pattern="^admin_supprimer$",
+                    pattern=r"^admin_supprimer$",
                 )
             ],
             states={
@@ -693,7 +685,7 @@ class TelegramBot:
                 self.admin_handlers.WAITING_ADMIN_CONFIRMATION: [
                     CallbackQueryHandler(
                         self.admin_handlers.confirmer_admin_suppression,
-                        pattern="^confirm_admin_remove$",
+                        pattern=r"^confirm_admin_remove$",
                     )
                 ],
             },
@@ -705,12 +697,11 @@ class TelegramBot:
             per_user=True,
         )
 
-        # 5. Promotion VIP
         add_vip_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
                     self.admin_handlers.start_add_vip,
-                    pattern="^owner_add_vip$",
+                    pattern=r"^owner_add_vip$",
                 )
             ],
             states={
@@ -730,12 +721,11 @@ class TelegramBot:
             per_user=True,
         )
 
-        # 6. Révocation VIP
         remove_vip_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
                     self.admin_handlers.start_remove_vip,
-                    pattern="^owner_remove_vip$",
+                    pattern=r"^owner_remove_vip$",
                 )
             ],
             states={
@@ -764,6 +754,66 @@ class TelegramBot:
             remove_vip_conv,
         ]
 
+    async def handle_self_pref_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Traite les modifications de préférences de cibles avec actualisation visuelle immédiate."""
+        query = update.callback_query
+        if not query or not update.effective_user:
+            return
+
+        user_id = update.effective_user.id
+        data = query.data or ""
+
+        if data.startswith("self_pref_locked_"):
+            await query.answer("🔒 Vos préférences de ciblage sont verrouillées par l'administration.", show_alert=True)
+            return
+
+        if not self.db_manager.can_staff_edit_preferences(user_id):
+            await query.answer("🔒 Action bloquée : vos préférences sont verrouillées par un administrateur.", show_alert=True)
+            return
+
+        # 1. Enregistrement de la nouvelle valeur
+        if data.startswith("self_pref_res_"):
+            val = data.replace("self_pref_res_", "")
+            self.db_manager.update_staff_permission(user_id, "perm_reseaux", val)
+            await query.answer("✅ Réseaux mis à jour !")
+        elif data.startswith("self_pref_ori_"):
+            val = data.replace("self_pref_ori_", "")
+            self.db_manager.update_staff_permission(user_id, "perm_orientation", val)
+            await query.answer("✅ Orientation mise à jour !")
+        elif data.startswith("self_pref_type_"):
+            if self.db_manager.is_admin(user_id):
+                val = data.replace("self_pref_type_", "")
+                self.db_manager.update_staff_permission(user_id, "perm_type", val)
+                await query.answer("✅ Formule mise à jour !")
+            else:
+                await query.answer("❌ Seuls les administrateurs peuvent modifier cette option.", show_alert=True)
+                return
+
+        # 2. Invalidation totale du cache local
+        self.db_manager.clear_cache()
+
+        # 3. Récupération du menu avec les coches actualisées
+        text, kb = self.interface.get_staff_self_preferences_menu(user_id)
+
+        # 4. Forçage du rafraîchissement avec gestion d'exception
+        try:
+            await query.edit_message_text(
+                text=text,
+                parse_mode="HTML",
+                reply_markup=kb,
+                disable_web_page_preview=True
+            )
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                try:
+                    await query.edit_message_reply_markup(reply_markup=kb)
+                except Exception:
+                    pass
+            else:
+                logger.warning("Erreur lors de l'édition texte des préférences : %s", e)
+        except Exception as err:
+            logger.warning("Erreur rafraîchissement préférences staff : %s", err)
+
     def setup_application(self) -> Application:
         """Configure et câble tous les handlers du bot."""
         builder = Application.builder().token(self.config.BOT_TOKEN)
@@ -781,86 +831,82 @@ class TelegramBot:
         app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-        # Commandes textuelles (restreintes en privé pour ne pas réagir dans le groupe)
+        # Commandes textuelles privées
         app.add_handler(CommandHandler("start", self.user_handlers.start, filters=filters.ChatType.PRIVATE))
         app.add_handler(CommandHandler("demandes", self.user_handlers.voir_demandes, filters=filters.ChatType.PRIVATE))
         app.add_handler(CommandHandler("archives", lambda u, c: self.staff_handlers.archives.show_archives(u, c, page=0), filters=filters.ChatType.PRIVATE))
         app.add_handler(CommandHandler("toggle_demandes", self.admin_handlers.toggle_demandes, filters=filters.ChatType.PRIVATE))
         app.add_handler(CommandHandler("maintenance", self.admin_handlers.run_maintenance, filters=filters.ChatType.PRIVATE))
 
-        # Aiguillage Gouvernance & Administration (Admin/Owner + Délais Rémunération + Zone de Danger)
+        # 1. Clics des préférences autonomes du membre (en tête de liste absolue)
+        app.add_handler(CallbackQueryHandler(
+            self.handle_self_pref_callback,
+            pattern=r"^self_pref_.*$",
+        ))
+
+        # 2. Aiguillage Gouvernance & Administration (Admin/Owner + Délais + Zone de Danger + Dossiers Piégeurs)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|set_remun_days_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*)$",
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|staff_view_demandes_.*|admin_remind_staff_demande_.*|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|set_remun_days_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*)$",
         ))
 
-        # Aiguillage Traitement opérationnel des dossiers (Staff + Suppression + Rémunération + Signalement)
+        # 3. Aiguillage Traitement opérationnel des dossiers (Staff)
         app.add_handler(CallbackQueryHandler(
             self.staff_handlers.handle_staff_callbacks,
-            pattern=r"^(demandes_disponibles|dispo_.*|dispo_remun_pending_info|admin_del_dispo_.*|dispo_ask_remun_.*|staff_report_dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|menu_surveillance_notifs|toggle_mon_.*|profil_.*|staff_view_demandes_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
+            pattern=r"^(demandes_disponibles|dispo_.*|dispo_remun_pending_info|admin_del_dispo_.*|dispo_ask_remun_.*|staff_report_dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|menu_surveillance_notifs|toggle_mon_.*|profil_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
         ))
 
-        # Menus d'interface et navigation (avec menu_mon_profil et bot_toggle_suspension)
+        # 4. Menus d'interface et navigation
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_interface_callbacks,
-            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|menu_mon_profil|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|bot_toggle_suspension|menu_danger_zone|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|limit_.*|stat_access_denied|arch_access_denied)$",
+            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|menu_mon_profil|staff_self_prefs|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|bot_toggle_suspension|menu_danger_zone|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|limit_.*|stat_access_denied|arch_access_denied)$",
         ))
 
-        # Callbacks utilisateurs / clients (inclus les réponses accept/refuse rémunération standard et prioritaire)
+        # 5. Callbacks utilisateurs / clients
         app.add_handler(CallbackQueryHandler(
             self.user_handlers.handle_callbacks,
             pattern=r"^(check_subscription|nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|menu_vip_settings|vip_set_assign_.*|vip_pick_auto_staff|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|upgrade_prio_.*|pay_stars_prio_.*|pay_contact_prio_.*|user_accept_remun_.*|user_refuse_remun_.*)$",
         ))
 
-        # Réception des messages & médias : STRICTEMENT PRIVÉ (ignore totalement le groupe)
+        # Réception des messages & médias privés
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & ((filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & ~filters.COMMAND),
             self.handle_incoming_messages,
         ))
 
-        # Tâches périodiques en arrière-plan
+        # Tâches d'arrière-plan JobQueue
         if app.job_queue:
             app.job_queue.run_repeating(
                 check_and_send_admin_reminders,
                 interval=3600,
                 first=15,
             )
-            logger.info("⏰ JobQueue activée : vérification des rappels staff toutes les 3600s.")
-
             app.job_queue.run_repeating(
                 check_and_auto_archive_demandes,
                 interval=3600,
                 first=30,
             )
-            logger.info("📦 JobQueue activée : auto-archivage des demandes livrées toutes les 3600s.")
-
             app.job_queue.run_repeating(
                 check_and_send_delivery_reminders,
                 interval=21600,
                 first=45,
             )
-            logger.info("⏰ JobQueue activée : vérification des rappels de livraison toutes les 6h.")
-
             app.job_queue.run_repeating(
                 check_and_send_paid_delivery_reminders,
                 interval=86400,
                 first=60,
             )
-            logger.info("⏰ JobQueue activée : vérification quotidienne des livraisons payées en attente.")
-
             app.job_queue.run_repeating(
                 check_and_send_unpaid_demande_reminders,
                 interval=21600,
                 first=75,
             )
-            logger.info("⏰ JobQueue activée : vérification des rappels d'impayés client toutes les 6h.")
-
             app.job_queue.run_repeating(
                 check_and_auto_abandon_expired_remun_demandes,
                 interval=21600,
                 first=90,
             )
-            logger.info("⏰ JobQueue activée : vérification des abandons de rémunération expirée toutes les 6h.")
+            logger.info("⏰ Tâches JobQueue configurées et actives.")
 
         async def post_init(application: Application):
             await self.setup_bot_commands(application)
@@ -869,7 +915,7 @@ class TelegramBot:
         return app
 
     async def handle_incoming_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Aiguille les messages entrants : ignore les groupes, traite uniquement les messages privés."""
+        """Aiguille les messages entrants privés."""
         if not update.effective_chat or update.effective_chat.type != "private":
             return
 
@@ -890,23 +936,11 @@ class TelegramBot:
 if __name__ == "__main__":
     try:
         check_log_permissions()
-
-        logger.info("1. Initialisation de la base de données...")
         config = Config()
         db_manager = DatabaseManager(config)
         db_manager.create_tables()
-        logger.info("✅ Base de données initialisée")
-
-        logger.info("2. Configuration avec cache intelligent multi-rôles...")
         config.set_db_manager(db_manager)
-        logger.info(
-            "Rôles chargés : %d owners, %d admins, %d staff",
-            len(config.owner_ids),
-            len(config.admin_ids),
-            len(config.staff_ids),
-        )
 
-        logger.info("3. Démarrage de l'application...")
         bot = TelegramBot(config, db_manager)
         bot.run()
 

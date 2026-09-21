@@ -73,8 +73,8 @@ class InterfaceManager:
                 InlineKeyboardButton("🚦 GÉRER LES DEMANDES 🚦", callback_data="gerer_demandes")
             ])
 
-        # Ligne 3 : ⭐ DEVENIR VIP ⭐ (affiché si non-VIP)
-        if not is_vip:
+        # Ligne 3 : ⭐ DEVENIR VIP ⭐ (affiché UNIQUEMENT pour les demandeurs/clients non-VIP)
+        if not is_vip and user_role == "user":
             keyboard.append([
                 InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")
             ])
@@ -108,10 +108,10 @@ class InterfaceManager:
         ]
         return message, InlineKeyboardMarkup(keyboard)
 
-    # ========== MENU PARAMÈTRES (MAQUETTE CONFORME V2) ==========
+    # ========== MENU PARAMÈTRES ==========
 
     def get_parametres_menu(self, user_id: int):
-        """Construit le panneau Paramètres général avec restriction d'accès aux stats et archives globales."""
+        """Construit le panneau Paramètres général avec contact support ou contact admin."""
         user_role = self._get_user_role(user_id)
         is_admin = (user_role in ["admin", "owner"])
         is_staff = (user_role in ["staff", "admin", "owner"])
@@ -123,13 +123,24 @@ class InterfaceManager:
             message = (
                 f"⚙️ <b>PARAMÈTRES DU COMPTE{vip_mention}</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "Gérez vos options et abonnements :"
+                "Gérez vos options, abonnements et assistance :"
             )
             keyboard = []
             if is_vip:
                 keyboard.append([InlineKeyboardButton("✨ PRÉFÉRENCES VIP ✨", callback_data="menu_vip_settings")])
             else:
                 keyboard.append([InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")])
+
+            # Bouton Contacter le support (avant RETOUR)
+            support_link = self.db_manager.get_support_contact()
+            if support_link.startswith("@"):
+                support_url = f"https://t.me/{support_link.lstrip('@')}"
+            elif support_link.startswith("http://") or support_link.startswith("https://"):
+                support_url = support_link
+            else:
+                support_url = f"https://t.me/{support_link}"
+
+            keyboard.append([InlineKeyboardButton("🎧 CONTACTER LE SUPPORT", url=support_url)])
             keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")])
             return message, InlineKeyboardMarkup(keyboard)
 
@@ -191,7 +202,13 @@ class InterfaceManager:
                 InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")
             ])
 
-        # 7. ⬅️ RETOUR
+        # 7. Bouton de contact (Staff -> Admin/Direction)
+        if user_role == "staff":
+            keyboard.append([
+                InlineKeyboardButton("💬 CONTACTER UN ADMIN", callback_data="contacter_owner")
+            ])
+
+        # 8. ⬅️ RETOUR
         keyboard.append([
             InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")
         ])
@@ -201,7 +218,7 @@ class InterfaceManager:
     # ========== SOUS-MENU MON PROFIL ==========
 
     def get_mon_profil_menu(self, user_id: int):
-        """Construit le sous-menu individuel 'MON PROFIL'."""
+        """Construit le sous-menu individuel 'MON PROFIL' avec le bouton PRÉFÉRENCES sous NOTIFICATIONS."""
         user_role = self._get_user_role(user_id)
         is_admin = (user_role in ["admin", "owner"])
         is_paused = self.db_manager.is_staff_paused(user_id)
@@ -224,7 +241,12 @@ class InterfaceManager:
             InlineKeyboardButton("🔔 NOTIFICATIONS 🔔", callback_data="menu_notifs")
         ])
 
-        # 2. ⏸️ SE METTRE EN PAUSE / ▶️ REPRENDRE LE SERVICE
+        # 2. 🎯 PRÉFÉRENCES 🎯 (Sous les notifications)
+        keyboard.append([
+            InlineKeyboardButton("🎯 PRÉFÉRENCES 🎯", callback_data="staff_self_prefs")
+        ])
+
+        # 3. ⏸️ SE METTRE EN PAUSE / ▶️ REPRENDRE LE SERVICE
         if is_paused:
             keyboard.append([
                 InlineKeyboardButton("▶️ REPRENDRE LE SERVICE ▶️", callback_data="admin_resume")
@@ -234,29 +256,99 @@ class InterfaceManager:
                 InlineKeyboardButton("⏸️ SE METTRE EN PAUSE ⏸️", callback_data="admin_pause_prompt")
             ])
 
-        # 3. 🏷️ MODIFIER MON ALIAS 🏷️ (si admin ou staff non encore verrouillé)
+        # 4. 🏷️ MODIFIER MON ALIAS 🏷️ (si admin ou staff non encore verrouillé)
         if is_admin or self.db_manager.can_staff_edit_alias(user_id):
             keyboard.append([
                 InlineKeyboardButton("🏷️ MODIFIER MON ALIAS 🏷️", callback_data="modifier_alias")
             ])
 
-        # 4. 💰 MOYEN DE PAIEMENT 💰
+        # 5. 💰 MOYEN DE PAIEMENT 💰
         keyboard.append([
             InlineKeyboardButton("💰 MOYEN DE PAIEMENT 💰", callback_data="staff_payment_settings")
         ])
 
-        # 5. 🧮 MES STATS | 📦 MES ARCHIVES (Performances individuelles du membre)
+        # 6. 🧮 MES STATS | 📦 MES ARCHIVES (Performances individuelles du membre)
         keyboard.append([
             InlineKeyboardButton("🧮 MES STATS", callback_data=f"profil_admin_{user_id}"),
             InlineKeyboardButton("📦 MES ARCHIVES", callback_data="demandes_archives")
         ])
 
-        # 6. ⬅️ RETOUR (vers Paramètres)
+        # 7. ⬅️ RETOUR (vers Paramètres)
         keyboard.append([
             InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")
         ])
 
         return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU AUTONOMIE PRÉFÉRENCES OPÉRATEUR (CIBLES) ==========
+
+    def get_staff_self_preferences_menu(self, user_id: int):
+        """Menu interactif permettant à l'opérateur de configurer lui-même ses cibles avec coches dynamiques."""
+        can_edit = self.db_manager.can_staff_edit_preferences(user_id)
+        user_role = self._get_user_role(user_id)
+        is_admin = (user_role in ["admin", "owner"])
+
+        perms = self.db_manager.get_staff_permissions(user_id)
+        reseau = str(perms.get("perm_reseaux") or "all").lower()
+        typ = str(perms.get("perm_type") or "all").lower()
+        ori = str(perms.get("perm_orientation") or "all").lower()
+
+        # Libellés dynamiques Réseaux
+        b_res_all = "✅ Tous réseaux" if reseau == "all" else "Tous réseaux"
+        b_res_insta = "✅ Insta seul" if reseau == "insta" else "Insta seul"
+        b_res_snap = "✅ Snap seul" if reseau == "snap" else "Snap seul"
+
+        # Libellés dynamiques Orientations
+        b_ori_all = "✅ 🔄 Tous / Bi" if ori in ("all", "bi") else "🔄 Tous / Bi"
+        b_ori_h = "✅ Hétéro" if ori == "hetero" else "Hétéro"
+        b_ori_g = "✅ Gay" if ori == "gay" else "Gay"
+
+        # Libellés dynamiques Formules (Admin)
+        b_typ_all = "✅ Tout type" if typ == "all" else "Tout type"
+        b_typ_prio = "✅ 💎 Prio" if typ == "prio_only" else "💎 Prio"
+        b_typ_std = "✅ 📝 Standard" if typ == "standard_only" else "📝 Standard"
+
+        prefix = "self_pref" if can_edit else "self_pref_locked"
+
+        keyboard = [
+            [
+                InlineKeyboardButton(b_res_all, callback_data=f"{prefix}_res_all"),
+                InlineKeyboardButton(b_res_insta, callback_data=f"{prefix}_res_insta"),
+                InlineKeyboardButton(b_res_snap, callback_data=f"{prefix}_res_snap"),
+            ],
+            [
+                InlineKeyboardButton(b_ori_h, callback_data=f"{prefix}_ori_hetero"),
+                InlineKeyboardButton(b_ori_g, callback_data=f"{prefix}_ori_gay"),
+                InlineKeyboardButton(b_ori_all, callback_data=f"{prefix}_ori_all"),
+            ]
+        ]
+
+        if is_admin:
+            keyboard.append([
+                InlineKeyboardButton(b_typ_all, callback_data=f"{prefix}_type_all"),
+                InlineKeyboardButton(b_typ_prio, callback_data=f"{prefix}_type_prio_only"),
+                InlineKeyboardButton(b_typ_std, callback_data=f"{prefix}_type_standard_only"),
+            ])
+
+        keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")])
+
+        labels_res = {"all": "Tous les réseaux", "insta": "Instagram uniquement", "snap": "Snapchat uniquement"}
+        labels_ori = {"all": "Toutes (Hétéro, Gay, Bi)", "hetero": "Hétéro & Bi", "gay": "Gay & Bi", "bi": "Bi uniquement"}
+        labels_typ = {"all": "Toutes les demandes", "prio_only": "Prioritaires uniquement", "standard_only": "Standards uniquement"}
+
+        locked_warning = "\n\n🔒 <i>Vos préférences sont actuellement verrouillées par l'administration.</i>" if not can_edit else ""
+        prio_info = f"\n• <b>Formule :</b> {labels_typ.get(typ, typ)}" if not is_admin else ""
+
+        text = (
+            "🎯 <b>MES PRÉFÉRENCES DE CIBLES</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Voici les critères appliqués à vos demandes disponibles :\n\n"
+            f"• <b>Réseaux :</b> {labels_res.get(reseau, reseau)}\n"
+            f"• <b>Orientation :</b> {labels_ori.get(ori, ori)}{prio_info}"
+            f"{locked_warning}\n\n"
+            "<i>Cliquez sur un bouton pour modifier votre sélection :</i>"
+        )
+        return text, InlineKeyboardMarkup(keyboard)
 
     # ========== SOUS-MENU MODES DE PAIEMENT DU STAFF ==========
 
@@ -284,7 +376,7 @@ class InterfaceManager:
     # ========== SOUS-MENU GESTION DU BOT (Admin & Owner) ==========
 
     def get_gerer_bot_menu(self):
-        """Menu de contrôle du bot système avec mise à jour exacte des boutons."""
+        """Menu de contrôle du bot système."""
         val_demandes = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
         demandes_ouvertes = val_demandes in ("true", "1", "yes")
 
@@ -304,31 +396,20 @@ class InterfaceManager:
         )
 
         keyboard = [
-            # 1. SUSPENDRE / RÉACTIVER LES DEMANDES
             [InlineKeyboardButton(label_suspension, callback_data="bot_toggle_suspension")],
-
-            # 2. 🌡️ QUOTAS | 🎯 CIBLES (au lieu d'anciens LIMITES / QUOTAS)
             [
                 InlineKeyboardButton("🌡️ QUOTAS", callback_data="menu_limits"),
                 InlineKeyboardButton("🎯 CIBLES", callback_data="menu_channels")
             ],
-
-            # 3. ⏳ DÉLAIS | 🛠️ MAINTENANCE (au lieu de 📦 ARCHIVAGE)
             [
                 InlineKeyboardButton("⏳ DÉLAIS", callback_data="menu_delais"),
                 InlineKeyboardButton("🛠️ MAINTENANCE", callback_data="maintenance")
             ],
-
-            # 4. 🔑 ADHÉSION | 📢 CONTACT
             [
                 InlineKeyboardButton("🔑 ADHÉSION", callback_data="menu_cfg_group"),
                 InlineKeyboardButton("📢 CONTACT", callback_data="menu_cfg_support")
             ],
-
-            # 5. ⛔ ZONE DE DANGER ⛔
             [InlineKeyboardButton("⛔ ZONE DE DANGER ⛔", callback_data="menu_danger_zone")],
-
-            # Retour aux paramètres
             [InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]
         ]
 
@@ -507,12 +588,12 @@ class InterfaceManager:
     # ========== SOUS-MENU GÉRER LE STAFF (Admins & Owner) ==========
 
     def get_gerer_staff_menu(self):
-        """Menu de gestion des employés/opérateurs (table staff)."""
+        """Menu de gestion des employés/opérateurs (table staff) avec accès à leurs demandes et options."""
         try:
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT s.user_id, s.alias, s.date_added, s.perm_reseaux, s.perm_type, s.perm_orientation, s.is_paused,
+                    SELECT s.user_id, s.alias, s.date_added, s.perm_reseaux, s.perm_type, s.perm_orientation, s.is_paused, s.allow_self_prefs,
                            u.first_name, u.username,
                            u_add.first_name AS nom_ajouteur
                     FROM staff s
@@ -549,15 +630,17 @@ class InterfaceManager:
                     type_label = {"all": "Tous", "prio_only": "Prio", "standard_only": "Standard"}.get(type_tag, str(type_tag))
                     ori_label = {"all": "Toutes", "hetero": "Hétéro/Bi", "gay": "Gay/Bi", "bi": "Bi"}.get(ori_tag, str(ori_tag))
                     statut_dispo = "⏸️ <i>(En pause)</i>" if st.get("is_paused") else "🟢 <i>(En service)</i>"
+                    lock_badge = "🔓" if st.get("allow_self_prefs", True) else "🔒"
 
                     message += (
                         f"• <b>{alias_esc}</b> {statut_dispo} ({pseudo})\n"
                         f"  🆔 <code>{st['user_id']}</code> | Recruté le {date_str} par {par_qui}\n"
-                        f"  🛡️ <i>Accès : {html.escape(res_label)} | {html.escape(type_label)} | {html.escape(ori_label)}</i>\n\n"
+                        f"  🛡️ <i>Accès : {html.escape(res_label)} | {html.escape(type_label)} | {html.escape(ori_label)} (Prefs: {lock_badge})</i>\n\n"
                     )
 
                     keyboard.append([
-                        InlineKeyboardButton(f"🛡️ Permissions : {st.get('alias', st['user_id'])}", callback_data=f"perm_staff_{st['user_id']}"),
+                        InlineKeyboardButton(f"📂 Dossiers ({st.get('alias', st['user_id'])})", callback_data=f"staff_view_demandes_{st['user_id']}_0"),
+                        InlineKeyboardButton(f"🛡️ Perms", callback_data=f"perm_staff_{st['user_id']}"),
                         InlineKeyboardButton("📊 Stats", callback_data=f"profil_admin_{st['user_id']}")
                     ])
 
@@ -741,6 +824,7 @@ class InterfaceManager:
             "gerer_demandes": lambda: self.get_gerer_demandes_menu(user_id),
             "parametres": lambda: self.get_parametres_menu(user_id),
             "menu_mon_profil": lambda: self.get_mon_profil_menu(user_id),
+            "staff_self_prefs": lambda: self.get_staff_self_preferences_menu(user_id),
             "staff_payment_settings": lambda: self.get_staff_payment_settings_menu(user_id),
             "gerer_staff": self.get_gerer_staff_menu,
             "gerer_admins": self.get_gerer_admins_menu,

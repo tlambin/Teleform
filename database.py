@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """Gestionnaire de persistance MySQL avec pool de connexions réutilisables et cache applicatif."""
 
-    def __init__(self, config, pool_size: int = 2):
+    def __init__(self, config, pool_size: int = 1):
         self.config = config
         self.pool_size = pool_size
         self._pool: Optional[pooling.MySQLConnectionPool] = None
@@ -71,7 +71,7 @@ class DatabaseManager:
             "connect_timeout": 10,
         }
 
-        pool_name = f"bot_pool_{int(time.time())}"
+        pool_name = f"bot_pool_{os.getpid()}_{int(time.time())}"
         try:
             self._pool = pooling.MySQLConnectionPool(
                 pool_name=pool_name,
@@ -81,26 +81,44 @@ class DatabaseManager:
             )
             logger.info("Pool MySQL établi sur %s (base : %s)", host, self.database_name)
         except Error as exc:
-            logger.critical("Échec de connexion MySQL au serveur %s : %s", host, exc, exc_info=True)
-            raise
+            if getattr(exc, "errno", None) == 1226:
+                logger.error("Quota max_user_connections (9) atteint. Connexion à la demande.")
+                self._pool = None
+            else:
+                logger.critical("Échec de connexion MySQL au serveur %s : %s", host, exc, exc_info=True)
+                raise
 
     def _get_connection(self):
-        """Récupère une connexion saine avec ping actif pour contrer le timeout 300s de PythonAnywhere."""
+        """Récupère une connexion saine avec gestion du dépassement de quota."""
         try:
             if not self._pool:
                 self._init_connection_pool()
-            conn = self._pool.get_connection()
-            try:
-                conn.ping(reconnect=True, attempts=3, delay=1)
-            except Exception:
-                conn.reconnect(attempts=3, delay=1)
-            return conn
+            if self._pool:
+                conn = self._pool.get_connection()
+                try:
+                    conn.ping(reconnect=True, attempts=3, delay=1)
+                except Exception:
+                    conn.reconnect(attempts=3, delay=1)
+                return conn
+
+            env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+            if os.path.exists(env_path):
+                load_dotenv(dotenv_path=env_path, override=True)
+
+            return mysql.connector.connect(
+                host=os.getenv("DB_HOST", "paraworld.mysql.eu.pythonanywhere-services.com"),
+                user=os.getenv("DB_USER", "paraworld"),
+                password=os.getenv("DB_PASSWORD", ""),
+                database=os.getenv("DB_NAME", "paraworld$telegramDB"),
+                port=int(os.getenv("DB_PORT", 3306)),
+                autocommit=False,
+                buffered=True,
+                connect_timeout=10,
+            )
         except (Error, Exception) as exc:
-            logger.warning("Connexion perdue ou pool saturé (%s), tentative de réinitialisation...", exc)
-            self._init_connection_pool()
-            conn = self._pool.get_connection()
-            conn.ping(reconnect=True, attempts=3, delay=1)
-            return conn
+            logger.warning("Connexion perdue ou pool saturé (%s), tentative...", exc)
+            time.sleep(1)
+            raise
 
     @contextmanager
     def get_cursor(self, dictionary: bool = True):
@@ -188,6 +206,7 @@ class DatabaseManager:
                 perm_type VARCHAR(16) DEFAULT 'all',
                 perm_orientation VARCHAR(16) DEFAULT 'all',
                 alias_locked BOOLEAN DEFAULT FALSE,
+                allow_self_prefs BOOLEAN DEFAULT TRUE,
                 is_paused BOOLEAN DEFAULT FALSE,
                 is_trial BOOLEAN DEFAULT FALSE,
                 accept_stars BOOLEAN DEFAULT TRUE,
@@ -329,6 +348,7 @@ class DatabaseManager:
             ("staff", "perm_type", "VARCHAR(16) DEFAULT 'all'"),
             ("staff", "perm_orientation", "VARCHAR(16) DEFAULT 'all'"),
             ("staff", "alias_locked", "BOOLEAN DEFAULT FALSE"),
+            ("staff", "allow_self_prefs", "BOOLEAN DEFAULT TRUE"),
             ("staff", "is_paused", "BOOLEAN DEFAULT FALSE"),
             ("staff", "is_trial", "BOOLEAN DEFAULT FALSE"),
             ("staff", "accept_stars", "BOOLEAN DEFAULT TRUE"),
@@ -415,7 +435,7 @@ class DatabaseManager:
                         cursor.execute(f"SHOW COLUMNS FROM {table} LIKE %s", (col,))
                         if not cursor.fetchone():
                             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
-                            logger.info("🛠️ Auto-migration : colonne ajoutée -> %s.%s", table, col)
+                            logger.info("Auto-migration : colonne ajoutée -> %s.%s", table, col)
                     except Error as e:
                         if getattr(e, "errno", None) != 1060:
                             logger.debug("Info colonne %s.%s : %s", table, col, e)
@@ -445,6 +465,9 @@ class DatabaseManager:
                         ('group_subscription_link', '@parascriptionbot'),
                         ('support_contact', '@ContactParaBot'),
                         ('owner_is_paused', 'false'),
+                        ('owner_perm_reseaux', 'all'),
+                        ('owner_perm_type', 'all'),
+                        ('owner_perm_orientation', 'all'),
                     ]
                     for k, v in default_configs:
                         cursor.execute(
@@ -627,6 +650,10 @@ class DatabaseManager:
                     perm_res = perms.get("perm_reseaux") or "all"
                     perm_type = perms.get("perm_type") or "all"
                     perm_ori = perms.get("perm_orientation") or "all"
+                else:
+                    perm_res = self.get_config_value("owner_perm_reseaux", "all")
+                    perm_type = self.get_config_value("owner_perm_type", "all")
+                    perm_ori = self.get_config_value("owner_perm_orientation", "all")
 
                 dispo_clauses = ["statut = '📥 Reçue'", "admin_en_charge IS NULL", "user_id != %s"]
                 dispo_params: List[Any] = [uid]
@@ -1179,6 +1206,7 @@ class DatabaseManager:
                 cursor.execute("UPDATE staff SET is_trial = %s WHERE user_id = %s", (bool(is_trial), int(user_id)))
             self.clear_cache(f"staff_trial_{user_id}")
             self.clear_cache(f"perm_{user_id}")
+            self.clear_cache()
             return True
         except Exception as exc:
             logger.error("Erreur mise à jour statut essai staff %s : %s", user_id, exc)
@@ -1789,7 +1817,7 @@ class DatabaseManager:
     def set_owner_alias(self, alias: str) -> bool:
         return self.set_config_value("owner_alias", alias)
 
-    # ==================== GESTION DE LA TABLE STAFF ====================
+    # ==================== GESTION DE LA TABLE STAFF & PRÉFÉRENCES ====================
 
     def get_staff_alias(self, user_id: int) -> str:
         cache_key = f"alias_{user_id}"
@@ -1869,6 +1897,34 @@ class DatabaseManager:
 
     lock_admin_alias = lock_staff_alias
 
+    def can_staff_edit_preferences(self, user_id: int) -> bool:
+        """Vérifie si un membre du staff est autorisé à modifier lui-même ses préférences de ciblage."""
+        if self.is_owner(user_id) or self.is_admin(user_id):
+            return True
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT allow_self_prefs FROM staff WHERE user_id = %s", (int(user_id),))
+                row = cursor.fetchone()
+                return bool(row.get("allow_self_prefs", True)) if row else True
+        except Exception as exc:
+            logger.error("Erreur vérification allow_self_prefs pour %s : %s", user_id, exc)
+            return True
+
+    def toggle_staff_self_prefs(self, user_id: int) -> bool:
+        """Bascule le verrouillage de modification des préférences pour un membre du staff."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE staff SET allow_self_prefs = NOT allow_self_prefs WHERE user_id = %s",
+                    (int(user_id),)
+                )
+            self.clear_cache(f"perm_{user_id}")
+            self.clear_cache()
+            return True
+        except Exception as exc:
+            logger.error("Erreur bascule allow_self_prefs pour %s : %s", user_id, exc)
+            return False
+
     # ==================== MODE PAUSE MULTI-RÔLES (STAFF, ADMIN, OWNER) ====================
 
     def is_staff_paused(self, user_id: int) -> bool:
@@ -1883,14 +1939,12 @@ class DatabaseManager:
         if cached is not None:
             return cached
 
-        # 1. Cas du Propriétaire (Owner) : persisté dans la table config
         if self.is_owner(uid):
             val = str(self.get_config_value("owner_is_paused", "false")).lower()
             is_paused = val in ("true", "1", "yes")
             self._set_cached_value(cache_key, is_paused)
             return is_paused
 
-        # 2. Cas des Administrateurs / Managers : persisté dans la table admins
         if self.is_admin(uid):
             try:
                 with self.get_cursor() as cursor:
@@ -1903,7 +1957,6 @@ class DatabaseManager:
             except Exception as exc:
                 logger.debug("Info contrôle pause admin %s : %s", uid, exc)
 
-        # 3. Cas du Staff opérationnel standard : persisté dans la table staff
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("SELECT is_paused FROM staff WHERE user_id = %s", (uid,))
@@ -1924,14 +1977,12 @@ class DatabaseManager:
         except (ValueError, TypeError):
             return False
 
-        # 1. Sauvegarde pour l'Owner
         if self.is_owner(uid):
             val_str = "true" if paused else "false"
             ok = self.set_config_value("owner_is_paused", val_str)
             self.clear_cache(f"staff_paused_{uid}")
             return ok
 
-        # 2. Sauvegarde pour un Admin
         if self.is_admin(uid):
             try:
                 with self.transaction() as cursor:
@@ -1942,7 +1993,6 @@ class DatabaseManager:
                 logger.error("Erreur modification pause admin %s : %s", uid, exc)
                 return False
 
-        # 3. Sauvegarde pour le Staff
         try:
             with self.transaction() as cursor:
                 cursor.execute("UPDATE staff SET is_paused = %s WHERE user_id = %s", (bool(paused), uid))
@@ -2333,15 +2383,9 @@ class DatabaseManager:
     # ==================== PERMISSIONS OPÉRATIONNELLES (STAFF) ====================
 
     def get_staff_permissions(self, user_id: int) -> Dict[str, Any]:
-        if self.is_owner(user_id):
-            return {
-                "perm_reseaux": "all",
-                "perm_type": "all",
-                "perm_orientation": "all",
-                "is_trial": False
-            }
-
-        cache_key = f"perm_{user_id}"
+        """Retourne les préférences de ciblage d'un membre (Owner, Admin ou Staff)."""
+        uid = int(user_id)
+        cache_key = f"perm_{uid}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
             return cached
@@ -2350,39 +2394,88 @@ class DatabaseManager:
             "perm_reseaux": "all",
             "perm_type": "all",
             "perm_orientation": "all",
+            "allow_self_prefs": True,
             "is_trial": False
         }
+
+        # 1. Cas du Propriétaire (Owner) : sauvegardé dans la table config
+        if self.is_owner(uid):
+            default_perms["perm_reseaux"] = self.get_config_value("owner_perm_reseaux", "all") or "all"
+            default_perms["perm_type"] = self.get_config_value("owner_perm_type", "all") or "all"
+            default_perms["perm_orientation"] = self.get_config_value("owner_perm_orientation", "all") or "all"
+            default_perms["allow_self_prefs"] = True
+            default_perms["is_trial"] = False
+            self._set_cached_value(cache_key, default_perms)
+            return default_perms
+
+        # 2. Cas du Staff ou des Admins (lecture table staff)
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
-                    "SELECT perm_reseaux, perm_type, perm_orientation, is_trial FROM staff WHERE user_id = %s",
-                    (user_id,)
+                    "SELECT perm_reseaux, perm_type, perm_orientation, allow_self_prefs, is_trial FROM staff WHERE user_id = %s",
+                    (uid,)
                 )
                 row = cursor.fetchone()
                 if row:
                     default_perms["perm_reseaux"] = row.get("perm_reseaux") or "all"
                     default_perms["perm_type"] = row.get("perm_type") or "all"
                     default_perms["perm_orientation"] = row.get("perm_orientation") or "all"
+                    default_perms["allow_self_prefs"] = bool(row.get("allow_self_prefs", True))
                     default_perms["is_trial"] = bool(row.get("is_trial"))
+                elif self.is_admin(uid):
+                    alias = self.get_staff_alias(uid)
+                    cursor.execute(
+                        """
+                        INSERT INTO staff (user_id, alias, perm_reseaux, perm_type, perm_orientation, allow_self_prefs)
+                        VALUES (%s, %s, 'all', 'all', 'all', TRUE)
+                        ON DUPLICATE KEY UPDATE user_id = user_id
+                        """,
+                        (uid, alias)
+                    )
             self._set_cached_value(cache_key, default_perms)
             return default_perms
         except Exception as exc:
-            logger.error("Erreur lecture permissions staff %s : %s", user_id, exc)
+            logger.error("Erreur lecture permissions staff %s : %s", uid, exc)
             return default_perms
 
     get_admin_permissions = get_staff_permissions
 
     def update_staff_permission(self, user_id: int, perm_key: str, perm_value: Any) -> bool:
-        if perm_key not in ("perm_reseaux", "perm_type", "perm_orientation", "is_trial"):
+        """Met à jour une permission de ciblage (Owner, Admin ou Staff) avec invalidation complète du cache."""
+        allowed = {"perm_reseaux", "perm_type", "perm_orientation", "allow_self_prefs", "is_trial"}
+        if perm_key not in allowed:
             return False
+
+        uid = int(user_id)
+
+        # 1. Cas du Propriétaire : persisté dans la table config
+        if self.is_owner(uid):
+            ok = self.set_config_value(f"owner_{perm_key}", str(perm_value))
+            self.clear_cache(f"perm_{uid}")
+            self.clear_cache(f"cfg_owner_{perm_key}")
+            self.clear_cache()
+            return ok
+
+        # 2. Cas du Staff et des Admins : persisté dans la table staff avec fallback insert
         try:
             with self.transaction() as cursor:
-                cursor.execute(f"UPDATE staff SET {perm_key} = %s WHERE user_id = %s", (perm_value, user_id))
-            self.clear_cache(f"perm_{user_id}")
-            self.clear_cache(f"staff_trial_{user_id}")
+                cursor.execute(f"UPDATE staff SET {perm_key} = %s WHERE user_id = %s", (perm_value, uid))
+                if cursor.rowcount == 0:
+                    alias = self.get_staff_alias(uid)
+                    cursor.execute(
+                        f"""
+                        INSERT INTO staff (user_id, alias, {perm_key})
+                        VALUES (%s, %s, %s)
+                        ON DUPLICATE KEY UPDATE {perm_key} = VALUES({perm_key})
+                        """,
+                        (uid, alias, perm_value)
+                    )
+            self.clear_cache(f"perm_{uid}")
+            self.clear_cache(f"staff_trial_{uid}")
+            self.clear_cache()
             return True
         except Exception as exc:
-            logger.error("Erreur mise à jour permission %s pour staff %s : %s", perm_key, user_id, exc)
+            logger.error("Erreur mise à jour permission %s pour staff %s : %s", perm_key, uid, exc)
             return False
 
     update_admin_permission = update_staff_permission
@@ -2723,9 +2816,9 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 if is_owner:
                     stats["alias"] = self.get_owner_alias()
-                    stats["perm_reseaux"] = "all"
-                    stats["perm_type"] = "all"
-                    stats["perm_orientation"] = "all"
+                    stats["perm_reseaux"] = self.get_config_value("owner_perm_reseaux", "all") or "all"
+                    stats["perm_type"] = self.get_config_value("owner_perm_type", "all") or "all"
+                    stats["perm_orientation"] = self.get_config_value("owner_perm_orientation", "all") or "all"
                     stats["is_trial"] = False
                 else:
                     cursor.execute(
@@ -2948,6 +3041,14 @@ class DatabaseManager:
                     cursor.execute("DELETE FROM admins WHERE user_id != %s AND is_owner = FALSE", (owner_id,))
                     cursor.execute("DELETE FROM user_preferences WHERE user_id != %s", (owner_id,))
                     cursor.execute("DELETE FROM users WHERE user_id != %s", (owner_id,))
+
+                    try:
+                        cursor.execute("ALTER TABLE demandes AUTO_INCREMENT = 1")
+                        cursor.execute("ALTER TABLE demandes_suivi AUTO_INCREMENT = 1")
+                        cursor.execute("ALTER TABLE archives AUTO_INCREMENT = 1")
+                        logger.info("Compteurs AUTO_INCREMENT réinitialisés à 1 suite à la purge totale.")
+                    except Exception as e_auto:
+                        logger.warning("Impossible de réinitialiser l'auto-incrément : %s", e_auto)
 
                 else:
                     logger.warning("Cible de purge inconnue : %s", target)

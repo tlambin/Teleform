@@ -365,6 +365,17 @@ class AdminHandlers:
             msg, kb = self.interface.get_gerer_staff_menu()
             await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
 
+        # Consultation des dossiers d'un piégeur spécifique
+        elif data.startswith("staff_view_demandes_") and privs.get("can_manage_staff", True):
+            parts = data.split("_")
+            target_staff_id = int(parts[3])
+            page = int(parts[4]) if len(parts) >= 5 else 0
+            await self.show_staff_dossiers_page(update, context, target_staff_id, page)
+
+        # Relance d'un piégeur par un admin sur un dossier
+        elif data.startswith("admin_remind_staff_demande_") and privs.get("can_manage_staff", True):
+            await self.handle_admin_remind_staff_demande(update, context, data)
+
         # Gestion Admins (Owner only)
         elif data == "gerer_admins" and is_owner:
             await query.answer()
@@ -426,7 +437,7 @@ class AdminHandlers:
             except Exception:
                 await query.answer("❌ Erreur valeur.", show_alert=True)
 
-        # Permissions Staff (Réseau, Type, Orientation, Mode à l'essai)
+        # Permissions Staff (Réseau, Type, Orientation, Verrouillage Préférences, Mode à l'essai)
         elif data.startswith("perm_staff_") and privs.get("can_manage_staff", True):
             try:
                 target_id = int(data.replace("perm_staff_", ""))
@@ -446,6 +457,143 @@ class AdminHandlers:
         elif data.startswith("set_permadmin_") and is_owner:
             await self.handle_set_admin_permission(update, context, data)
 
+    # ==================== CONSULTATION DES DOSSIERS D'UN PIÉGEUR PAR L'ADMIN ====================
+
+    async def show_staff_dossiers_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, staff_id: int, page: int = 0):
+        """Affiche les demandes actives d'un membre du staff fiche par fiche avec options de relance."""
+        query = update.callback_query
+        if not query:
+            return
+        await query.answer()
+
+        alias = html.escape(str(self.db_manager.get_staff_alias(staff_id)))
+
+        try:
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT d.id, d.request_number, d.user_id, d.prenom, d.nom, d.age, d.localisation,
+                           d.instagram, d.snapchat, d.details, d.prioritaire, d.montant, d.statut,
+                           d.is_difficile, d.reussie_substatus, d.date_creation, d.date_modification,
+                           ds.date_suivi
+                    FROM demandes d
+                    JOIN demandes_suivi ds ON d.id = ds.demande_id
+                    WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours', '🎯 Assignée (VIP)')
+                    ORDER BY ds.date_suivi ASC
+                    """,
+                    (staff_id,)
+                )
+                dossiers = cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur lecture dossiers staff %s : %s", staff_id, exc)
+            dossiers = []
+
+        if not dossiers:
+            msg = (
+                f"📂 <b>Dossiers de {alias}</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "📭 Cet opérateur n'a aucune demande en cours de traitement pour le moment."
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 Contacter le piégeur", callback_data=f"admin_contact_staff_{staff_id}")],
+                [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_staff")]
+            ])
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+            return
+
+        total = len(dossiers)
+        page = max(0, min(page, total - 1))
+        demande = dossiers[page]
+        demande_id = demande["id"]
+        req_num = demande.get("request_number", demande_id)
+
+        nom_cible = f"{html.escape(str(demande.get('prenom') or ''))} {html.escape(str(demande.get('nom') or ''))}".strip() or "Non renseigné"
+        statut_fmt = self.db_manager.format_statut_display(
+            demande.get("statut"),
+            demande.get("is_difficile", False),
+            demande.get("reussie_substatus")
+        )
+
+        prio_tag = f"💎 Prioritaire ({float(demande.get('montant') or 0.0):.2f} €)" if demande.get("prioritaire") else "📝 Standard"
+        date_prise = str(demande.get("date_suivi") or demande.get("date_creation"))[:16]
+
+        text = (
+            f"📂 <b>Dossiers de {alias} ({page + 1}/{total})</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Dossier :</b> #{req_num}\n"
+            f"• <b>Cible :</b> <b>{nom_cible}</b>\n"
+            f"• <b>Formule :</b> {prio_tag}\n"
+            f"• <b>Statut actuel :</b> <code>{html.escape(str(statut_fmt))}</code>\n"
+            f"• <b>Prise en charge :</b> <i>{date_prise}</i>\n"
+            f"• <b>Demandeur :</b> <code>{demande['user_id']}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<i>Actions administratives sur ce dossier :</i>"
+        )
+
+        buttons = [
+            [InlineKeyboardButton("🔔 RELANCER LE PIÉGEUR", callback_data=f"admin_remind_staff_demande_{staff_id}_{demande_id}_{page}")],
+            [
+                InlineKeyboardButton("💬 CONTACTER LE PIÉGEUR", callback_data=f"admin_contact_staff_{staff_id}"),
+                InlineKeyboardButton("👤 CONTACTER LE CLIENT", callback_data=f"contacter_{demande_id}")
+            ]
+        ]
+
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ PRÉCÉDENTE", callback_data=f"staff_view_demandes_{staff_id}_{page - 1}"))
+        if page < total - 1:
+            nav_row.append(InlineKeyboardButton("SUIVANTE ➡️", callback_data=f"staff_view_demandes_{staff_id}_{page + 1}"))
+        if nav_row:
+            buttons.append(nav_row)
+
+        buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_staff")])
+
+        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(buttons))
+
+    async def handle_admin_remind_staff_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+        """Envoie un rappel ciblé de l'administrateur au piégeur pour un dossier précis."""
+        query = update.callback_query
+        if not query:
+            return
+
+        parts = data.split("_")
+        staff_id = int(parts[4])
+        demande_id = int(parts[5])
+        page = int(parts[6]) if len(parts) >= 7 else 0
+
+        admin_id = update.effective_user.id
+        admin_alias = self.db_manager.get_staff_alias(admin_id)
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute("SELECT id, request_number, prenom FROM demandes WHERE id = %s", (demande_id,))
+            dem = cursor.fetchone()
+
+        if not dem:
+            await query.answer("❌ Dossier introuvable.", show_alert=True)
+            return
+
+        req_num = dem.get("request_number", demande_id)
+        prenom = html.escape(str(dem.get("prenom") or "la cible"))
+
+        msg_staff = (
+            f"🔔 <b>RAPPEL DE LA DIRECTION / ADMINISTRATION</b>\n\n"
+            f"L'administrateur <b>{html.escape(str(admin_alias))}</b> vous relance concernant le dossier <b>#{req_num}</b> ({prenom}).\n\n"
+            "👉 Merci de faire le point sur ce dossier dans vos suivis et de finaliser la démarche."
+        )
+        kb_staff = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Ouvrir la fiche du dossier", callback_data=f"retour_texte_{demande_id}")],
+            [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
+        ])
+
+        try:
+            await context.bot.send_message(chat_id=staff_id, text=msg_staff, parse_mode="HTML", reply_markup=kb_staff)
+            await query.answer(f"✅ Relance envoyée au piégeur pour le dossier #{req_num} !", show_alert=True)
+        except Exception as exc:
+            logger.error("Erreur envoi relance admin au piégeur %s : %s", staff_id, exc)
+            await query.answer("❌ Erreur lors de la transmission du rappel.", show_alert=True)
+
+        await self.show_staff_dossiers_page(update, context, staff_id, page)
+
     # ==================== PERMISSIONS STAFF (OPÉRATEURS) ====================
 
     async def show_staff_permissions_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, staff_id: int):
@@ -459,6 +607,7 @@ class AdminHandlers:
         reseau = perms.get("perm_reseaux", "all")
         typ = perms.get("perm_type", "all")
         ori = perms.get("perm_orientation", "all")
+        allow_self = bool(perms.get("allow_self_prefs", True))
         is_trial = bool(perms.get("is_trial", False))
 
         b_res_all = "✅ Tous réseaux" if reseau == "all" else "Tous réseaux"
@@ -474,6 +623,7 @@ class AdminHandlers:
         b_ori_g = "✅ Gay" if ori == "gay" else "Gay"
 
         trial_btn_label = "🧪 À l'essai : ✅ OUI" if is_trial else "🧪 À l'essai : ❌ NON"
+        self_prefs_label = "🔒 Bloquer ses réglages cibles" if allow_self else "🔓 Débloquer ses réglages cibles"
 
         keyboard = [
             [
@@ -492,6 +642,9 @@ class AdminHandlers:
                 InlineKeyboardButton(b_ori_all, callback_data=f"set_permstaff_{staff_id}_orientation_all"),
             ],
             [
+                InlineKeyboardButton(self_prefs_label, callback_data=f"set_permstaff_{staff_id}_selfprefs_toggle")
+            ],
+            [
                 InlineKeyboardButton(trial_btn_label, callback_data=f"set_permstaff_{staff_id}_trial_toggle")
             ],
             [InlineKeyboardButton("🔙 Équipe Staff", callback_data="gerer_staff")]
@@ -500,8 +653,8 @@ class AdminHandlers:
         text = (
             f"🛡️ <b>Permissions Opérateur : {alias}</b>\n"
             f"🆔 ID : <code>{staff_id}</code>\n\n"
-            "Ajustez les dossiers auxquels ce membre a accès (Réseaux, Type, Orientation) "
-            "et activez/désactivez sa <b>période d'essai</b> :"
+            "Ajustez les dossiers auxquels ce membre a accès (Réseaux, Type, Orientation),\n"
+            "verrouillez sa capacité à modifier ses préférences, ou réglez sa <b>période d'essai</b> :"
         )
         await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -521,6 +674,14 @@ class AdminHandlers:
                 self.db_manager.set_staff_trial(staff_id, new_trial)
                 status_txt = "activé" if new_trial else "désactivé"
                 await query.answer(f"🧪 Mode à l'essai {status_txt} !")
+                await self.show_staff_permissions_menu(update, context, staff_id)
+                return
+
+            if action == "selfprefs" and len(parts) >= 5 and parts[4] == "toggle":
+                self.db_manager.toggle_staff_self_prefs(staff_id)
+                now_allowed = self.db_manager.can_staff_edit_preferences(staff_id)
+                status_txt = "débloquée (autonome)" if now_allowed else "verrouillée (bloqué)"
+                await query.answer(f"Modification des préférences {status_txt} !")
                 await self.show_staff_permissions_menu(update, context, staff_id)
                 return
 
