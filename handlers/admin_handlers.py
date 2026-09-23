@@ -15,6 +15,18 @@ from .admin.staff import StaffManager
 
 logger = logging.getLogger(__name__)
 
+# Liste blanche stricte des permissions admin modifiables dans la table 'admins'
+ALLOWED_ADMIN_PERMISSIONS = frozenset({
+    "can_manage_staff",
+    "can_manage_vips",
+    "can_view_stats",
+    "can_manage_delais",
+    "can_view_archives",
+    "can_monitor_staff",
+    "is_vip",
+    "is_owner",
+})
+
 
 class AdminHandlers:
     """Gestionnaire des opérations système, de la gouvernance (Admins/Staff), des stats et des VIPs."""
@@ -101,9 +113,10 @@ class AdminHandlers:
             await update.message.reply_text("🔧 <b>Maintenance en cours...</b>", parse_mode="HTML")
 
         try:
-            storage_before = check_storage_usage()
-            daily_maintenance(self.db_manager)
-            storage_after = check_storage_usage()
+            # Appels asynchrones non-bloquants
+            storage_before = await check_storage_usage()
+            await daily_maintenance(self.db_manager)
+            storage_after = await check_storage_usage()
 
             with self.db_manager.get_cursor() as cursor:
                 cursor.execute("SELECT COUNT(*) AS count FROM demandes")
@@ -761,13 +774,19 @@ class AdminHandlers:
             admin_id = int(parts[2])
             flag = "_".join(parts[3:])
 
+            # Validation stricte par liste blanche
+            if flag not in ALLOWED_ADMIN_PERMISSIONS:
+                logger.warning("Tentative de modification d'une permission admin invalide : '%s' par user %s", flag, update.effective_user.id)
+                await query.answer("❌ Permission invalide.", show_alert=True)
+                return
+
             primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
             if int(admin_id) == int(primary_owner_id) and flag == "is_owner":
                 await query.answer("❌ Impossible de modifier le rôle du propriétaire principal.", show_alert=True)
                 return
 
             with self.db_manager.transaction() as cursor:
-                cursor.execute(f"UPDATE admins SET {flag} = NOT {flag} WHERE user_id = %s", (admin_id,))
+                cursor.execute(f"UPDATE admins SET `{flag}` = NOT `{flag}` WHERE user_id = %s", (admin_id,))
 
             self.config.reload_roles()
             self.db_manager.clear_cache(f"vip_{admin_id}")

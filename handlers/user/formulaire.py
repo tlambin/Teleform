@@ -1,5 +1,6 @@
 """Formulaire de création de demandes avec orientation cible, matrice de canaux, quotas, détection des doublons et choix du référent VIP."""
 
+import asyncio
 import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -12,6 +13,7 @@ from telegram.ext import (
     filters,
 )
 from utils.validators import ValidationError, Validators
+from typing import Optional
 from .navigation import NavigationManager
 
 logger = logging.getLogger(__name__)
@@ -241,7 +243,7 @@ class FormulaireManager:
                 with self.db_manager.get_cursor() as cursor:
                     cursor.execute(
                         f"""
-                        SELECT COUNT(*) AS total FROM demandes 
+                        SELECT COUNT(*) AS total FROM demandes
                         WHERE user_id = %s AND statut IN ({placeholders})
                         """,
                         (int(user_id), *self.ACTIVE_STATUSES)
@@ -1065,7 +1067,7 @@ class FormulaireManager:
         return ConversationHandler.END
 
     async def save_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enregistre la demande dans MySQL : '🎯 Assignée (VIP)' si piégeur ciblé, sinon '📥 Reçue'."""
+        """Enregistre la demande en base et déclenche la diffusion asynchrone non-bloquante."""
         if not await self._check_active_submission_allowed(update, context):
             return
 
@@ -1153,12 +1155,18 @@ class FormulaireManager:
                 "Tapez /demandes pour suivre son avancement."
             )
 
+            # 1. Réponse instantanée à l'utilisateur
             await self._edit_or_send(update, context, recap)
 
+            # 2. Diffusion d'alertes en tâche de fond (Fire-and-Forget)
             if target_admin_id and statut_initial == "🎯 Assignée (VIP)":
-                await self._send_vip_assignment_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
+                asyncio.create_task(
+                    self._send_vip_assignment_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
+                )
             else:
-                await self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet_esc, demande, user_id, is_vip=is_vip)
+                asyncio.create_task(
+                    self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet_esc, demande, user_id, is_vip=is_vip)
+                )
 
         except Exception as exc:
             logger.error("Erreur lors de la sauvegarde de la demande : %s", exc, exc_info=True)
@@ -1211,10 +1219,41 @@ class FormulaireManager:
         except Exception as err:
             logger.warning("Impossible de notifier le piégeur assigné VIP %s : %s", admin_id, err)
 
+    async def _send_single_demande_alert(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        sid: int,
+        alert_text: str,
+        alert_kb: InlineKeyboardMarkup,
+        photo_id: Optional[str],
+        is_silent: bool
+    ):
+        """Envoie individuel sécurisé avec capture d'exception par destinataire."""
+        try:
+            if photo_id:
+                await context.bot.send_photo(
+                    chat_id=sid,
+                    photo=photo_id,
+                    caption=alert_text,
+                    parse_mode="HTML",
+                    reply_markup=alert_kb,
+                    disable_notification=is_silent
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=sid,
+                    text=alert_text,
+                    parse_mode="HTML",
+                    reply_markup=alert_kb,
+                    disable_notification=is_silent
+                )
+        except Exception as e:
+            logger.warning("Impossible d'envoyer l'alerte nouvelle demande à %s : %s", sid, e)
+
     async def _broadcast_new_demande_alert(
         self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict, creator_id: int, is_vip: bool = False
     ):
-        """Avertit toute l'équipe Staff d'une nouvelle demande disponible."""
+        """Diffuse les alertes de nouvelle demande à l'équipe Staff en parallèle (asyncio.gather)."""
         prio_icon = "💎" if demande.get("prioritaire") else "📝"
         type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
         montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
@@ -1239,11 +1278,12 @@ class FormulaireManager:
         ])
 
         staff_destinataires = self.config.get_all_staff() or self.config.get_all_admins()
+        tasks = []
+        photo_id = demande.get("photo_id")
 
         for staff_id in staff_destinataires:
             try:
                 sid = int(staff_id)
-
                 if sid == int(creator_id):
                     continue
 
@@ -1258,34 +1298,28 @@ class FormulaireManager:
                     or p_ori == target_ori
                     or (target_ori == "bi" and p_ori in ("hetero", "gay"))
                 )
-
                 if not is_compatible:
                     continue
 
                 prefs = self.db_manager.get_admin_preferences(sid)
                 notif_mode = prefs.get("notif_new_mode", "sound")
-
                 if notif_mode == "off":
                     continue
 
                 is_silent = (notif_mode == "silent")
-                photo_id = demande.get("photo_id")
-                if photo_id:
-                    await context.bot.send_photo(
-                        chat_id=sid,
-                        photo=photo_id,
-                        caption=alert_text,
-                        parse_mode="HTML",
-                        reply_markup=alert_kb,
-                        disable_notification=is_silent
+
+                tasks.append(
+                    self._send_single_demande_alert(
+                        context=context,
+                        sid=sid,
+                        alert_text=alert_text,
+                        alert_kb=alert_kb,
+                        photo_id=photo_id,
+                        is_silent=is_silent
                     )
-                else:
-                    await context.bot.send_message(
-                        chat_id=sid,
-                        text=alert_text,
-                        parse_mode="HTML",
-                        reply_markup=alert_kb,
-                        disable_notification=is_silent
-                    )
-            except Exception as e:
-                logger.warning("Impossible d'envoyer l'alerte nouvelle demande à %s : %s", staff_id, e)
+                )
+            except Exception as e_prep:
+                logger.warning("Erreur préparation notification pour staff %s : %s", staff_id, e_prep)
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)

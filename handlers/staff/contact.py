@@ -3,6 +3,7 @@
 import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import Forbidden, BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,10 @@ class ContactManager:
                         reply_markup=owner_keyboard
                     )
                 sent_count += 1
+            except Forbidden:
+                logger.warning("Le propriétaire %s a bloqué le bot.", owner_id)
+            except BadRequest as b_err:
+                logger.error("Erreur formatage Telegram vers owner %s : %s", owner_id, b_err)
             except Exception as send_err:
                 logger.warning("Échec envoi vers l'owner %s : %s", owner_id, send_err)
 
@@ -160,7 +165,7 @@ class ContactManager:
                 ]])
             )
         else:
-            await msg.reply_text("❌ Erreur technique lors de la transmission aux propriétaires.")
+            await msg.reply_text("❌ Impossible de remettre le message à la direction (service indisponible ou bot bloqué).")
 
         return ConversationHandler.END
 
@@ -241,6 +246,14 @@ class ContactManager:
             )
             return ConversationHandler.END
 
+        except Forbidden:
+            logger.warning("Le membre %s a bloqué le bot. Réponse impossible.", target_staff_id)
+            await msg.reply_text("⚠️ <b>Échec de remise :</b> cet opérateur a bloqué le bot ou supprimé son compte.", parse_mode="HTML")
+            return ConversationHandler.END
+        except BadRequest as b_err:
+            logger.error("Erreur formatage Telegram réponse direction vers %s : %s", target_staff_id, b_err)
+            await msg.reply_text("❌ Erreur Telegram lors de l'envoi du message.")
+            return ConversationHandler.END
         except Exception as exc:
             logger.error("Erreur envoi réponse propriétaire vers membre %s : %s", target_staff_id, exc)
             await msg.reply_text("❌ Échec lors de la remise du message.")

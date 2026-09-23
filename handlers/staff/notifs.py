@@ -1,5 +1,6 @@
 """Module de gestion des préférences de notifications, rappels staff et notifications utilisateurs."""
 
+import asyncio
 import html
 import logging
 from typing import Optional
@@ -10,6 +11,16 @@ from telegram.ext import ContextTypes
 logger = logging.getLogger(__name__)
 
 JOURS_SEMAINE = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+
+# Liste blanche stricte des colonnes de surveillance éditables
+VALID_SURVEILLANCE_COLUMNS = frozenset({
+    "monitor_prise_en_charge",
+    "monitor_changement_statut",
+    "monitor_abandon",
+    "monitor_reussite",
+    "monitor_staff_msg",
+    "monitor_user_msg",
+})
 
 
 def get_statut_explication(statut: str, is_difficile: bool = False, reussie_substatus: Optional[str] = None) -> str:
@@ -352,13 +363,19 @@ class NotifsManager:
         await self._render_clean_menu(query, context, text, keyboard)
 
     async def handle_surveillance_toggle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
-        """Bascule l'interrupteur d'alerte ciblé."""
+        """Bascule l'interrupteur d'alerte ciblé avec validation stricte par liste blanche."""
         query = update.callback_query
         user_id = update.effective_user.id
         col_name = f"monitor_{key}"
 
+        if col_name not in VALID_SURVEILLANCE_COLUMNS:
+            logger.warning("Tentative d'accès à une colonne non autorisée : '%s' par l'utilisateur %s", col_name, user_id)
+            if query:
+                await query.answer("❌ Option non reconnue.", show_alert=True)
+            return
+
         with self.db_manager.get_cursor() as cursor:
-            cursor.execute(f"SELECT {col_name} FROM admin_preferences WHERE user_id = %s", (user_id,))
+            cursor.execute(f"SELECT `{col_name}` FROM admin_preferences WHERE user_id = %s", (user_id,))
             row = cursor.fetchone()
             current = bool(row.get(col_name, True)) if row and row.get(col_name) is not None else True
 

@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """Gestionnaire de persistance MySQL avec pool de connexions réutilisables et cache applicatif."""
 
-    def __init__(self, config, pool_size: int = 1):
+    def __init__(self, config, pool_size: int = 2):
         self.config = config
         self.pool_size = pool_size
         self._pool: Optional[pooling.MySQLConnectionPool] = None
+        self._pool_pid: Optional[int] = None
         self._cache: Dict[str, Any] = {}
         self._cache_timestamp: Dict[str, float] = {}
         self._cache_ttl = 300.0
@@ -28,8 +29,8 @@ class DatabaseManager:
         self._init_connection_pool()
         logger.info("DatabaseManager initialisé avec pool de %d connexions.", self.pool_size)
 
-    def _init_connection_pool(self):
-        """Initialise le pool de connexions MySQL avec chargement direct du .env."""
+    def _get_db_config(self) -> dict:
+        """Charge et retourne la configuration de base de données depuis l'environnement."""
         env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
         if os.path.exists(env_path):
             load_dotenv(dotenv_path=env_path, override=True)
@@ -60,7 +61,7 @@ class DatabaseManager:
         )
         port = int(os.getenv("DB_PORT", 3306))
 
-        db_config = {
+        return {
             "host": host,
             "user": user,
             "password": password,
@@ -71,7 +72,12 @@ class DatabaseManager:
             "connect_timeout": 10,
         }
 
-        pool_name = f"bot_pool_{os.getpid()}_{int(time.time())}"
+    def _init_connection_pool(self):
+        """Initialise le pool de connexions MySQL pour le processus courant."""
+        db_config = self._get_db_config()
+        current_pid = os.getpid()
+        pool_name = f"bot_pool_{current_pid}_{int(time.time())}"
+
         try:
             self._pool = pooling.MySQLConnectionPool(
                 pool_name=pool_name,
@@ -79,46 +85,65 @@ class DatabaseManager:
                 pool_reset_session=True,
                 **db_config,
             )
-            logger.info("Pool MySQL établi sur %s (base : %s)", host, self.database_name)
+            self._pool_pid = current_pid
+            logger.info("Pool MySQL établi sur %s (base : %s) [PID: %d]", db_config["host"], self.database_name, current_pid)
         except Error as exc:
             if getattr(exc, "errno", None) == 1226:
-                logger.error("Quota max_user_connections (9) atteint. Connexion à la demande.")
-                self._pool = None
+                logger.error("Quota max_user_connections atteint. Utilisation de connexions directes.")
             else:
-                logger.critical("Échec de connexion MySQL au serveur %s : %s", host, exc, exc_info=True)
-                raise
+                logger.critical("Échec initialisation pool MySQL sur %s : %s", db_config.get("host"), exc, exc_info=True)
+            self._pool = None
+            self._pool_pid = None
+
+    def _apply_session_settings(self, conn):
+        """Applique les réglages de session anti-deadlock et timeouts stricts sur une connexion active."""
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                cursor.execute("SET SESSION innodb_lock_wait_timeout = 10")
+                cursor.execute("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
+        except Exception as exc:
+            logger.debug("Application des réglages de session ignorée ou impossible : %s", exc)
+
+    def _create_direct_connection(self):
+        """Établit une connexion MySQL unitaire directe."""
+        db_config = self._get_db_config()
+        conn = mysql.connector.connect(**db_config)
+        self._apply_session_settings(conn)
+        return conn
 
     def _get_connection(self):
-        """Récupère une connexion saine avec gestion du dépassement de quota."""
-        try:
-            if not self._pool:
-                self._init_connection_pool()
-            if self._pool:
+        """Récupère une connexion saine avec détection post-fork et reconnexion automatique."""
+        # Si un fork WSGI est intervenu, régénérer le pool pour ce nouveau processus
+        if self._pool_pid != os.getpid():
+            self._init_connection_pool()
+
+        conn = None
+        if self._pool:
+            try:
                 conn = self._pool.get_connection()
-                try:
-                    conn.ping(reconnect=True, attempts=3, delay=1)
-                except Exception:
-                    conn.reconnect(attempts=3, delay=1)
-                return conn
+            except Error as pool_err:
+                logger.warning("Connexion depuis pool indisponible (%s), bascule en connexion directe.", pool_err)
+                conn = None
 
-            env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-            if os.path.exists(env_path):
-                load_dotenv(dotenv_path=env_path, override=True)
+        if conn is None:
+            conn = self._create_direct_connection()
 
-            return mysql.connector.connect(
-                host=os.getenv("DB_HOST", "paraworld.mysql.eu.pythonanywhere-services.com"),
-                user=os.getenv("DB_USER", "paraworld"),
-                password=os.getenv("DB_PASSWORD", ""),
-                database=os.getenv("DB_NAME", "paraworld$telegramDB"),
-                port=int(os.getenv("DB_PORT", 3306)),
-                autocommit=False,
-                buffered=True,
-                connect_timeout=10,
-            )
-        except (Error, Exception) as exc:
-            logger.warning("Connexion perdue ou pool saturé (%s), tentative...", exc)
-            time.sleep(1)
-            raise
+        # Vérification active de la santé de la connexion
+        try:
+            conn.ping(reconnect=True, attempts=3, delay=1)
+            if not conn.is_connected():
+                conn.reconnect(attempts=3, delay=1)
+        except Exception as ping_err:
+            logger.warning("Connexion MySQL perdue (%s), tentative de recréation immédiate...", ping_err)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = self._create_direct_connection()
+
+        self._apply_session_settings(conn)
+        return conn
 
     @contextmanager
     def get_cursor(self, dictionary: bool = True):
@@ -176,7 +201,7 @@ class DatabaseManager:
                 pass
 
     def create_tables(self):
-        """Crée ou met à jour les tables nécessaires au fonctionnement du bot avec vérification des colonnes."""
+        """Crée ou met à jour les tables nécessaires au fonctionnement du bot avec vérification des colonnes et index."""
         tables = [
             """
             CREATE TABLE IF NOT EXISTS config (
@@ -408,6 +433,19 @@ class DatabaseManager:
             ("user_preferences", "notif_messages", "VARCHAR(16) DEFAULT 'sound'"),
         ]
 
+        expected_indexes = [
+            ("demandes", "idx_demandes_dispo_routing", "CREATE INDEX idx_demandes_dispo_routing ON demandes (statut, admin_en_charge, orientation, prioritaire, date_creation)"),
+            ("demandes", "idx_demandes_staff_suivi", "CREATE INDEX idx_demandes_staff_suivi ON demandes (admin_en_charge, prioritaire, date_modification)"),
+            ("demandes", "idx_demandes_user_statut", "CREATE INDEX idx_demandes_user_statut ON demandes (user_id, statut, id)"),
+            ("demandes", "idx_demandes_dedup_insta", "CREATE INDEX idx_demandes_dedup_insta ON demandes (instagram, statut)"),
+            ("demandes", "idx_demandes_dedup_snap", "CREATE INDEX idx_demandes_dedup_snap ON demandes (snapchat, statut)"),
+            ("demandes", "idx_demandes_auto_archive", "CREATE INDEX idx_demandes_auto_archive ON demandes (statut, reussie_substatus, has_delivered_content, date_livraison)"),
+            ("demandes_suivi", "idx_suivi_admin_action", "CREATE INDEX idx_suivi_admin_action ON demandes_suivi (admin_id, statut_suivi, date_suivi)"),
+            ("archives", "idx_archives_user_date", "CREATE INDEX idx_archives_user_date ON archives (user_id, date_archivage)"),
+            ("archives", "idx_archives_staff_date", "CREATE INDEX idx_archives_staff_date ON archives (admin_en_charge, date_archivage)"),
+            ("users", "idx_users_cleanup_activite", "CREATE INDEX idx_users_cleanup_activite ON users (derniere_activite, date_inscription)"),
+        ]
+
         try:
             with self.get_cursor() as cursor:
                 for query in tables:
@@ -432,13 +470,22 @@ class DatabaseManager:
 
                 for table, col, col_def in expected_columns:
                     try:
-                        cursor.execute(f"SHOW COLUMNS FROM {table} LIKE %s", (col,))
+                        cursor.execute(f"SHOW COLUMNS FROM `{table}` LIKE %s", (col,))
                         if not cursor.fetchone():
-                            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+                            cursor.execute(f"ALTER TABLE `{table}` ADD COLUMN `{col}` {col_def}")
                             logger.info("Auto-migration : colonne ajoutée -> %s.%s", table, col)
                     except Error as e:
                         if getattr(e, "errno", None) != 1060:
                             logger.debug("Info colonne %s.%s : %s", table, col, e)
+
+                for table, idx_name, create_sql in expected_indexes:
+                    try:
+                        cursor.execute(f"SHOW INDEX FROM `{table}` WHERE Key_name = %s", (idx_name,))
+                        if not cursor.fetchone():
+                            cursor.execute(create_sql)
+                            logger.info("Index optimisé créé avec succès : %s sur `%s`", idx_name, table)
+                    except Exception as idx_err:
+                        logger.debug("Vérification index %s sur `%s` : %s", idx_name, table, idx_err)
 
                 try:
                     k_col, v_col = self._get_config_columns()
@@ -543,7 +590,7 @@ class DatabaseManager:
             return False
 
     def accept_proposed_price_and_assign(self, demande_id: int) -> Optional[Dict[str, Any]]:
-        """Valide le nouveau tarif, passe en '⏳ En attente' et assigne à l'initiateur de l'offre."""
+        """Valide le nouveau tarif, passe en '⏳ En attente' et assigne sans gap lock."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -578,15 +625,20 @@ class DatabaseManager:
 
                 cursor.execute(
                     """
-                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                    VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE
-                        admin_id = VALUES(admin_id),
-                        derniere_action = NOW(),
-                        statut_suivi = 'active'
+                    UPDATE demandes_suivi
+                    SET admin_id = %s, derniere_action = NOW(), statut_suivi = 'active'
+                    WHERE demande_id = %s
                     """,
-                    (int(demande_id), staff_id)
+                    (staff_id, int(demande_id))
                 )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                        VALUES (%s, %s, NOW(), NOW(), 'active')
+                        """,
+                        (int(demande_id), staff_id)
+                    )
 
                 dem["nouveau_montant"] = nouveau_prix
                 dem["staff_id"] = staff_id
@@ -607,7 +659,6 @@ class DatabaseManager:
         return self.set_config_value("remun_expiration_days", str(val))
 
     def get_expired_remun_demandes_for_abandon(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Extrait les demandes dont la proposition de rémunération n'a pas reçu de réponse sous X jours."""
         effective_days = days if days is not None else self.get_remun_expiration_days()
         try:
             with self.get_cursor() as cursor:
@@ -627,10 +678,7 @@ class DatabaseManager:
             logger.error("Erreur extraction demandes avec délai de rémunération expiré : %s", exc)
             return []
 
-    # ==================== COMPTEURS MENUS GESTION DES DEMANDES ====================
-
     def get_staff_demandes_counts(self, user_id: int) -> Dict[str, int]:
-        """Calcule les compteurs : disponibles (selon perms), suivies actives, et archivées."""
         counts = {"dispo": 0, "suivies": 0, "archives": 0}
         uid = int(user_id)
         is_own = self.is_owner(uid)
@@ -705,49 +753,46 @@ class DatabaseManager:
 
         return counts
 
-    # ==================== DÉTECTION DOUBLON SOCIAL ====================
-
     def check_social_duplicate(self, instagram: Optional[str] = None, snapchat: Optional[str] = None) -> Tuple[bool, Optional[str]]:
-        """Vérifie si un compte Instagram ou Snapchat existe déjà sur une demande active."""
         active_statuses = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours")
         placeholders = ", ".join(["%s"] * len(active_statuses))
 
         try:
             with self.get_cursor() as cursor:
                 if instagram:
-                    clean_insta = instagram.strip().lstrip("@").lower()
+                    clean_insta = instagram.strip().lstrip("@")
                     cursor.execute(
                         f"""
-                        SELECT id, request_number FROM demandes
-                        WHERE LOWER(REPLACE(instagram, '@', '')) = %s
+                        SELECT id, request_number, instagram FROM demandes
+                        WHERE instagram = %s
                           AND statut IN ({placeholders})
                         LIMIT 1
                         """,
                         (clean_insta, *active_statuses)
                     )
-                    if cursor.fetchone():
+                    row = cursor.fetchone()
+                    if row:
                         return True, f"@{clean_insta}"
 
                 if snapchat:
-                    clean_snap = snapchat.strip().lower()
+                    clean_snap = snapchat.strip()
                     cursor.execute(
                         f"""
-                        SELECT id, request_number FROM demandes
-                        WHERE LOWER(snapchat) = %s
+                        SELECT id, request_number, snapchat FROM demandes
+                        WHERE snapchat = %s
                           AND statut IN ({placeholders})
                         LIMIT 1
                         """,
                         (clean_snap, *active_statuses)
                     )
-                    if cursor.fetchone():
+                    row = cursor.fetchone()
+                    if row:
                         return True, clean_snap
 
             return False, None
         except Exception as exc:
             logger.error("Erreur vérification doublon réseau : %s", exc)
             return False, None
-
-    # ==================== GESTION DU CACHE EN MÉMOIRE ====================
 
     def _get_cached_value(self, key: str) -> Optional[Any]:
         now = time.time()
@@ -767,10 +812,7 @@ class DatabaseManager:
             self._cache.clear()
             self._cache_timestamp.clear()
 
-    # ==================== CONTRÔLE DES RÔLES ET DROITS ====================
-
     def is_owner(self, user_id: int) -> bool:
-        """Indique si l'utilisateur est le super-administrateur suprême."""
         try:
             uid = int(user_id)
         except (ValueError, TypeError):
@@ -796,7 +838,6 @@ class DatabaseManager:
             return False
 
     def is_admin(self, user_id: int) -> bool:
-        """Indique si l'utilisateur est administrateur (manager ou owner)."""
         try:
             uid = int(user_id)
         except (ValueError, TypeError):
@@ -821,7 +862,6 @@ class DatabaseManager:
             return False
 
     def is_staff(self, user_id: int) -> bool:
-        """Indique si l'utilisateur a accès au traitement des demandes (staff ou admin/owner)."""
         try:
             uid = int(user_id)
         except (ValueError, TypeError):
@@ -846,7 +886,6 @@ class DatabaseManager:
             return False
 
     def get_admin_privileges(self, user_id: int) -> Dict[str, bool]:
-        """Retourne les permissions granulaires d'un administrateur."""
         if self.is_owner(user_id):
             return {
                 "is_owner": True,
@@ -895,7 +934,6 @@ class DatabaseManager:
         }
 
     def update_admin_privilege(self, user_id: int, priv_key: str, value: bool) -> bool:
-        """Met à jour un privilège granulaire d'un administrateur."""
         allowed_keys = {
             "can_manage_staff", "can_manage_vips", "can_view_stats",
             "can_manage_delais", "can_view_archives", "can_monitor_staff", "is_vip"
@@ -905,7 +943,7 @@ class DatabaseManager:
 
         try:
             with self.transaction() as cursor:
-                cursor.execute(f"UPDATE admins SET {priv_key} = %s WHERE user_id = %s", (value, int(user_id)))
+                cursor.execute(f"UPDATE admins SET `{priv_key}` = %s WHERE user_id = %s", (value, int(user_id)))
             self.clear_cache(f"is_admin_{user_id}")
             self.clear_cache(f"vip_{user_id}")
             return True
@@ -914,7 +952,6 @@ class DatabaseManager:
             return False
 
     def get_monitoring_admins(self, action: Optional[str] = None) -> List[int]:
-        """Retourne les admins autorisés à surveiller le staff."""
         admins_eligibles = set()
         primary_owner = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
         if primary_owner:
@@ -949,7 +986,7 @@ class DatabaseManager:
             with self.get_cursor() as cursor:
                 for uid in admins_eligibles:
                     cursor.execute(
-                        f"SELECT {target_col} FROM admin_preferences WHERE user_id = %s",
+                        f"SELECT `{target_col}` FROM admin_preferences WHERE user_id = %s",
                         (uid,)
                     )
                     row = cursor.fetchone()
@@ -959,8 +996,6 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur filtrage préférences surveillance (%s) : %s", action, exc)
             return list(admins_eligibles)
-
-    # ==================== TABLE CONFIG DYNAMIQUE ====================
 
     def _get_config_columns(self) -> Tuple[str, str]:
         cached = self._get_cached_value("cfg_col_names")
@@ -1084,10 +1119,7 @@ class DatabaseManager:
         val = max(0, int(limit))
         return self.set_config_value("max_demandes_per_user", str(val))
 
-    # ==================== MATRICE COMBINÉE (ORIENTATION / RÉSEAUX) ====================
-
     def is_channel_combination_allowed(self, orientation: str, reseau: str) -> bool:
-        """Vérifie si une combinaison orientation + réseau est active."""
         ori = orientation.lower()
         res = "insta" if "insta" in reseau.lower() else "snap"
 
@@ -1103,7 +1135,6 @@ class DatabaseManager:
         return True
 
     def get_channel_combination_active_count(self, orientation: str, reseau: str) -> int:
-        """Compte les demandes en cours pour une combinaison précise."""
         active_statuses = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours")
         placeholders = ", ".join(["%s"] * len(active_statuses))
         res_col = "instagram" if "insta" in reseau.lower() else "snapchat"
@@ -1127,8 +1158,6 @@ class DatabaseManager:
             logger.error("Erreur comptage combinaison canal (%s, %s) : %s", orientation, reseau, exc)
             return 0
 
-    # ==================== RÉCUPÉRATION DES DEMANDES DISPONIBLES (ANTI-AUTO-PRISE) ====================
-
     def get_demandes_disponibles(
         self,
         staff_id: int,
@@ -1136,7 +1165,6 @@ class DatabaseManager:
         reseau_filter: Optional[str] = None,
         type_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Récupère les demandes disponibles sous le statut '📥 Reçue' en excluant celles créées par le staff lui-même."""
         query = """
             SELECT id, request_number, user_id, prenom, nom, age, localisation,
                    photo_id, instagram, snapchat, details, prioritaire, montant,
@@ -1179,10 +1207,7 @@ class DatabaseManager:
             logger.error("Erreur récupération demandes disponibles staff %s : %s", staff_id, exc)
             return []
 
-    # ==================== GESTION DE LA PÉRIODE D'ESSAI (TRIAL) ====================
-
     def is_staff_trial(self, user_id: int) -> bool:
-        """Indique si un membre du staff est actuellement en période d'essai."""
         cache_key = f"staff_trial_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
@@ -1200,7 +1225,6 @@ class DatabaseManager:
             return False
 
     def set_staff_trial(self, user_id: int, is_trial: bool) -> bool:
-        """Active ou désactive la période d'essai d'un membre du staff."""
         try:
             with self.transaction() as cursor:
                 cursor.execute("UPDATE staff SET is_trial = %s WHERE user_id = %s", (bool(is_trial), int(user_id)))
@@ -1213,7 +1237,6 @@ class DatabaseManager:
             return False
 
     def get_random_demande_for_trial(self, staff_id: int) -> Optional[Dict[str, Any]]:
-        """Tire une unique demande aléatoire disponible sous le statut '📥 Reçue' pour un opérateur à l'essai."""
         perms = self.get_staff_permissions(staff_id)
         p_ori = perms.get("perm_orientation", "all")
         p_res = perms.get("perm_reseaux", "all")
@@ -1258,10 +1281,7 @@ class DatabaseManager:
             logger.error("Erreur pioche demande aléatoire pour staff à l'essai %s : %s", staff_id, exc)
             return None
 
-    # ==================== MODES DE PAIEMENT DU STAFF ====================
-
     def get_staff_payment_methods(self, staff_id: int) -> Dict[str, bool]:
-        """Retourne les modes de paiement acceptés (table config pour l'owner, table staff pour les autres)."""
         uid = int(staff_id)
 
         if self.is_owner(uid):
@@ -1287,7 +1307,6 @@ class DatabaseManager:
         return {"accept_stars": True, "accept_direct": True}
 
     def toggle_staff_payment_method(self, staff_id: int, method: str) -> Tuple[bool, str]:
-        """Active/désactive un mode de paiement staff avec conservation d'au moins une méthode active."""
         if method not in ("accept_stars", "accept_direct"):
             return False, "Méthode de paiement invalide."
 
@@ -1314,7 +1333,7 @@ class DatabaseManager:
         try:
             with self.transaction() as cursor:
                 cursor.execute(
-                    f"UPDATE staff SET {method} = %s WHERE user_id = %s",
+                    f"UPDATE staff SET `{method}` = %s WHERE user_id = %s",
                     (new_val, uid)
                 )
             return True, "Mode de paiement mis à jour."
@@ -1322,15 +1341,11 @@ class DatabaseManager:
             logger.error("Erreur modification mode paiement staff %s : %s", uid, exc)
             return False, "Erreur technique."
 
-    # ==================== ADHÉSION OBLIGATOIRE (GROUPE) ====================
-
     def is_required_group_enabled(self) -> bool:
-        """Indique si le contrôle d'adhésion obligatoire est actif."""
         val = str(self.get_config_value("required_group_enabled", "false")).lower()
         return val in ("true", "1", "yes")
 
     def toggle_required_group_enabled(self) -> bool:
-        """Bascule l'activation de l'adhésion obligatoire."""
         new_val = not self.is_required_group_enabled()
         self.set_config_value("required_group_enabled", "true" if new_val else "false")
         return new_val
@@ -1351,20 +1366,13 @@ class DatabaseManager:
     def set_group_subscription_link(self, link: str) -> bool:
         return self.set_config_value("group_subscription_link", str(link).strip())
 
-    # ==================== CONTACT SUPPORT ====================
-
     def get_support_contact(self) -> str:
-        """Retourne le lien ou le @pseudo du support configuré (par défaut @ContactParaBot)."""
         return self.get_config_value("support_contact", "@ContactParaBot")
 
     def set_support_contact(self, contact: str) -> bool:
-        """Définit le contact support (URL ou @pseudo)."""
         return self.set_config_value("support_contact", str(contact).strip())
 
-    # ==================== GESTION DU STATUT VIP ASSIGNÉE ====================
-
     def accept_vip_assigned_demande(self, demande_id: int, staff_id: int) -> bool:
-        """Accepte une demande assignée VIP : la passe en '⏳ En attente' et l'inscrit dans les suivis."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -1377,24 +1385,29 @@ class DatabaseManager:
                     """,
                     (int(staff_id), int(demande_id))
                 )
+
                 cursor.execute(
                     """
-                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                    VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE
-                        admin_id = VALUES(admin_id),
-                        derniere_action = NOW(),
-                        statut_suivi = 'active'
+                    UPDATE demandes_suivi
+                    SET admin_id = %s, derniere_action = NOW(), statut_suivi = 'active'
+                    WHERE demande_id = %s
                     """,
-                    (int(demande_id), int(staff_id))
+                    (int(staff_id), int(demande_id))
                 )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                        VALUES (%s, %s, NOW(), NOW(), 'active')
+                        """,
+                        (int(demande_id), int(staff_id))
+                    )
             return True
         except Exception as exc:
             logger.error("Erreur acceptation demande assignée VIP #%s par staff %s : %s", demande_id, staff_id, exc)
             return False
 
     def decline_vip_assigned_demande(self, demande_id: int) -> bool:
-        """Décline une demande assignée VIP : retire l'assignation et la replace en '📥 Reçue' pour l'équipe."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -1413,10 +1426,7 @@ class DatabaseManager:
             logger.error("Erreur refus demande assignée VIP #%s : %s", demande_id, exc)
             return False
 
-    # ==================== PRÉFÉRENCES ASSIGNATION VIP ====================
-
     def get_user_vip_auto_assign(self, user_id: int) -> str:
-        """Retourne le mode d'assignation automatique du VIP ('prompt', 'none', ou str(staff_id))."""
         cache_key = f"vip_auto_assign_{user_id}"
         cached = self._get_cached_value(cache_key)
         if cached is not None:
@@ -1434,7 +1444,6 @@ class DatabaseManager:
             return "prompt"
 
     def set_user_vip_auto_assign(self, user_id: int, setting: str) -> bool:
-        """Enregistre le choix d'assignation automatique pour un client VIP."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -1447,10 +1456,7 @@ class DatabaseManager:
             logger.error("Erreur écriture vip_auto_assign (%s) pour %s : %s", setting, user_id, exc)
             return False
 
-    # ==================== SUIVI DU PAIEMENT DES DEMANDES ====================
-
     def set_demande_paiement_statut(self, demande_id: int, statut_paiement: str) -> bool:
-        """Définit l'état de paiement d'une demande ('non_requis', 'en_attente', 'paye')."""
         valid_statuts = ("non_requis", "en_attente", "paye")
         if statut_paiement not in valid_statuts:
             logger.error("Statut paiement invalide : %s", statut_paiement)
@@ -1474,7 +1480,6 @@ class DatabaseManager:
             return False
 
     def is_demande_paid(self, demande_id: int) -> bool:
-        """Vérifie si une demande est réglée ou ne requiert pas de paiement."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -1492,7 +1497,6 @@ class DatabaseManager:
             return False
 
     def update_demande_montant(self, demande_id: int, nouveau_montant: float) -> Tuple[bool, str]:
-        """Met à jour le montant d'une demande prioritaire."""
         try:
             nouveau_montant = round(float(nouveau_montant), 2)
             if nouveau_montant <= 0:
@@ -1535,7 +1539,6 @@ class DatabaseManager:
             return False, "Erreur technique lors de la mise à jour."
 
     def upgrade_demande_to_prioritaire(self, demande_id: int, user_id: int, montant: float) -> Tuple[bool, str]:
-        """Convertit une demande standard en prioritaire avec montant (compatible Client, Staff et Owner)."""
         try:
             val_montant = round(float(montant), 2)
             if val_montant <= 0:
@@ -1586,7 +1589,6 @@ class DatabaseManager:
             return False, "Erreur technique lors de la conversion."
 
     def get_paid_undelivered_demandes_for_reminder(self) -> List[Dict[str, Any]]:
-        """Extrait les demandes prioritaires réussies payées dont les contenus n'ont pas encore été livrés."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -1610,7 +1612,6 @@ class DatabaseManager:
             return []
 
     def mark_payment_delivery_reminder_sent(self, demande_id: int):
-        """Horodate le rappel quotidien de livraison post-paiement envoyé à l'opérateur."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -1619,8 +1620,6 @@ class DatabaseManager:
                 )
         except Exception as exc:
             logger.error("Erreur horodatage rappel livraison post-paiement demande %s : %s", demande_id, exc)
-
-    # ==================== RAPPEL DE PAIEMENT CLIENT ====================
 
     def get_payment_reminder_days(self) -> int:
         val = self.get_config_value("payment_reminder_days", "7")
@@ -1634,7 +1633,6 @@ class DatabaseManager:
         return self.set_config_value("payment_reminder_days", str(val))
 
     def get_unpaid_reussie_demandes_for_reminder(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Extrait les demandes prioritaires réussies en attente de paiement à relancer."""
         effective_days = days if days is not None else self.get_payment_reminder_days()
         try:
             with self.get_cursor() as cursor:
@@ -1667,10 +1665,7 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur horodatage last_payment_reminder demande %s : %s", demande_id, exc)
 
-    # ==================== GESTION DE L'ANNULATION ET DE LA SUPPRESSION ====================
-
     def archiver_demande_annulee(self, demande_id: int, raison: str, archive_par_user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Archive définitivement une demande sous le statut unique '❌ Annulée' avec son motif."""
         clean_raison = str(raison or "Non précisée").strip()
         try:
             with self.transaction() as cursor:
@@ -1727,7 +1722,6 @@ class DatabaseManager:
             return None
 
     def archiver_demande_supprimee(self, demande_id: int, raison: str = "Suppression du dossier") -> Optional[Dict[str, Any]]:
-        """Archive définitivement une demande supprimée sous le statut unique '🗑️ Supprimée'."""
         clean_raison = str(raison or "Non précisée").strip()
         try:
             with self.transaction() as cursor:
@@ -1783,8 +1777,6 @@ class DatabaseManager:
             logger.error("Erreur archivage suppression demande %s : %s", demande_id, exc)
             return None
 
-    # ==================== DÉLAIS PARAMÉTRABLES ====================
-
     def get_auto_archive_hours(self) -> int:
         val = self.get_config_value("auto_archive_hours", "72")
         try:
@@ -1816,8 +1808,6 @@ class DatabaseManager:
 
     def set_owner_alias(self, alias: str) -> bool:
         return self.set_config_value("owner_alias", alias)
-
-    # ==================== GESTION DE LA TABLE STAFF & PRÉFÉRENCES ====================
 
     def get_staff_alias(self, user_id: int) -> str:
         cache_key = f"alias_{user_id}"
@@ -1898,7 +1888,6 @@ class DatabaseManager:
     lock_admin_alias = lock_staff_alias
 
     def can_staff_edit_preferences(self, user_id: int) -> bool:
-        """Vérifie si un membre du staff est autorisé à modifier lui-même ses préférences de ciblage."""
         if self.is_owner(user_id) or self.is_admin(user_id):
             return True
         try:
@@ -1911,7 +1900,6 @@ class DatabaseManager:
             return True
 
     def toggle_staff_self_prefs(self, user_id: int) -> bool:
-        """Bascule le verrouillage de modification des préférences pour un membre du staff."""
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -1925,10 +1913,7 @@ class DatabaseManager:
             logger.error("Erreur bascule allow_self_prefs pour %s : %s", user_id, exc)
             return False
 
-    # ==================== MODE PAUSE MULTI-RÔLES (STAFF, ADMIN, OWNER) ====================
-
     def is_staff_paused(self, user_id: int) -> bool:
-        """Vérifie si un membre (Owner, Admin ou Staff) est actuellement en pause."""
         try:
             uid = int(user_id)
         except (ValueError, TypeError):
@@ -1971,7 +1956,6 @@ class DatabaseManager:
     is_admin_paused = is_staff_paused
 
     def set_staff_pause_status(self, user_id: int, paused: bool) -> bool:
-        """Active ou désactive le mode pause pour n'importe quel rôle."""
         try:
             uid = int(user_id)
         except (ValueError, TypeError):
@@ -2073,8 +2057,6 @@ class DatabaseManager:
             return []
 
     abandon_admin_demandes_for_pause = abandon_staff_demandes_for_pause
-
-    # ==================== STATUTS ET LIVRAISON ====================
 
     def toggle_demande_difficile(self, demande_id: int) -> bool:
         try:
@@ -2286,8 +2268,6 @@ class DatabaseManager:
 
         return clean_statut
 
-    # ==================== CONSULTATION DES ARCHIVES ====================
-
     def get_archives_count(
         self,
         user_id: Optional[int] = None,
@@ -2295,7 +2275,6 @@ class DatabaseManager:
         filter_status: Optional[str] = None,
         orientation: Optional[str] = None
     ) -> int:
-        """Retourne le nombre d'archives (client, staff assigné ou global)."""
         query = "SELECT COUNT(*) AS total FROM archives WHERE 1=1"
         params = []
 
@@ -2332,7 +2311,6 @@ class DatabaseManager:
         filter_status: Optional[str] = None,
         orientation: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """Récupère une archive paginée par date d'archivage descendante."""
         query = """
             SELECT id, original_id, user_id, admin_en_charge, orientation, prenom, nom, age, localisation,
                    photo_id, instagram, snapchat, details, prioritaire,
@@ -2371,7 +2349,6 @@ class DatabaseManager:
             return None
 
     def get_archive_by_id(self, archive_id: int) -> Optional[Dict[str, Any]]:
-        """Récupère une archive précise par son identifiant unique."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("SELECT * FROM archives WHERE id = %s", (int(archive_id),))
@@ -2380,10 +2357,7 @@ class DatabaseManager:
             logger.error("Erreur récupération archive id %s : %s", archive_id, exc)
             return None
 
-    # ==================== PERMISSIONS OPÉRATIONNELLES (STAFF) ====================
-
     def get_staff_permissions(self, user_id: int) -> Dict[str, Any]:
-        """Retourne les préférences de ciblage d'un membre (Owner, Admin ou Staff)."""
         uid = int(user_id)
         cache_key = f"perm_{uid}"
         cached = self._get_cached_value(cache_key)
@@ -2398,7 +2372,6 @@ class DatabaseManager:
             "is_trial": False
         }
 
-        # 1. Cas du Propriétaire (Owner) : sauvegardé dans la table config
         if self.is_owner(uid):
             default_perms["perm_reseaux"] = self.get_config_value("owner_perm_reseaux", "all") or "all"
             default_perms["perm_type"] = self.get_config_value("owner_perm_type", "all") or "all"
@@ -2408,7 +2381,6 @@ class DatabaseManager:
             self._set_cached_value(cache_key, default_perms)
             return default_perms
 
-        # 2. Cas du Staff ou des Admins (lecture table staff)
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -2441,14 +2413,12 @@ class DatabaseManager:
     get_admin_permissions = get_staff_permissions
 
     def update_staff_permission(self, user_id: int, perm_key: str, perm_value: Any) -> bool:
-        """Met à jour une permission de ciblage (Owner, Admin ou Staff) avec invalidation complète du cache."""
         allowed = {"perm_reseaux", "perm_type", "perm_orientation", "allow_self_prefs", "is_trial"}
         if perm_key not in allowed:
             return False
 
         uid = int(user_id)
 
-        # 1. Cas du Propriétaire : persisté dans la table config
         if self.is_owner(uid):
             ok = self.set_config_value(f"owner_{perm_key}", str(perm_value))
             self.clear_cache(f"perm_{uid}")
@@ -2456,17 +2426,16 @@ class DatabaseManager:
             self.clear_cache()
             return ok
 
-        # 2. Cas du Staff et des Admins : persisté dans la table staff avec fallback insert
         try:
             with self.transaction() as cursor:
-                cursor.execute(f"UPDATE staff SET {perm_key} = %s WHERE user_id = %s", (perm_value, uid))
+                cursor.execute(f"UPDATE staff SET `{perm_key}` = %s WHERE user_id = %s", (perm_value, uid))
                 if cursor.rowcount == 0:
                     alias = self.get_staff_alias(uid)
                     cursor.execute(
                         f"""
-                        INSERT INTO staff (user_id, alias, {perm_key})
+                        INSERT INTO staff (user_id, alias, `{perm_key}`)
                         VALUES (%s, %s, %s)
-                        ON DUPLICATE KEY UPDATE {perm_key} = VALUES({perm_key})
+                        ON DUPLICATE KEY UPDATE `{perm_key}` = VALUES(`{perm_key}`)
                         """,
                         (uid, alias, perm_value)
                     )
@@ -2479,8 +2448,6 @@ class DatabaseManager:
             return False
 
     update_admin_permission = update_staff_permission
-
-    # ==================== PRÉFÉRENCES NOTIFICATIONS & RAPPELS ====================
 
     def get_admin_preferences(self, user_id: int) -> Dict[str, Any]:
         default_prefs = {
@@ -2543,9 +2510,9 @@ class DatabaseManager:
             with self.transaction() as cursor:
                 cursor.execute(
                     f"""
-                    INSERT INTO admin_preferences (user_id, {key})
+                    INSERT INTO admin_preferences (user_id, `{key}`)
                     VALUES (%s, %s)
-                    ON DUPLICATE KEY UPDATE {key} = VALUES({key})
+                    ON DUPLICATE KEY UPDATE `{key}` = VALUES(`{key}`)
                     """,
                     (user_id, value)
                 )
@@ -2572,10 +2539,7 @@ class DatabaseManager:
             logger.error("Erreur lecture globale préférences : %s", exc)
             return []
 
-    # ==================== PRÉFÉRENCES NOTIFICATIONS CLIENTS ====================
-
     def get_user_preferences(self, user_id: int) -> Dict[str, Any]:
-        """Retourne les préférences de notification d'un demandeur (client/VIP)."""
         default_prefs = {
             "user_id": int(user_id),
             "notif_status_mode": "sound",
@@ -2609,7 +2573,6 @@ class DatabaseManager:
             return default_prefs
 
     def update_user_preference(self, user_id: int, key: str, value: str) -> bool:
-        """Met à jour un paramètre de notification client ('sound', 'silent', 'off')."""
         allowed_keys = {"notif_status_mode", "notif_prise_en_charge", "notif_messages"}
         if key not in allowed_keys or value not in ("sound", "silent", "off"):
             return False
@@ -2618,9 +2581,9 @@ class DatabaseManager:
             with self.transaction() as cursor:
                 cursor.execute(
                     f"""
-                    INSERT INTO user_preferences (user_id, {key})
+                    INSERT INTO user_preferences (user_id, `{key}`)
                     VALUES (%s, %s)
-                    ON DUPLICATE KEY UPDATE {key} = VALUES({key})
+                    ON DUPLICATE KEY UPDATE `{key}` = VALUES(`{key}`)
                     """,
                     (int(user_id), value)
                 )
@@ -2630,16 +2593,12 @@ class DatabaseManager:
             logger.error("Erreur mise à jour préférence client %s (%s=%s) : %s", user_id, key, value, exc)
             return False
 
-    # ==================== GESTION CLIENTS VIP ====================
-
     def is_user_vip(self, user_id: int) -> bool:
-        """Vérifie si l'utilisateur est VIP (Owner à vie, Admin avec droit VIP, ou Client abonné/à vie)."""
         try:
             uid = int(user_id)
         except (ValueError, TypeError):
             return False
 
-        # RÈGLE 1 : L'Owner est obligatoirement VIP
         if self.is_owner(uid):
             return True
 
@@ -2650,14 +2609,12 @@ class DatabaseManager:
 
         try:
             with self.get_cursor() as cursor:
-                # RÈGLE 2 : Si l'utilisateur est un Admin avec le privilège is_vip actif
                 cursor.execute("SELECT is_vip FROM admins WHERE user_id = %s", (uid,))
                 admin_row = cursor.fetchone()
                 if admin_row and bool(admin_row.get("is_vip")):
                     self._set_cached_value(cache_key, True)
                     return True
 
-                # RÈGLE 3 : Vérification table users standard
                 cursor.execute(
                     "SELECT is_vip, vip_until FROM users WHERE user_id = %s",
                     (uid,)
@@ -2722,7 +2679,6 @@ class DatabaseManager:
             return []
 
     def get_available_admins_for_selection(self) -> List[Dict[str, Any]]:
-        """Retourne les membres opérationnels disponibles pour la sélection de référent par les VIPs."""
         equipe = []
         try:
             owner_id = self.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
@@ -2749,10 +2705,7 @@ class DatabaseManager:
             return equipe
 
     def get_available_staff(self) -> List[Dict[str, Any]]:
-        """Alias de get_available_admins_for_selection pour la cohérence RBAC Staff."""
         return self.get_available_admins_for_selection()
-
-    # ==================== RAPPELS DEMANDES ====================
 
     def can_send_demande_reminder(self, demande_id: int) -> Tuple[bool, Optional[str]]:
         try:
@@ -2785,8 +2738,6 @@ class DatabaseManager:
                 cursor.execute("UPDATE demandes SET last_vip_reminder = NOW() WHERE id = %s", (int(demande_id),))
         except Exception as exc:
             logger.error("Erreur enregistrement rappel demande %s : %s", demande_id, exc)
-
-    # ==================== STATISTIQUES & PROFILS ====================
 
     def get_admin_stats(self, admin_id: int) -> Dict[str, Any]:
         try:
@@ -2981,8 +2932,6 @@ class DatabaseManager:
             logger.error("Erreur calcul statistiques utilisateur %s : %s", user_id, exc, exc_info=True)
             return stats
 
-    # ==================== UTILITAIRE / MÉTRIQUES ====================
-
     def get_database_size(self) -> Dict[str, Any]:
         try:
             db_name = getattr(self, "database_name", None) or os.getenv("DB_NAME", "paraworld$telegramDB")
@@ -3009,8 +2958,6 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur calcul taille base de données : %s", exc)
             return {"total_size_mb": 0.0, "tables": []}
-
-    # ==================== ZONE DE DANGER (PURGES) ====================
 
     def purge_table_data(self, target: str, owner_id: int) -> bool:
         """Purger les données d'une table ou de l'ensemble de la base en préservant le propriétaire."""

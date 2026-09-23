@@ -1,1 +1,12 @@
+# Environnement et secrets
 .env
+__pycache__/
+*.pyc
+
+# Logs locaux
+logs/
+*.log
+*.log.*
+
+# Base locale
+*.sqlite3

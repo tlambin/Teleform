@@ -113,16 +113,39 @@ def trigger_hourly_reminders():
             application = app_instance
 
         async def _run_all_maintenance_tasks():
-            # 1. Rappels habituels des administrateurs
-            await bot_main.check_and_send_admin_reminders(DummyContext())
-            # 2. Auto-archivage des demandes livrées depuis plus de 72h
-            await bot_main.check_and_auto_archive_demandes(DummyContext())
-            # 3. Rappel hebdomadaire (7j) pour les demandes terminées sans contenu envoyé
-            await bot_main.check_and_send_delivery_reminders(DummyContext())
+            ctx = DummyContext()
+            logger.info("🚀 Démarrage des tâches périodiques en arrière-plan...")
+            await asyncio.gather(
+                # 1. Rappels horaires des suivis staff
+                bot_main.check_and_send_admin_reminders(ctx),
+                # 2. Auto-archivage des demandes livrées depuis plus de X heures
+                bot_main.check_and_auto_archive_demandes(ctx),
+                # 3. Rappels pour les demandes terminées sans livraison
+                bot_main.check_and_send_delivery_reminders(ctx),
+                # 4. Rappels quotidiens pour dossiers payés non livrés
+                bot_main.check_and_send_paid_delivery_reminders(ctx),
+                # 5. Relances impayés pour les demandeurs
+                bot_main.check_and_send_unpaid_demande_reminders(ctx),
+                # 6. Clôture automatique si proposition de rémunération expirée
+                bot_main.check_and_auto_abandon_expired_remun_demandes(ctx),
+                return_exceptions=True
+            )
+            logger.info("🏁 Fin de l'exécution des tâches périodiques.")
 
+        # Lancement non bloquant dans l'Event Loop
         future = asyncio.run_coroutine_threadsafe(_run_all_maintenance_tasks(), loop)
-        future.result(timeout=45)
-        return jsonify(status="ok", message="Toutes les tâches cron ont été exécutées avec succès."), 200
+
+        def _log_cron_result(fut):
+            try:
+                fut.result()
+            except Exception as e:
+                logger.error("💥 Erreur d'exécution de la boucle cron : %s", e, exc_info=True)
+
+        future.add_done_callback(_log_cron_result)
+
+        # Réponse HTTP 200 immédiate à Cron-Job.org
+        return jsonify(status="ok", message="Tâches cron lancées en arrière-plan."), 200
+
     except Exception as exc:
-        logger.error("Erreur cron reminders : %s", exc, exc_info=True)
+        logger.error("Erreur lancement cron reminders : %s", exc, exc_info=True)
         return jsonify(status="error", message=str(exc)), 500

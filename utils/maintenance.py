@@ -1,5 +1,9 @@
-"""Module de maintenance quotidienne, nettoyage des fichiers temporaires et archivage SQL."""
+"""Module de maintenance quotidienne, nettoyage des fichiers temporaires et archivage SQL.
 
+Optimisé pour l'exécution asynchrone non-bloquante sous python-telegram-bot.
+"""
+
+import asyncio
 import logging
 import os
 import shutil
@@ -12,7 +16,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_LOG_FILE = os.path.join(BASE_DIR, "logs", "bot.log")
 
 
-def _truncate_file(file_path: str, keep_lines: int = 1000):
+def _truncate_file_sync(file_path: str, keep_lines: int = 1000):
     """Tronque un fichier en ne conservant que les dernières lignes (purement en Python)."""
     if not os.path.exists(file_path):
         return
@@ -26,8 +30,13 @@ def _truncate_file(file_path: str, keep_lines: int = 1000):
         logger.warning("Échec tronquage du fichier %s : %s", file_path, exc)
 
 
-def cleanup_temp_files():
-    """Purge les fichiers temporaires, tronque les logs et nettoie le cache bytecode."""
+async def _truncate_file(file_path: str, keep_lines: int = 1000):
+    """Version asynchrone non-bloquante du tronquage de fichier."""
+    await asyncio.to_thread(_truncate_file_sync, file_path, keep_lines)
+
+
+async def cleanup_temp_files():
+    """Purge les fichiers temporaires, tronque les logs et nettoie le cache bytecode sans bloquer l'Event Loop."""
     try:
         log_files = [
             LOCAL_LOG_FILE,
@@ -36,7 +45,7 @@ def cleanup_temp_files():
             "/tmp/maintenance_task.log"
         ]
         for log_path in log_files:
-            _truncate_file(log_path, keep_lines=1000)
+            await _truncate_file(log_path, keep_lines=1000)
 
         home_dir = os.path.expanduser("~")
         cleanup_commands = [
@@ -47,21 +56,25 @@ def cleanup_temp_files():
         ]
 
         for cmd in cleanup_commands:
-            subprocess.run(cmd, shell=True, capture_output=True)
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await proc.communicate()
 
-        logger.info("🧹 Nettoyage des fichiers temporaires terminé")
+        logger.info("🧹 Nettoyage des fichiers temporaires terminé (async)")
 
     except Exception as exc:
         logger.error("Erreur nettoyage fichiers temporaires : %s", exc)
 
 
-def archive_old_requests(db_manager):
+def _archive_old_requests_sync(db_manager):
     """Archive les demandes anciennes avec transaction atomique sécurisée et purge des suivis."""
     try:
         hours_setting = db_manager.get_auto_archive_hours() if hasattr(db_manager, "get_auto_archive_hours") else 72
 
         with db_manager.transaction() as cursor:
-            # 1. Sélection des demandes terminées avec contenu livré et délai dépassé OU abandonnées depuis plus de 7 jours
             cursor.execute(
                 """
                 SELECT id FROM demandes
@@ -109,19 +122,19 @@ def archive_old_requests(db_manager):
         logger.error("Erreur lors de l'archivage (rollback exécuté) : %s", exc, exc_info=True)
 
 
-def check_storage_usage() -> float:
-    """Retourne l'espace disque consommé dans le répertoire utilisateur en Mo."""
+async def archive_old_requests(db_manager):
+    """Version non-bloquante de l'archivage SQL."""
+    await asyncio.to_thread(_archive_old_requests_sync, db_manager)
+
+
+def _check_storage_usage_sync() -> float:
+    """Calcul synchrone d'espace disque consommé."""
     home = os.path.expanduser("~")
     try:
-        res = subprocess.run(["du", "-sk", home], capture_output=True, text=True)
+        res = subprocess.run(["du", "-sk", home], capture_output=True, text=True, timeout=5)
         if res.returncode == 0:
             kb_used = int(res.stdout.split()[0])
             mb_used = kb_used / 1024.0
-
-            if mb_used > 400.0:
-                logger.warning("⚠️ Espace disque critique : %.1f Mo / 512 Mo", mb_used)
-                cleanup_temp_files()
-
             return round(mb_used, 2)
     except Exception:
         pass
@@ -131,12 +144,44 @@ def check_storage_usage() -> float:
         mb_used = (usage.total - usage.free) / (1024 * 1024)
         return round(mb_used, 2)
     except Exception as exc:
-        logger.error("Erreur calcul espace disque : %s", exc)
+        logger.error("Erreur calcul espace disque synchrone : %s", exc)
         return 0.0
 
 
-def optimize_database(db_manager):
-    """Exécute OPTIMIZE TABLE sur les tables existantes et vide le cache mémoire."""
+async def check_storage_usage() -> float:
+    """Retourne l'espace disque consommé dans le répertoire utilisateur en Mo sans bloquer l'Event Loop."""
+    home = os.path.expanduser("~")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "du", "-sk", home,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate()
+
+        if proc.returncode == 0 and stdout:
+            kb_used = int(stdout.decode().split()[0])
+            mb_used = kb_used / 1024.0
+
+            if mb_used > 400.0:
+                logger.warning("⚠️ Espace disque critique : %.1f Mo / 512 Mo", mb_used)
+                await cleanup_temp_files()
+
+            return round(mb_used, 2)
+    except Exception:
+        pass
+
+    try:
+        usage = await asyncio.to_thread(shutil.disk_usage, home)
+        mb_used = (usage.total - usage.free) / (1024 * 1024)
+        return round(mb_used, 2)
+    except Exception as exc:
+        logger.error("Erreur calcul espace disque (async) : %s", exc)
+        return 0.0
+
+
+def _optimize_database_sync(db_manager):
+    """Exécute OPTIMIZE TABLE de façon synchrone."""
     try:
         tables = [
             "demandes", "demandes_suivi", "archives",
@@ -156,8 +201,13 @@ def optimize_database(db_manager):
         logger.error("Erreur routine optimisation base de données : %s", exc)
 
 
-def cleanup_database(db_manager):
-    """Purge les archives de plus de 3 mois et les comptes inactifs avec commit explicite."""
+async def optimize_database(db_manager):
+    """Version non-bloquante d'optimisation des tables MySQL."""
+    await asyncio.to_thread(_optimize_database_sync, db_manager)
+
+
+def _cleanup_database_sync(db_manager):
+    """Purge synchrone des archives obsolètes et utilisateurs orphelins."""
     try:
         with db_manager.transaction() as cursor:
             cursor.execute(
@@ -188,14 +238,18 @@ def cleanup_database(db_manager):
         logger.error("Erreur nettoyage base de données : %s", exc, exc_info=True)
 
 
-def get_system_stats(db_manager) -> Dict:
-    """Retourne les métriques techniques agrégées du système."""
-    stats = {}
-    try:
-        mb_used = check_storage_usage()
-        stats["storage_mb"] = mb_used
-        stats["storage_percent"] = (mb_used / 512.0) * 100.0
+async def cleanup_database(db_manager):
+    """Version non-bloquante du nettoyage SQL."""
+    await asyncio.to_thread(_cleanup_database_sync, db_manager)
 
+
+def _get_system_stats_sync(db_manager, mb_used: float) -> Dict:
+    """Compilation des métriques en thread dédié."""
+    stats = {
+        "storage_mb": mb_used,
+        "storage_percent": (mb_used / 512.0) * 100.0,
+    }
+    try:
         tmp_dir = "/tmp"
         if os.path.exists(tmp_dir):
             stats["tmp_files"] = len([f for f in os.listdir(tmp_dir) if os.path.isfile(os.path.join(tmp_dir, f))])
@@ -228,26 +282,34 @@ def get_system_stats(db_manager) -> Dict:
             stats["admins_count"] = row["count"] if row else 0
 
         return stats
-
     except Exception as exc:
         logger.error("Erreur compilation statistiques système : %s", exc)
         return stats
 
 
-def emergency_cleanup(db_manager=None):
+async def get_system_stats(db_manager) -> Dict:
+    """Retourne les métriques techniques agrégées sans bloquer la boucle événementielle."""
+    mb_used = await check_storage_usage()
+    return await asyncio.to_thread(_get_system_stats_sync, db_manager, mb_used)
+
+
+async def emergency_cleanup(db_manager=None):
     """Purge immédiate d'urgence en cas de saturation de l'espace disque."""
     try:
         logger.warning("🚨 Déclenchement du protocole de nettoyage d'urgence")
 
-        subprocess.run("rm -rf /tmp/*.log.* 2>/dev/null || true", shell=True)
-        subprocess.run("find /tmp -name '*.tmp' -delete 2>/dev/null || true", shell=True)
+        p1 = await asyncio.create_subprocess_shell("rm -rf /tmp/*.log.* 2>/dev/null || true")
+        await p1.communicate()
+
+        p2 = await asyncio.create_subprocess_shell("find /tmp -name '*.tmp' -delete 2>/dev/null || true")
+        await p2.communicate()
 
         log_files = [LOCAL_LOG_FILE, "/tmp/bot.log", "/tmp/bot_console.log", "/tmp/maintenance_task.log"]
         for lp in log_files:
-            _truncate_file(lp, keep_lines=100)
+            await _truncate_file(lp, keep_lines=100)
 
         if db_manager:
-            cleanup_database(db_manager)
+            await cleanup_database(db_manager)
 
         logger.info("🚨 Nettoyage d'urgence finalisé")
 
@@ -255,21 +317,21 @@ def emergency_cleanup(db_manager=None):
         logger.error("Erreur nettoyage d'urgence : %s", exc)
 
 
-def daily_maintenance(db_manager):
-    """Point d'entrée de la routine de maintenance quotidienne globale."""
-    logger.info("🔧 === Démarrage de la maintenance quotidienne ===")
+async def daily_maintenance(db_manager):
+    """Point d'entrée principal de la routine de maintenance quotidienne non-bloquante."""
+    logger.info("🔧 === Démarrage de la maintenance quotidienne (async) ===")
     try:
-        storage_mb = check_storage_usage()
+        storage_mb = await check_storage_usage()
 
         if storage_mb > 460.0:
-            emergency_cleanup(db_manager)
+            await emergency_cleanup(db_manager)
         else:
-            cleanup_temp_files()
-            archive_old_requests(db_manager)
-            cleanup_database(db_manager)
-            optimize_database(db_manager)
+            await cleanup_temp_files()
+            await archive_old_requests(db_manager)
+            await cleanup_database(db_manager)
+            await optimize_database(db_manager)
 
-        stats = get_system_stats(db_manager)
+        stats = await get_system_stats(db_manager)
         logger.info("📊 === Rapport de maintenance ===")
         logger.info("💾 Stockage : %.1f Mo (%.1f%%)", stats.get("storage_mb", 0.0), stats.get("storage_percent", 0.0))
         logger.info(
@@ -286,6 +348,13 @@ def daily_maintenance(db_manager):
         logger.error("Erreur générale routine maintenance : %s", exc, exc_info=True)
 
 
+# ==================== UTILITAIRES DE SECOURS SYNCHRONES (CLI / CRON) ====================
+
+def daily_maintenance_sync(db_manager):
+    """Exécute la routine de maintenance de manière synchrone (pour les cronjobs hors boucle événementielle)."""
+    asyncio.run(daily_maintenance(db_manager))
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     try:
@@ -294,6 +363,6 @@ if __name__ == "__main__":
 
         cfg = Config()
         db = DatabaseManager(cfg)
-        daily_maintenance(db)
+        daily_maintenance_sync(db)
     except Exception as main_exc:
         logger.critical("Impossible de démarrer la maintenance autonome : %s", main_exc)

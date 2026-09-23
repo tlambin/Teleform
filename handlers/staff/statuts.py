@@ -2,8 +2,10 @@
 
 import html
 import logging
+import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+from utils.validators import convert_utc_to_paris
 from .notifs import NotifsManager
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,7 @@ class StatutsManager:
             is_diff = bool(demande.get("is_difficile", False))
             reussie_sub = demande.get("reussie_substatus")
             statut_display = self.db_manager.format_statut_display(current_status, is_diff, reussie_sub)
+            statut_display_esc = html.escape(str(statut_display))
             is_photo_message = bool(query.message and query.message.photo)
 
             keyboard = []
@@ -93,7 +96,7 @@ class StatutsManager:
             text = (
                 "📌 <b>CHANGER LE STATUT</b> 📌\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"• {html.escape(statut_display)} •\n\n"
+                f"• {statut_display_esc} •\n\n"
                 "<i>Sélectionnez le nouveau statut :</i>"
             )
 
@@ -271,7 +274,7 @@ class StatutsManager:
             await query.answer("🚫 Un dossier en cours ne peut pas redevenir en attente.", show_alert=True)
             return
 
-        real_id = demande["id"]
+        real_id = html.escape(str(demande.get("request_number") or demande["id"]))
         old_diff = bool(demande.get("is_difficile", False))
         old_sub = demande.get("reussie_substatus")
         old_label = self.db_manager.format_statut_display(old_status, old_diff, old_sub)
@@ -279,20 +282,25 @@ class StatutsManager:
         # Enregistrement en base
         self.db_manager.update_demande_statut(demande_id, nouveau_statut, reussie_substatus=reussie_substatus)
 
-        # Maintien dans demandes_suivi en statut 'active'
+        # Maintien dans demandes_suivi sans gap locks
         with self.db_manager.transaction() as cursor:
             if nouveau_statut in ("⏳ En attente", "🔄 En cours", "✅ Réussie"):
                 cursor.execute(
                     """
-                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                    VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE
-                        admin_id = VALUES(admin_id),
-                        derniere_action = NOW(),
-                        statut_suivi = 'active'
+                    UPDATE demandes_suivi
+                    SET admin_id = %s, derniere_action = NOW(), statut_suivi = 'active'
+                    WHERE demande_id = %s
                     """,
-                    (demande_id, staff_id)
+                    (staff_id, demande_id)
                 )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                        VALUES (%s, %s, NOW(), NOW(), 'active')
+                        """,
+                        (demande_id, staff_id)
+                    )
 
         # ==================== DÉNOUEMENT PÉRIODE D'ESSAI (SUCCÈS) ====================
         if nouveau_statut == "✅ Réussie" and self.db_manager.is_staff_trial(staff_id):
@@ -318,7 +326,7 @@ class StatutsManager:
             context=context,
             user_id=demande["user_id"],
             demande_id=demande["id"],
-            request_number=real_id,
+            request_number=demande.get("request_number") or demande["id"],
             prenom_cible=demande.get("prenom"),
             old_status=old_label,
             new_status=nouveau_statut,
@@ -338,13 +346,13 @@ class StatutsManager:
 
             target_prenom = html.escape(str(demande.get("prenom") or "la cible"))
             staff_alias_esc = html.escape(str(staff_alias))
-            nouveau_statut_display = self.db_manager.format_statut_display(nouveau_statut, new_diff, reussie_substatus)
+            nouveau_statut_display = html.escape(str(self.db_manager.format_statut_display(nouveau_statut, new_diff, reussie_substatus)))
 
             alert_text = (
                 f"👀 <b>SURVEILLANCE STAFF — CHANGEMENT DE STATUT</b>\n\n"
                 f"• <b>Opérateur :</b> {staff_alias_esc} (<code>{staff_id}</code>)\n"
                 f"• <b>Dossier :</b> #{real_id} ({target_prenom})\n"
-                f"• <b>Nouveau statut :</b> <code>{html.escape(nouveau_statut_display)}</code>"
+                f"• <b>Nouveau statut :</b> <code>{nouveau_statut_display}</code>"
             )
 
             if bool(demande_fresh.get("prioritaire")):
@@ -375,7 +383,7 @@ class StatutsManager:
         else:
             await self._update_existing_text_message(query, demande_fresh)
 
-        req_num = html.escape(str(demande_fresh.get("id")))
+        req_num = html.escape(str(demande_fresh.get("request_number") or demande_fresh.get("id")))
         prenom_esc = html.escape(str(demande_fresh.get("prenom") or "la cible"))
         has_delivered = bool(demande_fresh.get("has_delivered_content", False))
         is_prio = bool(demande_fresh.get("prioritaire", False))
@@ -442,7 +450,6 @@ class StatutsManager:
 
     async def _archive_demande_now(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         """Archive immédiatement une demande terminée ayant livré son contenu."""
-        staff_id = query.from_user.id
         with self.db_manager.get_cursor() as cursor:
             cursor.execute("SELECT * FROM demandes WHERE id = %s", (demande_id,))
             demande = cursor.fetchone()
@@ -457,7 +464,7 @@ class StatutsManager:
 
         success = self.db_manager.archiver_demande_reussie(demande_id)
         if success:
-            real_id = demande["id"]
+            real_id = html.escape(str(demande.get("request_number") or demande["id"]))
             await query.answer(f"✅ Demande #{real_id} archivée avec succès !")
             back_kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")
@@ -482,10 +489,10 @@ class StatutsManager:
         context.user_data["waiting_abandon_reason"] = {"demande_id": demande_id}
 
         with self.db_manager.get_cursor() as cursor:
-            cursor.execute("SELECT id FROM demandes WHERE id = %s", (demande_id,))
+            cursor.execute("SELECT id, request_number FROM demandes WHERE id = %s", (demande_id,))
             row = cursor.fetchone()
 
-        real_id = row["id"] if row else demande_id
+        real_id = html.escape(str(row.get("request_number") or row["id"])) if row else str(demande_id)
         prompt_text = (
             f"⚠️ <b>Abandon de la demande #{real_id}</b>\n\n"
             "Veuillez taper au clavier la <b>raison de l'abandon</b>.\n\n"
@@ -539,10 +546,10 @@ class StatutsManager:
 
                 if prev_alias and prev_raison:
                     nouvel_alias_str = f"{prev_alias}, {staff_alias}"
-                    nouvelle_raison_str = f"{prev_raison}\n• <b>{staff_alias_esc} :</b> « <i>{raison_esc}</i> »"
+                    nouvelle_raison_str = f"{prev_raison}\n• {staff_alias_esc} : « {raison_esc} »"
                 else:
                     nouvel_alias_str = staff_alias
-                    nouvelle_raison_str = f"• <b>{staff_alias_esc} :</b> « <i>{raison_esc}</i> »"
+                    nouvelle_raison_str = f"• {staff_alias_esc} : « {raison_esc} »"
 
                 cursor.execute(
                     """
@@ -561,7 +568,7 @@ class StatutsManager:
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (demande_id,))
 
             user_id_demande = demande["user_id"]
-            real_id = demande["id"]
+            real_id = html.escape(str(demande.get("request_number") or demande["id"]))
 
             abandon_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Remettre en disponible", callback_data=f"reprendre_demande_{demande_id}")],
@@ -671,20 +678,17 @@ class StatutsManager:
 
     async def _update_existing_text_message(self, query, demande: dict):
         """Actualise le corps du message texte après transition d'état avec liens sociaux cliquables."""
-        from utils.validators import convert_utc_to_paris
-        import re
-
-        real_id = demande["id"]
+        real_id = html.escape(str(demande.get("request_number") or demande["id"]))
         is_prio = bool(demande.get("prioritaire"))
         titre = f"💎  <b>Demande Prioritaire #{real_id}</b>" if is_prio else f"📝  <b>Demande Standard #{real_id}</b>"
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
-        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
+        age_str = f"  •  {html.escape(str(demande['age']))} ans" if demande.get("age") is not None else ""
 
         ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
-        ori_label = ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée")
+        ori_label = html.escape(ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée"))
         loc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
 
         lines = [
@@ -723,7 +727,7 @@ class StatutsManager:
             demande.get("reussie_substatus")
         )
         lines.append("\n───────  <b>STATUT</b>  ──────")
-        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
+        lines.append(f" • <b>{html.escape(str(statut_label))}</b> • ")
 
         def fmt_dt(val):
             if not val:
@@ -735,7 +739,7 @@ class StatutsManager:
 
         dt_mod = demande.get("date_modification")
         if dt_mod:
-            lines.append(f" <i>{fmt_dt(dt_mod)}</i>")
+            lines.append(f" <i>{html.escape(fmt_dt(dt_mod))}</i>")
 
         if is_prio:
             p_statut = demande.get("paiement_statut", "non_requis")
@@ -751,7 +755,7 @@ class StatutsManager:
 
         lines.append("\n───────  <b>INFOS</b>  ───────")
         dt_crea = demande.get("date_creation")
-        lines.append(f"<b>Déposé le :</b>  {fmt_dt(dt_crea)}")
+        lines.append(f"<b>Déposé le :</b>  {html.escape(fmt_dt(dt_crea))}")
 
         demandeur = f"@{html.escape(demande['username'])}" if demande.get("username") else (
             html.escape(str(demande.get("user_first_name") or f"User {demande['user_id']}"))
@@ -765,7 +769,7 @@ class StatutsManager:
             clean_r = re.sub(r"<[^>]+>", "", str(raw_reason or "Non précisée")).strip()
             lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
             lines.append("❌ Abandonné")
-            lines.append(f"{alias_str} le {fmt_dt(demande.get('date_modification'))}")
+            lines.append(f"{alias_str} le {html.escape(fmt_dt(demande.get('date_modification')))}")
             lines.append(f"<b>Raison :</b> {html.escape(clean_r)}")
 
         await query.edit_message_text(
@@ -777,20 +781,17 @@ class StatutsManager:
 
     async def _update_photo_caption(self, query, demande: dict):
         """Actualise la légende de l'image après transition d'état avec liens sociaux cliquables."""
-        from utils.validators import convert_utc_to_paris
-        import re
-
-        real_id = demande["id"]
+        real_id = html.escape(str(demande.get("request_number") or demande["id"]))
         is_prio = bool(demande.get("prioritaire"))
         titre = f"💎  <b>Demande Prioritaire #{real_id}</b>" if is_prio else f"📝  <b>Demande Standard #{real_id}</b>"
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
-        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
+        age_str = f"  •  {html.escape(str(demande['age']))} ans" if demande.get("age") is not None else ""
 
         ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
-        ori_label = ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée")
+        ori_label = html.escape(ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée"))
         loc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
 
         lines = [
@@ -829,7 +830,7 @@ class StatutsManager:
             demande.get("reussie_substatus")
         )
         lines.append("\n───────  <b>STATUT</b>  ──────")
-        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
+        lines.append(f" • <b>{html.escape(str(statut_label))}</b> • ")
 
         def fmt_dt(val):
             if not val:
@@ -841,7 +842,7 @@ class StatutsManager:
 
         dt_mod = demande.get("date_modification")
         if dt_mod:
-            lines.append(f" <i>{fmt_dt(dt_mod)}</i>")
+            lines.append(f" <i>{html.escape(fmt_dt(dt_mod))}</i>")
 
         if is_prio:
             p_statut = demande.get("paiement_statut", "non_requis")
@@ -857,7 +858,7 @@ class StatutsManager:
 
         lines.append("\n───────  <b>INFOS</b>  ───────")
         dt_crea = demande.get("date_creation")
-        lines.append(f"<b>Déposé le :</b>  {fmt_dt(dt_crea)}")
+        lines.append(f"<b>Déposé le :</b>  {html.escape(fmt_dt(dt_crea))}")
 
         demandeur = f"@{html.escape(demande['username'])}" if demande.get("username") else (
             html.escape(str(demande.get("user_first_name") or f"User {demande['user_id']}"))
@@ -871,7 +872,7 @@ class StatutsManager:
             clean_r = re.sub(r"<[^>]+>", "", str(raw_reason or "Non précisée")).strip()
             lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
             lines.append("❌ Abandonné")
-            lines.append(f"{alias_str} le {fmt_dt(demande.get('date_modification'))}")
+            lines.append(f"{alias_str} le {html.escape(fmt_dt(demande.get('date_modification')))}")
             lines.append(f"<b>Raison :</b> {html.escape(clean_r)}")
 
         await query.edit_message_caption(

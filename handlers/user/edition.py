@@ -23,10 +23,22 @@ class EditionManager:
         "montant": "Tarif de la prestation",
     }
 
+    # Requêtes SQL entièrement statiques et précompilées (aucune interpolation de variable pour la colonne)
+    _UPDATE_QUERIES = {
+        "prenom": "UPDATE demandes SET `prenom` = %s, date_modification = NOW() WHERE id = %s",
+        "nom": "UPDATE demandes SET `nom` = %s, date_modification = NOW() WHERE id = %s",
+        "age": "UPDATE demandes SET `age` = %s, date_modification = NOW() WHERE id = %s",
+        "localisation": "UPDATE demandes SET `localisation` = %s, date_modification = NOW() WHERE id = %s",
+        "instagram": "UPDATE demandes SET `instagram` = %s, date_modification = NOW() WHERE id = %s",
+        "snapchat": "UPDATE demandes SET `snapchat` = %s, date_modification = NOW() WHERE id = %s",
+        "details": "UPDATE demandes SET `details` = %s, date_modification = NOW() WHERE id = %s",
+        "montant": "UPDATE demandes SET `montant` = %s, date_modification = NOW() WHERE id = %s",
+    }
+
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("EditionManager initialisé avec support du prix plancher prioritaire")
+        logger.info("EditionManager initialisé avec support du prix plancher prioritaire et requêtes précompilées")
 
     async def handle_modify_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Affiche le menu de sélection du champ à modifier."""
@@ -328,14 +340,15 @@ class EditionManager:
             return None
 
     def _update_field_in_database(self, demande_id: int, field_name: str, value) -> bool:
-        """Met à jour un champ autorisé en base avec commit transactionnel."""
-        if field_name not in self.ALLOWED_FIELDS:
+        """Met à jour un champ autorisé en base à l'aide d'une requête statique précompilée."""
+        sql_query = self._UPDATE_QUERIES.get(field_name)
+        if not sql_query:
+            logger.warning("Tentative de mise à jour sur un champ non autorisé : '%s'", field_name)
             return False
 
-        query = f"UPDATE demandes SET `{field_name}` = %s, date_modification = NOW() WHERE id = %s"
         try:
             with self.db_manager.transaction() as cursor:
-                cursor.execute(query, (value, int(demande_id)))
+                cursor.execute(sql_query, (value, int(demande_id)))
                 return cursor.rowcount > 0
         except Exception as exc:
             logger.error("Erreur mise à jour SQL (%s) sur demande %s : %s", field_name, demande_id, exc)

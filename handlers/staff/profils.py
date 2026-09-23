@@ -150,7 +150,7 @@ class ProfilsManager:
             f"🦈 <b>Fiche Piégeur : {alias_esc}</b>",
             f"🆔 ID Telegram : <code>{admin_id}</code>",
             f"📅 Dans l'équipe : <b>{html.escape(date_str)}</b>",
-            f"🛡️ Permissions : <i>{html.escape(res_label)} | {html.escape(typ_label)}</i>\n",
+            f"🛡️ Permissions : <i>{html.escape(str(res_label))} | {html.escape(str(typ_label))}</i>\n",
             "━━━━━━━━━━━━━━━━━━━━━━",
             "📊 <b>PERFORMANCE OPÉRATIONNELLE</b>\n",
             f"⏳ <b>En cours de traitement :</b> <code>{stats.get('en_cours', 0)}</code>",
@@ -319,15 +319,15 @@ class ProfilsManager:
             text_lines.append("<i>Aucun dossier dans cette catégorie.</i>")
         else:
             for item in items:
-                req_num = item.get("request_number") or item.get("original_id") or item["id"]
+                req_num = html.escape(str(item.get("request_number") or item.get("original_id") or item["id"]))
                 prenom = html.escape(str(item.get("prenom") or "Inconnu"))
                 nom = html.escape(str(item.get("nom") or ""))
                 prio_tag = "💎 " if item.get("prioritaire") else ""
-                statut_display = self.db_manager.format_statut_display(
+                statut_display = html.escape(str(self.db_manager.format_statut_display(
                     item.get("statut", ""),
                     item.get("is_difficile", False),
                     item.get("reussie_substatus")
-                )
+                )))
 
                 text_lines.append(f"• #{req_num} — {prio_tag}<b>{prenom} {nom}</b> : <code>{statut_display}</code>")
 
@@ -489,7 +489,7 @@ class ProfilsManager:
         role_str = "Administrateur (Supervision totale)" if is_admin else "Opérateur (Staff)"
         text = (
             f"📋 <b>Demandes de l'utilisateur</b>\n"
-            f"Votre rôle : <i>{role_str}</i>\n\n"
+            f"Votre rôle : <i>{html.escape(role_str)}</i>\n\n"
             "Sélectionnez la vue souhaitée :"
         )
 
@@ -585,15 +585,15 @@ class ProfilsManager:
             text_lines.append("<i>Aucun dossier trouvé dans cette sélection.</i>")
         else:
             for item in items:
-                req_num = item.get("request_number") or item.get("original_id") or item["id"]
+                req_num = html.escape(str(item.get("request_number") or item.get("original_id") or item["id"]))
                 prenom = html.escape(str(item.get("prenom") or "Inconnu"))
                 nom = html.escape(str(item.get("nom") or ""))
                 prio_tag = "💎 " if item.get("prioritaire") else ""
-                statut_display = self.db_manager.format_statut_display(
+                statut_display = html.escape(str(self.db_manager.format_statut_display(
                     item.get("statut", ""),
                     item.get("is_difficile", False),
                     item.get("reussie_substatus")
-                )
+                )))
 
                 assign_info = ""
                 if is_admin and item.get("admin_en_charge"):
@@ -634,10 +634,10 @@ class ProfilsManager:
             await query.answer("❌ Archive introuvable.", show_alert=True)
             return
 
-        req_num = archive.get("original_id", archive["id"])
+        req_num = html.escape(str(archive.get("original_id", archive["id"])))
         prenom = html.escape(str(archive.get("prenom") or "Non précisé"))
         nom = html.escape(str(archive.get("nom") or ""))
-        age = str(archive.get("age") or "Non précisé")
+        age = html.escape(str(archive.get("age") or "Non précisé"))
         loc = html.escape(str(archive.get("localisation") or "Non précisée"))
         insta = f"@{html.escape(archive['instagram'].lstrip('@'))}" if archive.get("instagram") else "Aucun"
         snap = html.escape(str(archive.get("snapchat") or "Aucun"))
@@ -649,11 +649,11 @@ class ProfilsManager:
         admin_id = archive.get("admin_en_charge")
         admin_alias = self.db_manager.get_staff_alias(admin_id) if admin_id else "Aucun"
 
-        statut_display = self.db_manager.format_statut_display(
+        statut_display = html.escape(str(self.db_manager.format_statut_display(
             archive.get("statut", ""),
             archive.get("is_difficile", False),
             archive.get("reussie_substatus")
-        )
+        )))
         type_str = "💎 Prioritaire (Payante)" if archive.get("prioritaire") else "Standard (Gratuite)"
 
         text = (
@@ -662,10 +662,10 @@ class ProfilsManager:
             f"• <b>Localisation :</b> {loc}\n"
             f"• <b>Instagram :</b> {insta}\n"
             f"• <b>Snapchat :</b> {snap}\n"
-            f"• <b>Type de demande :</b> {type_str}\n"
+            f"• <b>Type de demande :</b> {html.escape(type_str)}\n"
             f"• <b>Statut final :</b> <code>{statut_display}</code>\n"
             f"• <b>Référent en charge :</b> {html.escape(str(admin_alias))}\n"
-            f"• <b>Archivé le :</b> {date_arch_str}\n\n"
+            f"• <b>Archivé le :</b> {html.escape(date_arch_str)}\n\n"
             f"📝 <b>Détails / Notes :</b>\n« {details} »"
         )
 

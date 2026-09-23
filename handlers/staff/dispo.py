@@ -340,7 +340,7 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=page)
 
     async def assign_demande_to_admin(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
-        """Prend en charge la demande."""
+        """Prend en charge la demande avec verrouillage atomique sans gap lock (UPDATE puis INSERT)."""
         query = update.callback_query
         staff_id = update.effective_user.id
 
@@ -402,17 +402,23 @@ class DispoManager:
                     (nouveau_statut, staff_id, demande_id)
                 )
 
+                # Pattern anti-deadlock : UPDATE puis INSERT si la ligne de suivi n'existait pas encore
                 cursor.execute(
                     """
-                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                    VALUES (%s, %s, NOW(), NOW(), 'active')
-                    ON DUPLICATE KEY UPDATE 
-                        admin_id = VALUES(admin_id),
-                        derniere_action = NOW(),
-                        statut_suivi = 'active'
+                    UPDATE demandes_suivi
+                    SET admin_id = %s, derniere_action = NOW(), statut_suivi = 'active'
+                    WHERE demande_id = %s
                     """,
-                    (demande_id, staff_id)
+                    (staff_id, demande_id)
                 )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                        VALUES (%s, %s, NOW(), NOW(), 'active')
+                        """,
+                        (demande_id, staff_id)
+                    )
 
             staff_alias = self.db_manager.get_staff_alias(staff_id)
             real_id = demande["id"]

@@ -233,16 +233,20 @@ class DemandeManager:
         num_client = total_pages - current_page
 
         is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{num_client} ({current_page + 1}/{total_pages})</b>" if is_prio else f"📝  <b>Demande Standard #{num_client} ({current_page + 1}/{total_pages})</b>"
+        titre = (
+            f"💎  <b>Demande Prioritaire #{num_client} ({current_page + 1}/{total_pages})</b>"
+            if is_prio
+            else f"📝  <b>Demande Standard #{num_client} ({current_page + 1}/{total_pages})</b>"
+        )
 
         prenom_esc = html.escape(str(demande.get("prenom") or ""))
         nom_esc = html.escape(str(demande.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
-        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
+        age_str = f"  •  {html.escape(str(demande['age']))} ans" if demande.get("age") is not None else ""
 
         ori_raw = str(demande.get("orientation") or "").strip().lower()
         ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
-        ori_label = ori_map.get(ori_raw, "Non précisée")
+        ori_label = html.escape(ori_map.get(ori_raw, "Non précisée"))
         loc = html.escape(str(demande.get("localisation") or "Lieu non précisé").strip())
 
         lines = [
@@ -276,17 +280,17 @@ class DemandeManager:
             lines.extend(reseaux)
 
         # Bloc STATUT
-        statut_label = self.db_manager.format_statut_display(
+        statut_label = html.escape(str(self.db_manager.format_statut_display(
             demande.get("statut", "📥 Reçue"),
             demande.get("is_difficile", False),
             demande.get("reussie_substatus")
-        )
+        )))
         lines.append("\n───────  <b>STATUT</b>  ──────")
-        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
+        lines.append(f" • <b>{statut_label}</b> • ")
 
         dt_mod = demande.get("date_modification")
         if dt_mod:
-            lines.append(f" <i>{format_datetime_fr(dt_mod)}</i>")
+            lines.append(f" <i>{html.escape(format_datetime_fr(dt_mod))}</i>")
 
         if is_prio:
             p_statut = demande.get("paiement_statut", "non_requis")
@@ -302,12 +306,12 @@ class DemandeManager:
             lines.append(f"\n<b>Géré par :</b> <b>{alias}</b>")
             dt_suivi = demande.get("date_modification")
             if dt_suivi:
-                lines.append(f"<b>Depuis le :</b> <i>{format_datetime_fr(dt_suivi)}</i>")
+                lines.append(f"<b>Depuis le :</b> <i>{html.escape(format_datetime_fr(dt_suivi))}</i>")
 
         # Bloc INFOS
-        lines.append("\n───────  <b>INFOS</b>  ───────")
         dt_crea = demande.get("date_creation")
-        lines.append(f"<b>Déposé le :</b>  {format_datetime_fr(dt_crea)}")
+        lines.append("\n───────  <b>INFOS</b>  ───────")
+        lines.append(f"<b>Déposé le :</b>  {html.escape(format_datetime_fr(dt_crea))}")
 
         # Bloc HISTORIQUE (si abandon préalable)
         ancien_alias = demande.get("ancien_admin_alias")
@@ -316,7 +320,7 @@ class DemandeManager:
             alias_str = html.escape(str(ancien_alias or "Opérateur"))
             reason_str = clean_reason_text(raw_reason)
             dt_abandon = demande.get("date_modification")
-            date_abandon_str = format_datetime_fr(dt_abandon) if dt_abandon else "Date inconnue"
+            date_abandon_str = html.escape(format_datetime_fr(dt_abandon)) if dt_abandon else "Date inconnue"
 
             lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
             lines.append("❌ Abandonné")
@@ -483,10 +487,14 @@ class DemandeManager:
         nom_esc = html.escape(str(item.get("nom") or ""))
         nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
         loc_esc = html.escape(str(item.get("localisation") or "Non précisée"))
-        age_str = f"  •  {item['age']} ans" if item.get("age") is not None else ""
+        age_str = f"  •  {html.escape(str(item['age']))} ans" if item.get("age") is not None else ""
 
         is_prio = bool(item.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{num_archive_client} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{num_archive_client} ({page + 1}/{total})</b>"
+        titre = (
+            f"💎  <b>Demande Prioritaire #{num_archive_client} ({page + 1}/{total})</b>"
+            if is_prio
+            else f"📝  <b>Demande Standard #{num_archive_client} ({page + 1}/{total})</b>"
+        )
 
         lines = [
             titre,
@@ -525,12 +533,12 @@ class DemandeManager:
         lines.append("\n───────  <b>STATUT</b>  ──────")
         lines.append(f" • <b>{statut_label}</b> • ")
         if dt_arch:
-            lines.append(f" <i>{format_datetime_fr(dt_arch)}</i>")
+            lines.append(f" <i>{html.escape(format_datetime_fr(dt_arch))}</i>")
 
         # Bloc INFOS
         dt_crea = item.get("date_creation")
         lines.append("\n───────  <b>INFOS</b>  ───────")
-        lines.append(f"<b>Déposé le :</b>  {format_datetime_fr(dt_crea)}")
+        lines.append(f"<b>Déposé le :</b>  {html.escape(format_datetime_fr(dt_crea))}")
 
         # Bloc HISTORIQUE avec différenciation '🗑️ Supprimée', '❌ Abandonnée' et '❌ Annulée'
         statut_raw = str(item.get("statut") or "").lower()
@@ -540,7 +548,7 @@ class DemandeManager:
         lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
         if "supprim" in statut_raw:
             dt_ev = item.get("date_archivage") or item.get("date_modification")
-            date_ev_str = format_datetime_fr(dt_ev) if dt_ev else "Date inconnue"
+            date_ev_str = html.escape(format_datetime_fr(dt_ev)) if dt_ev else "Date inconnue"
             raw_reason = item.get("raison_abandon") or item.get("details")
             raison = clean_reason_text(raw_reason)
 
@@ -550,7 +558,7 @@ class DemandeManager:
 
         elif "abandon" in statut_raw or "annul" in statut_raw:
             dt_ev = item.get("date_archivage") or item.get("date_modification")
-            date_ev_str = format_datetime_fr(dt_ev) if dt_ev else "Date inconnue"
+            date_ev_str = html.escape(format_datetime_fr(dt_ev)) if dt_ev else "Date inconnue"
             raw_reason = item.get("raison_abandon") or item.get("details")
             raison = clean_reason_text(raw_reason)
 
@@ -562,7 +570,7 @@ class DemandeManager:
             montant = float(item.get("montant") or 0.0)
             montant_str = f" ({montant:.2f} €)" if montant > 0 else ""
             dt_ev = item.get("date_livraison") or item.get("date_archivage") or item.get("date_modification")
-            date_ev_str = format_datetime_fr(dt_ev) if dt_ev else "Date inconnue"
+            date_ev_str = html.escape(format_datetime_fr(dt_ev)) if dt_ev else "Date inconnue"
 
             lines.append(f"✅ Réussie{montant_str}")
             lines.append(f"{alias_admin} le {date_ev_str}")
