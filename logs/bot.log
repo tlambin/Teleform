@@ -4500,3 +4500,582 @@ TypeError: float() argument must be a string or a real number, not 'coroutine'
 2026-09-24 03:01:34,803 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
 2026-09-24 03:01:34,945 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
 2026-09-24 03:01:34,947 - webhook_app - INFO - ✅ Update 816745899 traitée avec succès.
+2026-09-24 03:08:50,702 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-24 03:08:51,647 - webhook_app - INFO - ⚡ Initialisation post-fork du Bot et de l'Event Loop (PID: 2)
+2026-09-24 03:08:51,651 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-24 03:08:52,192 - database - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base : paraworld$telegramDB) [PID: 2]
+2026-09-24 03:08:52,194 - database - INFO - DatabaseManager initialisé avec pool de 2 connexions.
+2026-09-24 03:08:52,775 - database - INFO - Vérification et création des tables terminées avec succès.
+2026-09-24 03:08:52,787 - config - INFO - Cache rôles chargé : 2 owners, 2 admins (managers) et 0 staff (opérateurs)
+2026-09-24 03:08:52,799 - handlers.user.compte - INFO - CompteManager initialisé avec support réglages VIP
+2026-09-24 03:08:52,799 - handlers.user.navigation - INFO - NavigationManager initialisé avec support Orientation & Staff
+2026-09-24 03:08:52,800 - handlers.user.formulaire - INFO - FormulaireManager initialisé avec support VIP Assignée & Auto-Assign
+2026-09-24 03:08:52,800 - handlers.user.demande - INFO - DemandeManager initialisé avec charte graphique unifiée et support RBAC
+2026-09-24 03:08:52,800 - handlers.user.edition - INFO - EditionManager initialisé avec support du prix plancher prioritaire et requêtes précompilées
+2026-09-24 03:08:52,801 - handlers.staff.suivi - INFO - SuiviManager initialisé avec charte graphique unifiée, confirmation de paiement et surveillance
+2026-09-24 03:08:52,801 - handlers.staff.notifs - INFO - NotifsManager initialisé avec support Staff/Admin, Surveillance & Paiement Prio
+2026-09-24 03:08:52,802 - handlers.staff.statuts - INFO - StatutsManager initialisé avec support Staff/Admin, Surveillance et Dénouement Période d'essai
+2026-09-24 03:08:52,802 - handlers.staff.photos - INFO - PhotosManager initialisé avec supervision hiérarchique
+2026-09-24 03:08:52,803 - handlers.staff.notifs - INFO - NotifsManager initialisé avec support Staff/Admin, Surveillance & Paiement Prio
+2026-09-24 03:08:52,803 - handlers.staff.dispo - INFO - DispoManager initialisé avec disposition conforme et indicateur de rémunération
+2026-09-24 03:08:52,803 - handlers.staff.alias - INFO - AliasManager initialisé avec support Staff/Admin
+2026-09-24 03:08:52,803 - handlers.staff.notifs - INFO - NotifsManager initialisé avec support Staff/Admin, Surveillance & Paiement Prio
+2026-09-24 03:08:52,804 - handlers.staff.contact - INFO - ContactManager initialisé avec support Multi-Owner
+2026-09-24 03:08:52,804 - handlers.staff.profils - INFO - ProfilsManager initialisé avec supervision hiérarchique des demandes
+2026-09-24 03:08:52,805 - handlers.staff.archives - INFO - ArchivesManager initialisé avec support double vue (personnelle & générale)
+2026-09-24 03:08:52,806 - handlers.staff.alias - INFO - AliasManager initialisé avec support Staff/Admin
+2026-09-24 03:08:52,807 - handlers.staff.archives - INFO - ArchivesManager initialisé avec support double vue (personnelle & générale)
+2026-09-24 03:08:52,809 - handlers.admin.config - INFO - ConfigManager initialisé avec support Délais, Quotas, Rappels & Rémunération
+2026-09-24 03:08:52,810 - handlers.admin.stats - INFO - StatsManager initialisé avec support RBAC
+2026-09-24 03:08:52,811 - handlers.admin.bot - INFO - BotManager initialisé avec support Multi-Owner
+2026-09-24 03:08:52,811 - handlers.admin.staff - INFO - StaffManager initialisé avec pré-configuration avant validation
+2026-09-24 03:08:52,811 - handlers.admin_handlers - INFO - AdminHandlers initialisé avec architecture RBAC, support Archives Générales et Surveillance Staff.
+2026-09-24 03:08:53,180 - root - ERROR - /home/paraworld/teleform/handlers/user/formulaire.py:81: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,180 - root - ERROR -   return ConversationHandler(
+2026-09-24 03:08:53,184 - root - ERROR - /home/paraworld/teleform/main.py:675: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,184 - root - ERROR -   modify_alias_conv = ConversationHandler(
+2026-09-24 03:08:53,184 - root - ERROR - /home/paraworld/teleform/main.py:695: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,185 - root - ERROR -   contact_owner_conv = ConversationHandler(
+2026-09-24 03:08:53,186 - root - ERROR - /home/paraworld/teleform/main.py:718: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,186 - root - ERROR -   owner_reply_conv = ConversationHandler(
+2026-09-24 03:08:53,187 - root - ERROR - /home/paraworld/teleform/main.py:741: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,187 - root - ERROR -   add_staff_conv = ConversationHandler(
+2026-09-24 03:08:53,188 - root - ERROR - /home/paraworld/teleform/main.py:767: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,188 - root - ERROR -   remove_staff_conv = ConversationHandler(
+2026-09-24 03:08:53,189 - root - ERROR - /home/paraworld/teleform/main.py:793: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,189 - root - ERROR -   add_admin_conv = ConversationHandler(
+2026-09-24 03:08:53,190 - root - ERROR - /home/paraworld/teleform/main.py:813: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,190 - root - ERROR -   remove_admin_conv = ConversationHandler(
+2026-09-24 03:08:53,191 - root - ERROR - /home/paraworld/teleform/main.py:839: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,191 - root - ERROR -   add_vip_conv = ConversationHandler(
+2026-09-24 03:08:53,192 - root - ERROR - /home/paraworld/teleform/main.py:863: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-24 03:08:53,192 - root - ERROR -   remove_vip_conv = ConversationHandler(
+2026-09-24 03:08:53,201 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-24 03:08:53,202 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-24 03:08:53,203 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-24 03:08:53,203 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-24 03:08:53,204 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-24 03:08:53,204 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-24 03:08:53,205 - main - INFO - ⏰ Tâches JobQueue configurées et actives.
+2026-09-24 03:08:53,260 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/getMe "HTTP/1.1 200 OK"
+2026-09-24 03:08:53,264 - apscheduler.scheduler - INFO - Added job "check_and_send_admin_reminders" to job store "default"
+2026-09-24 03:08:53,264 - apscheduler.scheduler - INFO - Added job "check_and_auto_archive_demandes" to job store "default"
+2026-09-24 03:08:53,265 - apscheduler.scheduler - INFO - Added job "check_and_send_delivery_reminders" to job store "default"
+2026-09-24 03:08:53,265 - apscheduler.scheduler - INFO - Added job "check_and_send_paid_delivery_reminders" to job store "default"
+2026-09-24 03:08:53,266 - apscheduler.scheduler - INFO - Added job "check_and_send_unpaid_demande_reminders" to job store "default"
+2026-09-24 03:08:53,267 - apscheduler.scheduler - INFO - Added job "check_and_auto_abandon_expired_remun_demandes" to job store "default"
+2026-09-24 03:08:53,268 - apscheduler.scheduler - INFO - Scheduler started
+2026-09-24 03:08:53,269 - telegram.ext.Application - INFO - Application started
+2026-09-24 03:08:53,269 - webhook_app - INFO - ✅ Bot Telegram opérationnel dans le worker PID 2
+2026-09-24 03:08:53,274 - webhook_app - INFO - 📩 Update reçue : ID=816745900, type=autre
+2026-09-24 03:08:53,428 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 03:08:53,561 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 03:08:53,701 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 03:08:53,702 - webhook_app - INFO - ✅ Update 816745900 traitée avec succès.
+2026-09-24 03:08:55,128 - webhook_app - INFO - 📩 Update reçue : ID=816745901, type=/start
+2026-09-24 03:08:55,129 - handlers.user_handlers - INFO - 🚀 Exécution de /start pour user_id=6810540100 (Alice)
+2026-09-24 03:08:55,140 - handlers.user_handlers - INFO - 👤 Utilisateur 6810540100 vérifié/enregistré en base
+2026-09-24 03:08:55,286 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 03:08:55,291 - handlers.user_handlers - INFO - ✅ Message de bienvenue envoyé avec succès à 6810540100
+2026-09-24 03:08:55,291 - webhook_app - INFO - ✅ Update 816745901 traitée avec succès.
+2026-09-24 03:08:56,926 - webhook_app - INFO - 📩 Update reçue : ID=816745902, type=autre
+2026-09-24 03:08:57,051 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 03:08:57,212 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 03:08:57,214 - webhook_app - INFO - ✅ Update 816745902 traitée avec succès.
+2026-09-24 03:09:08,210 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 02:09:08 UTC)" (scheduled at 2026-09-24 01:09:08.198671+00:00)
+2026-09-24 03:09:08,266 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 02:09:08 UTC)" executed successfully
+2026-09-24 03:09:10,835 - webhook_app - INFO - 📩 Update reçue : ID=816745903, type=autre
+2026-09-24 03:09:11,003 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 03:09:11,142 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 03:09:11,143 - webhook_app - INFO - ✅ Update 816745903 traitée avec succès.
+2026-09-24 03:09:16,539 - webhook_app - INFO - 📩 Update reçue : ID=816745904, type=Thomas
+2026-09-24 03:09:16,701 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 03:09:16,702 - webhook_app - INFO - ✅ Update 816745904 traitée avec succès.
+2026-09-24 03:09:23,210 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 02:09:23 UTC)" (scheduled at 2026-09-24 01:09:23.202179+00:00)
+2026-09-24 03:09:23,322 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 02:09:23 UTC)" executed successfully
+2026-09-24 03:09:23,653 - webhook_app - INFO - 📩 Update reçue : ID=816745905, type=Lunes
+2026-09-24 03:09:23,815 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 03:09:23,816 - webhook_app - INFO - ✅ Update 816745905 traitée avec succès.
+2026-09-24 03:09:34,659 - webhook_app - INFO - 📩 Update reçue : ID=816745906, type=23
+2026-09-24 03:09:34,820 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 03:09:34,821 - webhook_app - INFO - ✅ Update 816745906 traitée avec succès.
+2026-09-24 03:09:38,207 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 07:09:38 UTC)" (scheduled at 2026-09-24 01:09:38.203084+00:00)
+2026-09-24 03:09:38,226 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 07:09:38 UTC)" executed successfully
+2026-09-24 03:09:40,720 - webhook_app - INFO - 📩 Update reçue : ID=816745907, type=Brie
+2026-09-24 03:09:40,893 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 03:09:40,894 - webhook_app - INFO - ✅ Update 816745907 traitée avec succès.
+2026-09-24 03:09:44,780 - webhook_app - INFO - 📩 Update reçue : ID=816745908, type=autre
+2026-09-24 03:09:44,935 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 03:09:44,936 - webhook_app - INFO - ✅ Update 816745908 traitée avec succès.
+2026-09-24 03:09:51,522 - webhook_app - INFO - 📩 Update reçue : ID=816745909, type=autre
+2026-09-24 03:09:51,689 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 03:09:51,692 - webhook_app - INFO - ✅ Update 816745909 traitée avec succès.
+2026-09-24 03:09:53,206 - apscheduler.executors.default - INFO - Running job "check_and_send_paid_delivery_reminders (trigger: interval[1 day, 0:00:00], next run at: 2026-09-25 01:09:53 UTC)" (scheduled at 2026-09-24 01:09:53.203531+00:00)
+2026-09-24 03:09:53,212 - apscheduler.executors.default - INFO - Job "check_and_send_paid_delivery_reminders (trigger: interval[1 day, 0:00:00], next run at: 2026-09-25 01:09:53 UTC)" executed successfully
+2026-09-24 03:10:02,110 - webhook_app - INFO - 📩 Update reçue : ID=816745910, type=Lunoas
+2026-09-24 03:10:02,302 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 03:10:02,304 - webhook_app - INFO - ✅ Update 816745910 traitée avec succès.
+2026-09-24 03:10:04,279 - webhook_app - INFO - 📩 Update reçue : ID=816745911, type=autre
+2026-09-24 03:10:04,409 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 03:10:04,548 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 03:10:04,550 - webhook_app - INFO - ✅ Update 816745911 traitée avec succès.
+2026-09-24 03:10:06,415 - webhook_app - INFO - 📩 Update reçue : ID=816745912, type=autre
+2026-09-24 03:10:06,546 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 03:10:06,691 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 03:10:06,696 - webhook_app - INFO - ✅ Update 816745912 traitée avec succès.
+2026-09-24 03:10:08,206 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 07:10:08 UTC)" (scheduled at 2026-09-24 01:10:08.203908+00:00)
+2026-09-24 03:10:08,221 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 07:10:08 UTC)" executed successfully
+2026-09-24 03:10:15,821 - webhook_app - INFO - 📩 Update reçue : ID=816745913, type=autre
+2026-09-24 03:10:15,978 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 03:10:16,136 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 03:10:16,141 - webhook_app - INFO - ✅ Update 816745913 traitée avec succès.
+2026-09-24 03:10:23,211 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-24 07:10:23 UTC)" (scheduled at 2026-09-24 01:10:23.204532+00:00)
+2026-09-24 03:10:23,225 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-24 07:10:23 UTC)" executed successfully
+2026-09-24 03:10:27,663 - webhook_app - INFO - 📩 Update reçue : ID=816745914, type=autre
+2026-09-24 03:10:27,815 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 03:10:27,984 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 03:10:27,985 - webhook_app - INFO - ✅ Update 816745914 traitée avec succès.
+2026-09-24 03:10:34,796 - webhook_app - INFO - 📩 Update reçue : ID=816745915, type=autre
+2026-09-24 03:10:34,797 - webhook_app - INFO - ✅ Update 816745915 traitée avec succès.
+2026-09-24 03:10:37,703 - webhook_app - INFO - 📩 Update reçue : ID=816745916, type=autre
+2026-09-24 03:10:37,705 - webhook_app - INFO - ✅ Update 816745916 traitée avec succès.
+2026-09-24 03:23:42,484 - webhook_app - INFO - 📩 Update reçue : ID=816745917, type=autre
+2026-09-24 03:23:42,486 - webhook_app - INFO - ✅ Update 816745917 traitée avec succès.
+2026-09-24 04:01:02,574 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 04:01:03,491 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 04:09:08,298 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 03:09:08 UTC)" (scheduled at 2026-09-24 02:09:08.198671+00:00)
+2026-09-24 04:09:08,426 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 03:09:08 UTC)" executed successfully
+2026-09-24 04:09:23,217 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 03:09:23 UTC)" (scheduled at 2026-09-24 02:09:23.202179+00:00)
+2026-09-24 04:09:23,238 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 03:09:23 UTC)" executed successfully
+2026-09-24 04:33:14,633 - webhook_app - INFO - 📩 Update reçue : ID=816745918, type=autre
+2026-09-24 04:33:14,636 - webhook_app - INFO - ✅ Update 816745918 traitée avec succès.
+2026-09-24 04:33:17,598 - webhook_app - INFO - 📩 Update reçue : ID=816745919, type=autre
+2026-09-24 04:33:17,599 - webhook_app - INFO - ✅ Update 816745919 traitée avec succès.
+2026-09-24 05:01:00,727 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 05:01:00,865 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 05:09:08,299 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 04:09:08 UTC)" (scheduled at 2026-09-24 03:09:08.198671+00:00)
+2026-09-24 05:09:09,019 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 04:09:08 UTC)" executed successfully
+2026-09-24 05:09:23,217 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 04:09:23 UTC)" (scheduled at 2026-09-24 03:09:23.202179+00:00)
+2026-09-24 05:09:23,237 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 04:09:23 UTC)" executed successfully
+2026-09-24 06:01:01,754 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 06:01:01,937 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 06:09:08,298 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 05:09:08 UTC)" (scheduled at 2026-09-24 04:09:08.198671+00:00)
+2026-09-24 06:09:08,372 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 05:09:08 UTC)" executed successfully
+2026-09-24 06:09:23,220 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 05:09:23 UTC)" (scheduled at 2026-09-24 04:09:23.202179+00:00)
+2026-09-24 06:09:23,232 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 05:09:23 UTC)" executed successfully
+2026-09-24 06:32:46,002 - webhook_app - INFO - 📩 Update reçue : ID=816745920, type=autre
+2026-09-24 06:32:46,007 - webhook_app - INFO - ✅ Update 816745920 traitée avec succès.
+2026-09-24 07:01:01,427 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 07:01:01,623 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 07:01:21,313 - webhook_app - INFO - 📩 Update reçue : ID=816745921, type=autre
+2026-09-24 07:01:21,314 - webhook_app - INFO - ✅ Update 816745921 traitée avec succès.
+2026-09-24 07:09:08,299 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 06:09:08 UTC)" (scheduled at 2026-09-24 05:09:08.198671+00:00)
+2026-09-24 07:09:08,396 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 06:09:08 UTC)" executed successfully
+2026-09-24 07:09:23,217 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 06:09:23 UTC)" (scheduled at 2026-09-24 05:09:23.202179+00:00)
+2026-09-24 07:09:23,231 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 06:09:23 UTC)" executed successfully
+2026-09-24 07:32:05,122 - webhook_app - INFO - 📩 Update reçue : ID=816745922, type=autre
+2026-09-24 07:32:05,125 - webhook_app - INFO - ✅ Update 816745922 traitée avec succès.
+2026-09-24 08:01:09,155 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 08:01:09,365 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 08:09:08,298 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 07:09:08 UTC)" (scheduled at 2026-09-24 06:09:08.198671+00:00)
+2026-09-24 08:09:08,411 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 07:09:08 UTC)" executed successfully
+2026-09-24 08:09:23,217 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 07:09:23 UTC)" (scheduled at 2026-09-24 06:09:23.202179+00:00)
+2026-09-24 08:09:23,231 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 07:09:23 UTC)" executed successfully
+2026-09-24 08:10:45,203 - webhook_app - INFO - 📩 Update reçue : ID=816745923, type=autre
+2026-09-24 08:10:45,206 - webhook_app - INFO - ✅ Update 816745923 traitée avec succès.
+2026-09-24 08:10:45,229 - webhook_app - INFO - 📩 Update reçue : ID=816745924, type=autre
+2026-09-24 08:10:45,230 - webhook_app - INFO - ✅ Update 816745924 traitée avec succès.
+2026-09-24 08:33:53,217 - webhook_app - INFO - 📩 Update reçue : ID=816745925, type=autre
+2026-09-24 08:33:53,219 - webhook_app - INFO - ✅ Update 816745925 traitée avec succès.
+2026-09-24 08:33:53,263 - webhook_app - INFO - 📩 Update reçue : ID=816745926, type=autre
+2026-09-24 08:33:53,263 - webhook_app - INFO - ✅ Update 816745926 traitée avec succès.
+2026-09-24 08:34:33,430 - webhook_app - INFO - 📩 Update reçue : ID=816745927, type=ah mais oui et quand tu le mets sur le fais accompli il insulte et n’a pas d’argument mais en tout cas juste méfiez vous de lui et c’était de la prévention des créateurs comme lui méritent d’être dénoncer
+2026-09-24 08:34:33,432 - webhook_app - INFO - ✅ Update 816745927 traitée avec succès.
+2026-09-24 09:01:03,026 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 09:01:03,254 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 09:09:08,299 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 08:09:08 UTC)" (scheduled at 2026-09-24 07:09:08.198671+00:00)
+2026-09-24 09:09:08,418 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 08:09:08 UTC)" executed successfully
+2026-09-24 09:09:23,218 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 08:09:23 UTC)" (scheduled at 2026-09-24 07:09:23.202179+00:00)
+2026-09-24 09:09:23,242 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 08:09:23 UTC)" executed successfully
+2026-09-24 09:09:38,218 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 13:09:38 UTC)" (scheduled at 2026-09-24 07:09:38.203084+00:00)
+2026-09-24 09:09:38,228 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 13:09:38 UTC)" executed successfully
+2026-09-24 09:10:08,238 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 13:10:08 UTC)" (scheduled at 2026-09-24 07:10:08.203908+00:00)
+2026-09-24 09:10:08,258 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 13:10:08 UTC)" executed successfully
+2026-09-24 09:10:23,220 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-24 13:10:23 UTC)" (scheduled at 2026-09-24 07:10:23.204532+00:00)
+2026-09-24 09:10:23,233 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-24 13:10:23 UTC)" executed successfully
+2026-09-24 09:10:55,619 - webhook_app - INFO - 📩 Update reçue : ID=816745928, type=Update : le Paul Curious qui se permet de prendre mes infos personnelles etc je peux porter plainte on est d’accord pour menace et + ?
+2026-09-24 09:10:55,621 - webhook_app - INFO - ✅ Update 816745928 traitée avec succès.
+2026-09-24 09:12:08,449 - webhook_app - INFO - 📩 Update reçue : ID=816745929, type=autre
+2026-09-24 09:12:08,453 - webhook_app - INFO - ✅ Update 816745929 traitée avec succès.
+2026-09-24 09:28:14,621 - webhook_app - INFO - 📩 Update reçue : ID=816745930, type=autre
+2026-09-24 09:28:14,622 - webhook_app - INFO - ✅ Update 816745930 traitée avec succès.
+2026-09-24 10:01:07,440 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 10:01:07,625 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 10:09:08,301 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 09:09:08 UTC)" (scheduled at 2026-09-24 08:09:08.198671+00:00)
+2026-09-24 10:09:08,442 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 09:09:08 UTC)" executed successfully
+2026-09-24 10:09:23,217 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 09:09:23 UTC)" (scheduled at 2026-09-24 08:09:23.202179+00:00)
+2026-09-24 10:09:23,253 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 09:09:23 UTC)" executed successfully
+2026-09-24 10:45:02,652 - webhook_app - INFO - 📩 Update reçue : ID=816745931, type=Oep
+2026-09-24 10:45:02,674 - webhook_app - INFO - ✅ Update 816745931 traitée avec succès.
+2026-09-24 11:01:05,949 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 11:01:06,215 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 11:09:08,331 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 10:09:08 UTC)" (scheduled at 2026-09-24 09:09:08.198671+00:00)
+2026-09-24 11:09:08,484 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 10:09:08 UTC)" executed successfully
+2026-09-24 11:09:23,223 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 10:09:23 UTC)" (scheduled at 2026-09-24 09:09:23.202179+00:00)
+2026-09-24 11:09:23,242 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 10:09:23 UTC)" executed successfully
+2026-09-24 12:01:05,605 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 12:01:05,785 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 12:09:08,299 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 11:09:08 UTC)" (scheduled at 2026-09-24 10:09:08.198671+00:00)
+2026-09-24 12:09:08,464 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 11:09:08 UTC)" executed successfully
+2026-09-24 12:09:23,218 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 11:09:23 UTC)" (scheduled at 2026-09-24 10:09:23.202179+00:00)
+2026-09-24 12:09:23,234 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 11:09:23 UTC)" executed successfully
+2026-09-24 13:01:03,505 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 13:01:03,789 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 13:09:08,314 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 12:09:08 UTC)" (scheduled at 2026-09-24 11:09:08.198671+00:00)
+2026-09-24 13:09:08,469 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 12:09:08 UTC)" executed successfully
+2026-09-24 13:09:23,219 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 12:09:23 UTC)" (scheduled at 2026-09-24 11:09:23.202179+00:00)
+2026-09-24 13:09:23,238 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 12:09:23 UTC)" executed successfully
+2026-09-24 14:01:04,933 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 14:01:05,344 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 14:09:08,341 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 13:09:08 UTC)" (scheduled at 2026-09-24 12:09:08.198671+00:00)
+2026-09-24 14:09:08,497 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 13:09:08 UTC)" executed successfully
+2026-09-24 14:09:23,219 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 13:09:23 UTC)" (scheduled at 2026-09-24 12:09:23.202179+00:00)
+2026-09-24 14:09:23,242 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 13:09:23 UTC)" executed successfully
+2026-09-24 15:01:07,238 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 15:01:07,550 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 15:09:08,301 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 14:09:08 UTC)" (scheduled at 2026-09-24 13:09:08.198671+00:00)
+2026-09-24 15:09:08,423 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 14:09:08 UTC)" executed successfully
+2026-09-24 15:09:23,218 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 14:09:23 UTC)" (scheduled at 2026-09-24 13:09:23.202179+00:00)
+2026-09-24 15:09:23,233 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 14:09:23 UTC)" executed successfully
+2026-09-24 15:09:38,218 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 19:09:38 UTC)" (scheduled at 2026-09-24 13:09:38.203084+00:00)
+2026-09-24 15:09:38,232 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 19:09:38 UTC)" executed successfully
+2026-09-24 15:10:08,236 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 19:10:08 UTC)" (scheduled at 2026-09-24 13:10:08.203908+00:00)
+2026-09-24 15:10:08,252 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-24 19:10:08 UTC)" executed successfully
+2026-09-24 15:10:23,220 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-24 19:10:23 UTC)" (scheduled at 2026-09-24 13:10:23.204532+00:00)
+2026-09-24 15:10:23,240 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-24 19:10:23 UTC)" executed successfully
+2026-09-24 16:01:07,393 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 16:01:07,632 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 16:09:08,322 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 15:09:08 UTC)" (scheduled at 2026-09-24 14:09:08.198671+00:00)
+2026-09-24 16:09:08,486 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 15:09:08 UTC)" executed successfully
+2026-09-24 16:09:23,218 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 15:09:23 UTC)" (scheduled at 2026-09-24 14:09:23.202179+00:00)
+2026-09-24 16:09:23,237 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 15:09:23 UTC)" executed successfully
+2026-09-24 16:22:25,307 - webhook_app - INFO - 📩 Update reçue : ID=816745932, type=autre
+2026-09-24 16:22:25,624 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:22:25,790 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:22:25,796 - webhook_app - INFO - ✅ Update 816745932 traitée avec succès.
+2026-09-24 16:22:43,541 - webhook_app - INFO - 📩 Update reçue : ID=816745933, type=autre
+2026-09-24 16:22:43,719 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:22:43,898 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:22:43,901 - webhook_app - INFO - ✅ Update 816745933 traitée avec succès.
+2026-09-24 16:22:45,054 - webhook_app - INFO - 📩 Update reçue : ID=816745934, type=autre
+2026-09-24 16:22:45,188 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:22:45,403 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:22:45,408 - webhook_app - INFO - ✅ Update 816745934 traitée avec succès.
+2026-09-24 16:25:05,543 - webhook_app - INFO - 📩 Update reçue : ID=816745935, type=autre
+2026-09-24 16:25:05,722 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:25:05,861 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:25:05,865 - webhook_app - INFO - ✅ Update 816745935 traitée avec succès.
+2026-09-24 16:37:16,142 - webhook_app - INFO - 📩 Update reçue : ID=816745936, type=autre
+2026-09-24 16:37:16,152 - webhook_app - INFO - ✅ Update 816745936 traitée avec succès.
+2026-09-24 16:37:18,402 - webhook_app - INFO - 📩 Update reçue : ID=816745937, type=autre
+2026-09-24 16:37:18,567 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:37:18,755 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:37:18,758 - webhook_app - INFO - ✅ Update 816745937 traitée avec succès.
+2026-09-24 16:37:20,516 - webhook_app - INFO - 📩 Update reçue : ID=816745938, type=/start
+2026-09-24 16:37:20,524 - handlers.user_handlers - INFO - 🚀 Exécution de /start pour user_id=6810540100 (Alice)
+2026-09-24 16:37:20,559 - handlers.user_handlers - INFO - 👤 Utilisateur 6810540100 vérifié/enregistré en base
+2026-09-24 16:37:20,742 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:37:20,744 - handlers.user_handlers - INFO - ✅ Message de bienvenue envoyé avec succès à 6810540100
+2026-09-24 16:37:20,744 - webhook_app - INFO - ✅ Update 816745938 traitée avec succès.
+2026-09-24 16:37:23,181 - webhook_app - INFO - 📩 Update reçue : ID=816745939, type=autre
+2026-09-24 16:37:23,317 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:37:23,486 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:37:23,488 - webhook_app - INFO - ✅ Update 816745939 traitée avec succès.
+2026-09-24 16:37:24,798 - webhook_app - INFO - 📩 Update reçue : ID=816745940, type=autre
+2026-09-24 16:37:24,954 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:37:25,118 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:37:25,287 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendPhoto "HTTP/1.1 200 OK"
+2026-09-24 16:37:25,290 - webhook_app - INFO - ✅ Update 816745940 traitée avec succès.
+2026-09-24 16:38:26,164 - webhook_app - INFO - 📩 Update reçue : ID=816745941, type=autre
+2026-09-24 16:38:26,449 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:38:26,596 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:38:26,618 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 400 Bad Request"
+2026-09-24 16:38:26,754 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:38:26,901 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:38:26,903 - webhook_app - INFO - ✅ Update 816745941 traitée avec succès.
+2026-09-24 16:41:42,250 - webhook_app - INFO - 📩 Update reçue : ID=816745942, type=autre
+2026-09-24 16:41:42,453 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:41:42,589 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:41:42,733 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:41:42,734 - webhook_app - INFO - ✅ Update 816745942 traitée avec succès.
+2026-09-24 16:41:44,128 - webhook_app - INFO - 📩 Update reçue : ID=816745943, type=autre
+2026-09-24 16:41:44,257 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:41:44,407 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:41:44,411 - webhook_app - INFO - ✅ Update 816745943 traitée avec succès.
+2026-09-24 16:41:49,199 - webhook_app - INFO - 📩 Update reçue : ID=816745944, type=autre
+2026-09-24 16:41:49,239 - webhook_app - INFO - 📩 Update reçue : ID=816745945, type=autre
+2026-09-24 16:41:49,285 - webhook_app - INFO - 📩 Update reçue : ID=816745946, type=autre
+2026-09-24 16:41:50,208 - webhook_app - INFO - ✅ Update 816745944 traitée avec succès.
+2026-09-24 16:41:50,244 - webhook_app - INFO - ✅ Update 816745945 traitée avec succès.
+2026-09-24 16:41:50,452 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:41:50,453 - webhook_app - INFO - ✅ Update 816745946 traitée avec succès.
+2026-09-24 16:42:03,750 - webhook_app - INFO - 📩 Update reçue : ID=816745947, type=autre
+2026-09-24 16:42:03,805 - webhook_app - INFO - 📩 Update reçue : ID=816745948, type=autre
+2026-09-24 16:42:03,833 - webhook_app - INFO - 📩 Update reçue : ID=816745949, type=autre
+2026-09-24 16:42:04,755 - webhook_app - INFO - ✅ Update 816745947 traitée avec succès.
+2026-09-24 16:42:04,809 - webhook_app - INFO - ✅ Update 816745948 traitée avec succès.
+2026-09-24 16:42:04,998 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:42:05,140 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:42:05,144 - webhook_app - INFO - ✅ Update 816745949 traitée avec succès.
+2026-09-24 16:47:52,091 - webhook_app - INFO - 📩 Update reçue : ID=816745950, type=/start
+2026-09-24 16:47:52,094 - handlers.user_handlers - INFO - 🚀 Exécution de /start pour user_id=6552126463 (Para)
+2026-09-24 16:47:52,144 - handlers.user.compte - INFO - Nouvel utilisateur enregistré : 6552126463 (Para Guyz)
+2026-09-24 16:47:52,151 - handlers.user_handlers - INFO - 👤 Utilisateur 6552126463 vérifié/enregistré en base
+2026-09-24 16:47:52,397 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:47:52,402 - handlers.user_handlers - INFO - ✅ Message de bienvenue envoyé avec succès à 6552126463
+2026-09-24 16:47:52,402 - webhook_app - INFO - ✅ Update 816745950 traitée avec succès.
+2026-09-24 16:47:54,687 - webhook_app - INFO - 📩 Update reçue : ID=816745951, type=autre
+2026-09-24 16:47:54,818 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:47:54,964 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:47:54,967 - webhook_app - INFO - ✅ Update 816745951 traitée avec succès.
+2026-09-24 16:47:58,035 - webhook_app - INFO - 📩 Update reçue : ID=816745952, type=autre
+2026-09-24 16:47:58,165 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:47:58,305 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:47:58,307 - webhook_app - INFO - ✅ Update 816745952 traitée avec succès.
+2026-09-24 16:47:59,787 - webhook_app - INFO - 📩 Update reçue : ID=816745953, type=autre
+2026-09-24 16:47:59,916 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:48:00,071 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:48:00,073 - webhook_app - INFO - ✅ Update 816745953 traitée avec succès.
+2026-09-24 16:48:06,826 - webhook_app - INFO - 📩 Update reçue : ID=816745954, type=autre
+2026-09-24 16:48:06,976 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:48:07,171 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:48:07,175 - webhook_app - INFO - ✅ Update 816745954 traitée avec succès.
+2026-09-24 16:48:26,225 - webhook_app - INFO - 📩 Update reçue : ID=816745955, type=/start
+2026-09-24 16:48:26,228 - handlers.user_handlers - INFO - 🚀 Exécution de /start pour user_id=1340055152 (Tom)
+2026-09-24 16:48:26,239 - handlers.user_handlers - INFO - 👤 Utilisateur 1340055152 vérifié/enregistré en base
+2026-09-24 16:48:26,401 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:48:26,403 - handlers.user_handlers - INFO - ✅ Message de bienvenue envoyé avec succès à 1340055152
+2026-09-24 16:48:26,403 - webhook_app - INFO - ✅ Update 816745955 traitée avec succès.
+2026-09-24 16:48:28,722 - webhook_app - INFO - 📩 Update reçue : ID=816745956, type=autre
+2026-09-24 16:48:28,851 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:48:28,992 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:48:28,996 - webhook_app - INFO - ✅ Update 816745956 traitée avec succès.
+2026-09-24 16:48:30,149 - webhook_app - INFO - 📩 Update reçue : ID=816745957, type=autre
+2026-09-24 16:48:30,283 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:48:30,451 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:48:30,457 - webhook_app - INFO - ✅ Update 816745957 traitée avec succès.
+2026-09-24 16:48:31,752 - webhook_app - INFO - 📩 Update reçue : ID=816745958, type=autre
+2026-09-24 16:48:31,904 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:48:31,910 - webhook_app - INFO - ✅ Update 816745958 traitée avec succès.
+2026-09-24 16:48:36,476 - webhook_app - INFO - 📩 Update reçue : ID=816745959, type=@paraguyz
+2026-09-24 16:48:36,643 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:48:36,646 - webhook_app - INFO - ✅ Update 816745959 traitée avec succès.
+2026-09-24 16:48:45,557 - webhook_app - INFO - 📩 Update reçue : ID=816745960, type=@Paraguyz
+2026-09-24 16:48:45,731 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:48:45,732 - webhook_app - INFO - ✅ Update 816745960 traitée avec succès.
+2026-09-24 16:48:50,205 - webhook_app - INFO - 📩 Update reçue : ID=816745961, type=autre
+2026-09-24 16:48:50,352 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:48:50,493 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:48:50,497 - webhook_app - INFO - ✅ Update 816745961 traitée avec succès.
+2026-09-24 16:48:59,025 - webhook_app - INFO - 📩 Update reçue : ID=816745962, type=@Paraguyz
+2026-09-24 16:48:59,218 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:48:59,219 - webhook_app - INFO - ✅ Update 816745962 traitée avec succès.
+2026-09-24 16:49:01,486 - webhook_app - INFO - 📩 Update reçue : ID=816745963, type=autre
+2026-09-24 16:49:01,637 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:49:01,889 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:49:01,896 - webhook_app - INFO - ✅ Update 816745963 traitée avec succès.
+2026-09-24 16:49:03,112 - webhook_app - INFO - 📩 Update reçue : ID=816745964, type=autre
+2026-09-24 16:49:03,265 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:49:03,415 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:49:03,418 - webhook_app - INFO - ✅ Update 816745964 traitée avec succès.
+2026-09-24 16:49:08,779 - webhook_app - INFO - 📩 Update reçue : ID=816745965, type=autre
+2026-09-24 16:49:08,932 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:49:08,945 - handlers.admin.staff - INFO - Opérateur Staff recruté : 6552126463 (Para Guyz) | Reseaux=all, Type=all, Ori=hetero, Trial=False
+2026-09-24 16:49:09,092 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:49:09,231 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:49:09,233 - webhook_app - INFO - ✅ Update 816745965 traitée avec succès.
+2026-09-24 16:49:22,012 - webhook_app - INFO - 📩 Update reçue : ID=816745966, type=/start
+2026-09-24 16:49:22,019 - handlers.user_handlers - INFO - 🚀 Exécution de /start pour user_id=5763599466 (Stitch)
+2026-09-24 16:49:22,030 - handlers.user.compte - INFO - Nouvel utilisateur enregistré : 5763599466 (Stitch)
+2026-09-24 16:49:22,039 - handlers.user_handlers - INFO - 👤 Utilisateur 5763599466 vérifié/enregistré en base
+2026-09-24 16:49:22,261 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:49:22,265 - handlers.user_handlers - INFO - ✅ Message de bienvenue envoyé avec succès à 5763599466
+2026-09-24 16:49:22,266 - webhook_app - INFO - ✅ Update 816745966 traitée avec succès.
+2026-09-24 16:49:23,495 - webhook_app - INFO - 📩 Update reçue : ID=816745967, type=autre
+2026-09-24 16:49:23,620 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:49:23,796 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:49:23,798 - webhook_app - INFO - ✅ Update 816745967 traitée avec succès.
+2026-09-24 16:49:25,223 - webhook_app - INFO - 📩 Update reçue : ID=816745968, type=autre
+2026-09-24 16:49:25,371 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:49:25,512 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:49:25,516 - webhook_app - INFO - ✅ Update 816745968 traitée avec succès.
+2026-09-24 16:49:27,564 - webhook_app - INFO - 📩 Update reçue : ID=816745969, type=Louis
+2026-09-24 16:49:27,711 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:49:27,713 - webhook_app - INFO - ✅ Update 816745969 traitée avec succès.
+2026-09-24 16:49:47,500 - webhook_app - INFO - 📩 Update reçue : ID=816745970, type=Ravioli
+2026-09-24 16:49:47,681 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:49:47,682 - webhook_app - INFO - ✅ Update 816745970 traitée avec succès.
+2026-09-24 16:49:50,038 - webhook_app - INFO - 📩 Update reçue : ID=816745971, type=28
+2026-09-24 16:49:50,190 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:49:50,192 - webhook_app - INFO - ✅ Update 816745971 traitée avec succès.
+2026-09-24 16:49:52,913 - webhook_app - INFO - 📩 Update reçue : ID=816745972, type=Lyon
+2026-09-24 16:49:53,070 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:49:53,076 - webhook_app - INFO - ✅ Update 816745972 traitée avec succès.
+2026-09-24 16:50:28,657 - webhook_app - INFO - 📩 Update reçue : ID=816745973, type=autre
+2026-09-24 16:50:29,886 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:50:29,888 - webhook_app - INFO - ✅ Update 816745973 traitée avec succès.
+2026-09-24 16:50:32,626 - webhook_app - INFO - 📩 Update reçue : ID=816745974, type=autre
+2026-09-24 16:50:32,763 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:50:32,913 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:50:32,914 - webhook_app - INFO - ✅ Update 816745974 traitée avec succès.
+2026-09-24 16:50:54,174 - webhook_app - INFO - 📩 Update reçue : ID=816745975, type=Lyous
+2026-09-24 16:50:54,401 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:50:54,402 - webhook_app - INFO - ✅ Update 816745975 traitée avec succès.
+2026-09-24 16:50:59,701 - webhook_app - INFO - 📩 Update reçue : ID=816745976, type=Petit chibre
+2026-09-24 16:50:59,907 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:50:59,910 - webhook_app - INFO - ✅ Update 816745976 traitée avec succès.
+2026-09-24 16:51:20,060 - webhook_app - INFO - 📩 Update reçue : ID=816745977, type=autre
+2026-09-24 16:51:20,223 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:51:20,252 - handlers.user.formulaire - INFO - Demande #1 créée (ID: 2) pour l'utilisateur 5763599466 (Orientation: hetero, Statut: 📥 Reçue, Cible Staff: None)
+2026-09-24 16:51:20,395 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:51:20,467 - webhook_app - INFO - ✅ Update 816745977 traitée avec succès.
+2026-09-24 16:51:20,767 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendPhoto "HTTP/1.1 200 OK"
+2026-09-24 16:51:20,770 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendPhoto "HTTP/1.1 200 OK"
+2026-09-24 16:51:20,815 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendPhoto "HTTP/1.1 200 OK"
+2026-09-24 16:51:35,214 - webhook_app - INFO - 📩 Update reçue : ID=816745978, type=autre
+2026-09-24 16:51:35,372 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:51:35,568 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageMedia "HTTP/1.1 200 OK"
+2026-09-24 16:51:35,573 - webhook_app - INFO - ✅ Update 816745978 traitée avec succès.
+2026-09-24 16:51:45,345 - webhook_app - INFO - 📩 Update reçue : ID=816745979, type=autre
+2026-09-24 16:51:45,498 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:51:45,638 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:51:45,775 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:51:45,777 - webhook_app - INFO - ✅ Update 816745979 traitée avec succès.
+2026-09-24 16:52:34,608 - webhook_app - INFO - 📩 Update reçue : ID=816745980, type=autre
+2026-09-24 16:52:34,763 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:52:34,914 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:52:35,082 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendPhoto "HTTP/1.1 200 OK"
+2026-09-24 16:52:35,088 - webhook_app - INFO - ✅ Update 816745980 traitée avec succès.
+2026-09-24 16:52:38,226 - webhook_app - INFO - 📩 Update reçue : ID=816745981, type=autre
+2026-09-24 16:52:38,358 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:52:38,526 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:52:38,675 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:52:38,676 - webhook_app - INFO - ✅ Update 816745981 traitée avec succès.
+2026-09-24 16:54:23,401 - webhook_app - INFO - 📩 Update reçue : ID=816745982, type=/start
+2026-09-24 16:54:23,404 - handlers.user_handlers - INFO - 🚀 Exécution de /start pour user_id=1340055152 (Tom)
+2026-09-24 16:54:23,416 - handlers.user_handlers - INFO - 👤 Utilisateur 1340055152 vérifié/enregistré en base
+2026-09-24 16:54:23,613 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:54:23,614 - handlers.user_handlers - INFO - ✅ Message de bienvenue envoyé avec succès à 1340055152
+2026-09-24 16:54:23,620 - webhook_app - INFO - ✅ Update 816745982 traitée avec succès.
+2026-09-24 16:54:25,133 - webhook_app - INFO - 📩 Update reçue : ID=816745983, type=autre
+2026-09-24 16:54:25,263 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:54:25,458 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:54:25,459 - webhook_app - INFO - ✅ Update 816745983 traitée avec succès.
+2026-09-24 16:54:26,656 - webhook_app - INFO - 📩 Update reçue : ID=816745984, type=autre
+2026-09-24 16:54:26,793 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:54:26,940 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:54:27,181 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendPhoto "HTTP/1.1 200 OK"
+2026-09-24 16:54:27,186 - webhook_app - INFO - ✅ Update 816745984 traitée avec succès.
+2026-09-24 16:54:32,173 - webhook_app - INFO - 📩 Update reçue : ID=816745985, type=autre
+2026-09-24 16:54:32,339 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:54:32,501 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:54:32,648 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:54:32,649 - webhook_app - INFO - ✅ Update 816745985 traitée avec succès.
+2026-09-24 16:54:39,374 - webhook_app - INFO - 📩 Update reçue : ID=816745986, type=autre
+2026-09-24 16:54:39,539 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:54:39,697 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:54:39,699 - webhook_app - INFO - ✅ Update 816745986 traitée avec succès.
+2026-09-24 16:54:58,529 - webhook_app - INFO - 📩 Update reçue : ID=816745987, type=autre
+2026-09-24 16:54:58,682 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:54:58,850 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:54:58,853 - webhook_app - INFO - ✅ Update 816745987 traitée avec succès.
+2026-09-24 16:56:12,080 - webhook_app - INFO - 📩 Update reçue : ID=816745988, type=autre
+2026-09-24 16:56:12,263 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:56:12,480 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/deleteMessage "HTTP/1.1 200 OK"
+2026-09-24 16:56:12,703 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendPhoto "HTTP/1.1 200 OK"
+2026-09-24 16:56:12,704 - webhook_app - INFO - ✅ Update 816745988 traitée avec succès.
+2026-09-24 16:56:19,101 - webhook_app - INFO - 📩 Update reçue : ID=816745989, type=/start
+2026-09-24 16:56:19,102 - handlers.user_handlers - INFO - 🚀 Exécution de /start pour user_id=1340055152 (Tom)
+2026-09-24 16:56:19,114 - handlers.user_handlers - INFO - 👤 Utilisateur 1340055152 vérifié/enregistré en base
+2026-09-24 16:56:19,295 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:56:19,296 - handlers.user_handlers - INFO - ✅ Message de bienvenue envoyé avec succès à 1340055152
+2026-09-24 16:56:19,297 - webhook_app - INFO - ✅ Update 816745989 traitée avec succès.
+2026-09-24 16:56:21,595 - webhook_app - INFO - 📩 Update reçue : ID=816745990, type=autre
+2026-09-24 16:56:21,750 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:56:21,895 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:56:21,897 - webhook_app - INFO - ✅ Update 816745990 traitée avec succès.
+2026-09-24 16:56:24,238 - webhook_app - INFO - 📩 Update reçue : ID=816745991, type=autre
+2026-09-24 16:56:24,370 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:56:24,527 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:56:24,531 - webhook_app - INFO - ✅ Update 816745991 traitée avec succès.
+2026-09-24 16:56:30,062 - webhook_app - INFO - 📩 Update reçue : ID=816745992, type=autre
+2026-09-24 16:56:30,235 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:56:30,372 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:56:30,373 - webhook_app - INFO - ✅ Update 816745992 traitée avec succès.
+2026-09-24 16:56:39,313 - webhook_app - INFO - 📩 Update reçue : ID=816745993, type=@paraguyz
+2026-09-24 16:56:39,500 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 16:56:39,507 - webhook_app - INFO - ✅ Update 816745993 traitée avec succès.
+2026-09-24 16:56:41,143 - webhook_app - INFO - 📩 Update reçue : ID=816745994, type=autre
+2026-09-24 16:56:41,272 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:56:41,430 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:56:41,432 - webhook_app - INFO - ✅ Update 816745994 traitée avec succès.
+2026-09-24 16:58:16,629 - webhook_app - INFO - 📩 Update reçue : ID=816745995, type=autre
+2026-09-24 16:58:16,778 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:16,928 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:16,938 - webhook_app - INFO - ✅ Update 816745995 traitée avec succès.
+2026-09-24 16:58:21,825 - webhook_app - INFO - 📩 Update reçue : ID=816745996, type=autre
+2026-09-24 16:58:21,951 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:22,092 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:22,094 - webhook_app - INFO - ✅ Update 816745996 traitée avec succès.
+2026-09-24 16:58:24,499 - webhook_app - INFO - 📩 Update reçue : ID=816745997, type=autre
+2026-09-24 16:58:24,627 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:24,783 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:24,785 - webhook_app - INFO - ✅ Update 816745997 traitée avec succès.
+2026-09-24 16:58:26,187 - webhook_app - INFO - 📩 Update reçue : ID=816745998, type=autre
+2026-09-24 16:58:26,316 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:26,454 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:26,456 - webhook_app - INFO - ✅ Update 816745998 traitée avec succès.
+2026-09-24 16:58:28,962 - webhook_app - INFO - 📩 Update reçue : ID=816745999, type=autre
+2026-09-24 16:58:29,092 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:29,233 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:29,234 - webhook_app - INFO - ✅ Update 816745999 traitée avec succès.
+2026-09-24 16:58:30,834 - webhook_app - INFO - 📩 Update reçue : ID=816746000, type=autre
+2026-09-24 16:58:30,967 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:31,142 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:31,146 - webhook_app - INFO - ✅ Update 816746000 traitée avec succès.
+2026-09-24 16:58:35,349 - webhook_app - INFO - 📩 Update reçue : ID=816746001, type=autre
+2026-09-24 16:58:35,476 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:35,619 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:35,622 - webhook_app - INFO - ✅ Update 816746001 traitée avec succès.
+2026-09-24 16:58:36,715 - webhook_app - INFO - 📩 Update reçue : ID=816746002, type=autre
+2026-09-24 16:58:36,840 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:37,006 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:37,008 - webhook_app - INFO - ✅ Update 816746002 traitée avec succès.
+2026-09-24 16:58:43,832 - webhook_app - INFO - 📩 Update reçue : ID=816746003, type=autre
+2026-09-24 16:58:44,040 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 16:58:44,228 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 16:58:44,230 - webhook_app - INFO - ✅ Update 816746003 traitée avec succès.
+2026-09-24 17:00:42,032 - webhook_app - INFO - 📩 Update reçue : ID=816746004, type=/start
+2026-09-24 17:00:42,034 - handlers.user_handlers - INFO - 🚀 Exécution de /start pour user_id=1340055152 (Tom)
+2026-09-24 17:00:42,048 - handlers.user_handlers - INFO - 👤 Utilisateur 1340055152 vérifié/enregistré en base
+2026-09-24 17:00:42,242 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-24 17:00:42,245 - handlers.user_handlers - INFO - ✅ Message de bienvenue envoyé avec succès à 1340055152
+2026-09-24 17:00:42,245 - webhook_app - INFO - ✅ Update 816746004 traitée avec succès.
+2026-09-24 17:00:44,017 - webhook_app - INFO - 📩 Update reçue : ID=816746005, type=autre
+2026-09-24 17:00:44,146 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 17:00:44,291 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 17:00:44,293 - webhook_app - INFO - ✅ Update 816746005 traitée avec succès.
+2026-09-24 17:01:06,368 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-24 17:01:06,720 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-24 17:02:26,199 - webhook_app - INFO - 📩 Update reçue : ID=816746006, type=autre
+2026-09-24 17:02:26,388 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 17:02:26,548 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 17:02:26,553 - webhook_app - INFO - ✅ Update 816746006 traitée avec succès.
+2026-09-24 17:02:28,115 - webhook_app - INFO - 📩 Update reçue : ID=816746007, type=autre
+2026-09-24 17:02:28,268 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 17:02:28,418 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 17:02:28,423 - webhook_app - INFO - ✅ Update 816746007 traitée avec succès.
+2026-09-24 17:02:29,820 - webhook_app - INFO - 📩 Update reçue : ID=816746008, type=autre
+2026-09-24 17:02:29,956 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 17:02:30,099 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 17:02:30,102 - webhook_app - INFO - ✅ Update 816746008 traitée avec succès.

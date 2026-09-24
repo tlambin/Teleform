@@ -200,7 +200,7 @@ class FormulaireManager:
                 "Les soumissions de demandes sont actuellement fermées par l'administration.\n\n"
                 "<i>Veuillez réessayer ultérieurement.</i>"
             )
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]])
             if update.callback_query:
                 await update.callback_query.answer("⛔ Demandes suspendues", show_alert=True)
             await self._edit_or_send(update, context, msg, reply_markup=kb)
@@ -221,7 +221,7 @@ class FormulaireManager:
                 "La soumission des demandes vient d'être suspendue par l'administration.\n\n"
                 "<i>Votre saisie en cours est annulée. Veuillez réessayer ultérieurement.</i>"
             )
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]])
 
             if update.callback_query:
                 await update.callback_query.answer("⛔ Demandes suspendues.", show_alert=True)
@@ -259,7 +259,7 @@ class FormulaireManager:
                         f"Vous avez déjà <b>{count_user}</b> dossier(s) actif(s) en cours de traitement.\n\n"
                         "<i>Cette création ne peut pas être finalisée pour le moment.</i>"
                     )
-                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]])
+                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]])
 
                     if update.callback_query:
                         await update.callback_query.answer("⚠️ Quota maximal atteint.", show_alert=True)
@@ -301,8 +301,8 @@ class FormulaireManager:
                     "<i>⭐ Devenez VIP pour créer des demandes sans restriction de quota !</i>"
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⭐ Passer VIP", callback_data="menu_vip_shop")],
-                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                    [InlineKeyboardButton("⭐ PASSER VIP ⭐", callback_data="menu_vip_shop")],
+                    [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]
                 ])
                 if update.callback_query:
                     await update.callback_query.answer("Plafond global atteint.", show_alert=True)
@@ -327,8 +327,8 @@ class FormulaireManager:
                     "<i>⭐ Devenez VIP pour bénéficier de demandes illimitées !</i>"
                 )
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⭐ Passer VIP", callback_data="menu_vip_shop")],
-                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                    [InlineKeyboardButton("⭐ PASSER VIP ⭐", callback_data="menu_vip_shop")],
+                    [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]
                 ])
                 if update.callback_query:
                     await update.callback_query.answer("Quota individuel atteint.", show_alert=True)
@@ -340,10 +340,10 @@ class FormulaireManager:
     def _get_orientation_keyboard(self) -> InlineKeyboardMarkup:
         """Construit le clavier de choix de l'orientation cible."""
         buttons = [
-            [InlineKeyboardButton("👩‍❤️‍👨 Hétéro (Défaut)", callback_data="ori_hetero")],
-            [InlineKeyboardButton("👨‍❤️‍👨 Gay", callback_data="ori_gay")],
-            [InlineKeyboardButton("🔄 Bi (Les deux)", callback_data="ori_bi")],
-            [InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")]
+            [InlineKeyboardButton("🫂 HÉTÉRO 🫂", callback_data="ori_hetero")],
+            [InlineKeyboardButton("🌈 GAY 🌈", callback_data="ori_gay")],
+            [InlineKeyboardButton("💃 BI 🕺", callback_data="ori_bi")],
+            [InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")]
         ]
         return InlineKeyboardMarkup(buttons)
 
@@ -433,15 +433,16 @@ class FormulaireManager:
         context.user_data.setdefault("demande", {})["orientation"] = orientation
 
         label_map = {
-            "hetero": "👩‍❤️‍👨 Hétéro",
-            "gay": "👨‍❤️‍👨 Gay",
-            "bi": "🔄 Bi (Les deux)"
+            "hetero": "🫂 Hétéro",
+            "gay": "🌈 Gay",
+            "bi": "💃 Bi"
         }
         ori_label = label_map.get(orientation, orientation.capitalize())
 
         text = (
-            f"✅ Orientation choisie : <b>{ori_label}</b>\n\n"
-            "👤 Quel est maintenant le <b>prénom</b> de la personne ?"
+            f"✅ Orientation choisie : {ori_label}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "👤 Quel est son prénom ?"
         )
         kb = self.navigation.create_navigation_keyboard(self.PRENOM)
         await self._edit_or_send(update, context, text, reply_markup=kb)
@@ -459,9 +460,13 @@ class FormulaireManager:
             val = Validators.validate_prenom(user_input)
             context.user_data.setdefault("demande", {})["prenom"] = val
 
+            text = (
+                f"✅ Prénom enregistré : <b>{html.escape(val)}</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "👤 Indiquez maintenant son nom de famille (ou passez) :"
+            )
             await update.message.reply_text(
-                f"✅ Prénom enregistré : <b>{html.escape(val)}</b>\n\n"
-                "Indiquez maintenant son nom de famille (ou passez) :",
+                text,
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.NOM, include_skip=True),
             )
@@ -486,9 +491,13 @@ class FormulaireManager:
             val = Validators.validate_nom(user_input)
             context.user_data.setdefault("demande", {})["nom"] = val
 
+            text = (
+                f"✅ Nom enregistré : <b>{html.escape(val)}</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "🎂 Indiquez maintenant son âge (entre 18 et 40 ans) :"
+            )
             await update.message.reply_text(
-                f"✅ Nom enregistré : <b>{html.escape(val)}</b>\n\n"
-                "Indiquez maintenant son âge (entre 18 et 40 ans) :",
+                text,
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.AGE),
             )
@@ -506,7 +515,11 @@ class FormulaireManager:
             return ConversationHandler.END
 
         context.user_data.setdefault("demande", {})["nom"] = None
-        text = "⏭️ Nom ignoré.\n\nIndiquez son âge (entre 18 et 40 ans) :"
+        text = (
+            "⏭️ Nom ignoré.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🎂 Indiquez son âge (entre 18 et 40 ans) :"
+        )
         kb = self.navigation.create_navigation_keyboard(self.AGE)
         await self._edit_or_send(update, context, text, reply_markup=kb)
         return self.AGE
@@ -523,9 +536,13 @@ class FormulaireManager:
             val = Validators.validate_age(user_input)
             context.user_data.setdefault("demande", {})["age"] = val
 
+            text = (
+                f"✅ Âge enregistré : <b>{val} ans</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "📍 Sa localisation (ville, département ou région) :"
+            )
             await update.message.reply_text(
-                f"✅ Âge enregistré : <b>{val} ans</b>\n\n"
-                "Sa localisation (ville, département ou région) :",
+                text,
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.LOCALISATION),
             )
@@ -550,9 +567,13 @@ class FormulaireManager:
             val = Validators.validate_localisation(user_input)
             context.user_data.setdefault("demande", {})["localisation"] = val
 
+            text = (
+                f"✅ Localisation enregistrée : <b>{html.escape(val)}</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "📸 Envoyez une photo pour accompagner la demande :"
+            )
             await update.message.reply_text(
-                f"✅ Localisation enregistrée : <b>{html.escape(val)}</b>\n\n"
-                "📸 Envoyez une photo pour accompagner la demande :",
+                text,
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.PHOTO),
             )
@@ -587,9 +608,13 @@ class FormulaireManager:
 
             context.user_data.setdefault("demande", {})["photo_id"] = best.file_id
 
+            text = (
+                "✅ Photo reçue avec succès !\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "📸 Indiquez son profil <b>Instagram</b> (ou passez) :"
+            )
             await update.message.reply_text(
-                "✅ Photo reçue avec succès !\n\n"
-                "Indiquez son profil <b>Instagram</b> (ou passez) :",
+                text,
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.INSTAGRAM, include_skip=True),
             )
@@ -672,9 +697,9 @@ class FormulaireManager:
             if is_duplicate:
                 support_url = self._get_support_url()
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Contacter le Support", url=support_url)],
-                    [InlineKeyboardButton("↩️ Modifier ma saisie", callback_data="form_retry_instagram")],
-                    [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                    [InlineKeyboardButton("💬 CONTACTER LE SUPPORT 💬", url=support_url)],
+                    [InlineKeyboardButton("↩️ MODIFIER MA SAISIE ↩️", callback_data="form_retry_instagram")],
+                    [InlineKeyboardButton("❌ ANNULER LA DEMANDE ❌", callback_data="form_cancel")]
                 ])
                 await update.message.reply_text(
                     f"⚠️ <b>Dossier déjà existant !</b>\n\n"
@@ -687,9 +712,13 @@ class FormulaireManager:
                 return self.INSTAGRAM
 
             context.user_data.setdefault("demande", {})["instagram"] = val
+            text = (
+                f"✅ Instagram enregistré : <b>@{html.escape(val)}</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "👻 Indiquez son nom d'utilisateur <b>Snapchat</b> (ou passez) :"
+            )
             await update.message.reply_text(
-                f"✅ Instagram enregistré : <b>@{html.escape(val)}</b>\n\n"
-                "Indiquez son nom d'utilisateur <b>Snapchat</b> (ou passez) :",
+                text,
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.SNAPCHAT, include_skip=True),
             )
@@ -708,7 +737,8 @@ class FormulaireManager:
 
         context.user_data.setdefault("demande", {})["instagram"] = None
         text = (
-            "⏭️ Instagram ignoré.\n\n"
+            "⏭️ Instagram ignoré.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "⚠️ <b>Au moins un réseau social est obligatoire.</b>\n"
             "Veuillez indiquer son compte <b>Snapchat</b> :"
         )
@@ -734,8 +764,8 @@ class FormulaireManager:
                     "Veuillez revenir en arrière pour indiquer Instagram.",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.SNAPCHAT}")],
-                        [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                        [InlineKeyboardButton("⬅️ RETOURNER À INSTAGRAM ⬅️", callback_data=f"form_back_{self.SNAPCHAT}")],
+                        [InlineKeyboardButton("❌ ANNULER LA DEMANDE ❌", callback_data="form_cancel")]
                     ])
                 )
                 return self.SNAPCHAT
@@ -752,8 +782,8 @@ class FormulaireManager:
                             "Veuillez revenir en arrière pour renseigner un profil Instagram.",
                             parse_mode="HTML",
                             reply_markup=InlineKeyboardMarkup([
-                                [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.SNAPCHAT}")],
-                                [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                                [InlineKeyboardButton("⬅️ RETOURNER À INSTAGRAM ⬅️", callback_data=f"form_back_{self.SNAPCHAT}")],
+                                [InlineKeyboardButton("❌ ANNULER LA DEMANDE ❌", callback_data="form_cancel")]
                             ])
                         )
                         return self.SNAPCHAT
@@ -769,9 +799,9 @@ class FormulaireManager:
             if is_duplicate:
                 support_url = self._get_support_url()
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Contacter le Support", url=support_url)],
-                    [InlineKeyboardButton("↩️ Modifier ma saisie", callback_data="form_retry_snapchat")],
-                    [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                    [InlineKeyboardButton("💬 CONTACTER LE SUPPORT 💬", url=support_url)],
+                    [InlineKeyboardButton("↩️ MODIFIER MA SAISIE ↩️", callback_data="form_retry_snapchat")],
+                    [InlineKeyboardButton("❌ ANNULER LA DEMANDE ❌", callback_data="form_cancel")]
                 ])
                 await update.message.reply_text(
                     f"⚠️ <b>Dossier déjà existant !</b>\n\n"
@@ -784,9 +814,13 @@ class FormulaireManager:
                 return self.SNAPCHAT
 
             context.user_data.setdefault("demande", {})["snapchat"] = val
+            text = (
+                f"✅ Snapchat enregistré : <b>{html.escape(val)}</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "📝 Avez-vous des détails ou remarques supplémentaires à ajouter ?"
+            )
             await update.message.reply_text(
-                f"✅ Snapchat enregistré : <b>{html.escape(val)}</b>\n\n"
-                "Avez-vous des détails ou remarques supplémentaires à ajouter ?",
+                text,
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.DETAILS, include_skip=True),
             )
@@ -814,14 +848,18 @@ class FormulaireManager:
                 "Saisissez son pseudo Snapchat ci-dessous ou revenez à l'étape précédente pour renseigner Instagram :"
             )
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.SNAPCHAT}")],
-                [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
+                [InlineKeyboardButton("⬅️ RETOURNER À INSTAGRAM ⬅️", callback_data=f"form_back_{self.SNAPCHAT}")],
+                [InlineKeyboardButton("❌ ANNULER LA DEMANDE ❌", callback_data="form_cancel")]
             ])
             await self._edit_or_send(update, context, msg, reply_markup=kb)
             return self.SNAPCHAT
 
         demande["snapchat"] = None
-        text = "⏭️ Snapchat ignoré.\n\nAvez-vous des détails ou remarques supplémentaires à ajouter ?"
+        text = (
+            "⏭️ Snapchat ignoré.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "📝 Avez-vous des détails ou remarques supplémentaires à ajouter ?"
+        )
         kb = self.navigation.create_navigation_keyboard(self.DETAILS, include_skip=True)
         await self._edit_or_send(update, context, text, reply_markup=kb)
         return self.DETAILS
@@ -838,16 +876,18 @@ class FormulaireManager:
             if user_input and not Validators.is_skip_command(user_input):
                 val = Validators.validate_details(user_input)
                 context.user_data.setdefault("demande", {})["details"] = val
-                confirm_txt = f"✅ Détails notés : <i>{html.escape(val)}</i>\n\n"
+                confirm_txt = f"✅ Détails notés : <i>{html.escape(val)}</i>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
             else:
                 context.user_data.setdefault("demande", {})["details"] = None
-                confirm_txt = "⏭️ Aucun détail supplémentaire noté.\n\n"
+                confirm_txt = "⏭️ Aucun détail supplémentaire noté.\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
             reply_markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⭐ Oui - Prioritaire", callback_data="priorite_oui")],
-                [InlineKeyboardButton("📝 Non - Standard", callback_data="priorite_non")],
-                [InlineKeyboardButton("⬅️ Retour", callback_data=f"form_back_{self.PRIORITAIRE}")],
-                [InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")],
+                [
+                    InlineKeyboardButton("⭐ OUI - PRIORITAIRE", callback_data="priorite_oui"),
+                    InlineKeyboardButton("📝 NON - STANDARD", callback_data="priorite_non")
+                ],
+                [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data=f"form_back_{self.PRIORITAIRE}")],
+                [InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")]
             ])
 
             await update.message.reply_text(
@@ -871,13 +911,16 @@ class FormulaireManager:
 
         context.user_data.setdefault("demande", {})["details"] = None
         reply_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⭐ Oui - Prioritaire", callback_data="priorite_oui")],
-            [InlineKeyboardButton("📝 Non - Standard", callback_data="priorite_non")],
-            [InlineKeyboardButton("⬅️ Retour", callback_data=f"form_back_{self.PRIORITAIRE}")],
-            [InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")],
+            [
+                InlineKeyboardButton("⭐ OUI - PRIORITAIRE", callback_data="priorite_oui"),
+                InlineKeyboardButton("📝 NON - STANDARD", callback_data="priorite_non")
+            ],
+            [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data=f"form_back_{self.PRIORITAIRE}")],
+            [InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")]
         ])
         msg = (
-            "⏭️ Détails ignorés.\n\n"
+            "⏭️ Détails ignorés.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "💎 <b>Souhaitez-vous une demande prioritaire ?</b>\n\n"
             "Les demandes prioritaires nécessitent un montant et sont examinées en priorité."
         )
@@ -895,7 +938,8 @@ class FormulaireManager:
         await query.answer()
         if query.data == "priorite_oui":
             await query.edit_message_text(
-                "💰 <b>Demande prioritaire</b>\n\n"
+                "💰 <b>Demande prioritaire</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "Indiquez le montant alloué (en €) :",
                 parse_mode="HTML",
                 reply_markup=self.navigation.create_navigation_keyboard(self.MONTANT),
@@ -943,13 +987,11 @@ class FormulaireManager:
         if self.db_manager.is_user_vip(user.id):
             auto_pref = self.db_manager.get_user_vip_auto_assign(user.id)
 
-            # Option A : Le VIP a choisi de ne jamais choisir
             if auto_pref == "none":
                 context.user_data.setdefault("demande", {})["target_admin_id"] = None
                 await self.save_demande(update, context)
                 return ConversationHandler.END
 
-            # Option B : Le VIP a défini un piégeur automatique par défaut
             elif auto_pref != "prompt" and auto_pref.isdigit():
                 auto_staff_id = int(auto_pref)
                 if not self.db_manager.is_staff_paused(auto_staff_id) and auto_staff_id != user.id:
@@ -957,22 +999,21 @@ class FormulaireManager:
                     await self.save_demande(update, context)
                     return ConversationHandler.END
 
-            # Option C : Choix initial
             text = (
-                "⭐ <b>Avantage Membre VIP : Attribution du dossier</b>\n\n"
+                "⭐ <b>Avantage Membre VIP : Attribution du dossier</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "Souhaitez-vous confier cette demande à un membre précis de l'équipe, "
                 "ou la rendre immédiatement disponible pour l'ensemble des piégeurs ?"
             )
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎯 Choisir mon piégeur", callback_data="vip_opt_choose")],
-                [InlineKeyboardButton("🎲 Ne pas choisir (Toute l'équipe)", callback_data="vip_opt_none")],
-                [InlineKeyboardButton("⬅️ Retour", callback_data=f"form_back_{self.CHOIX_ADMIN}")],
-                [InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")]
+                [InlineKeyboardButton("🎯 CHOISIR MON PIÉGEUR 🎯", callback_data="vip_opt_choose")],
+                [InlineKeyboardButton("🎲 NE PAS CHOISIR (TOUTE L'ÉQUIPE) 🎲", callback_data="vip_opt_none")],
+                [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data=f"form_back_{self.CHOIX_ADMIN}")],
+                [InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")]
             ])
             await self._edit_or_send(update, context, text, reply_markup=kb)
             return self.CHOIX_ADMIN
 
-        # Utilisateur standard : enregistrement direct
         await self.save_demande(update, context)
         return ConversationHandler.END
 
@@ -1001,17 +1042,18 @@ class FormulaireManager:
             if is_compatible:
                 kb_rows.append([
                     InlineKeyboardButton(
-                        f"🦈 {alias}",
+                        f"🦈 {alias.upper()} 🦈",
                         callback_data=f"vip_assign_admin_{member['user_id']}"
                     )
                 ])
 
-        kb_rows.append([InlineKeyboardButton("🎲 Ne pas choisir (Toute l'équipe)", callback_data="vip_assign_admin_0")])
-        kb_rows.append([InlineKeyboardButton("⬅️ Retour", callback_data="vip_opt_back")])
-        kb_rows.append([InlineKeyboardButton("❌ Annuler", callback_data="form_cancel")])
+        kb_rows.append([InlineKeyboardButton("🎲 NE PAS CHOISIR (TOUTE L'ÉQUIPE) 🎲", callback_data="vip_assign_admin_0")])
+        kb_rows.append([InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data="vip_opt_back")])
+        kb_rows.append([InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")])
 
         msg = (
-            "🎯 <b>Sélection de votre piégeur</b>\n\n"
+            "🎯 <b>Sélection de votre piégeur</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "Cliquez sur le membre de l'équipe à qui vous souhaitez soumettre ce dossier :"
         )
         await self._edit_or_send(update, context, msg, reply_markup=InlineKeyboardMarkup(kb_rows))
@@ -1027,7 +1069,6 @@ class FormulaireManager:
 
         data = query.data
 
-        # 1. Le VIP clique sur "Ne pas choisir"
         if data in ("vip_opt_none", "vip_assign_admin_0"):
             await query.answer()
             demande = context.user_data.setdefault("demande", {})
@@ -1035,18 +1076,15 @@ class FormulaireManager:
             await self.save_demande(update, context)
             return ConversationHandler.END
 
-        # 2. Le VIP clique sur "Choisir mon piégeur"
         elif data == "vip_opt_choose":
             await query.answer()
             await self._show_vip_staff_picker(update, context)
             return self.CHOIX_ADMIN
 
-        # 3. Retour au menu à 2 choix
         elif data == "vip_opt_back":
             await query.answer()
             return await self.prompt_admin_selection_or_save(update, context)
 
-        # 4. Le VIP a sélectionné un membre précis dans la liste
         elif data.startswith("vip_assign_admin_"):
             await query.answer()
             admin_selected_id = int(data.replace("vip_assign_admin_", ""))
@@ -1060,7 +1098,7 @@ class FormulaireManager:
 
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("demande", None)
-        msg = "❌ Création de demande annulée.\nTapez /start pour revenir au menu."
+        msg = "❌ <b>Création de demande annulée.</b>\nTapez /start pour revenir au menu."
         if update.callback_query:
             await update.callback_query.answer()
         await self._edit_or_send(update, context, msg)
@@ -1155,10 +1193,8 @@ class FormulaireManager:
                 "Tapez /demandes pour suivre son avancement."
             )
 
-            # 1. Réponse instantanée à l'utilisateur
             await self._edit_or_send(update, context, recap)
 
-            # 2. Diffusion d'alertes en tâche de fond (Fire-and-Forget)
             if target_admin_id and statut_initial == "🎯 Assignée (VIP)":
                 asyncio.create_task(
                     self._send_vip_assignment_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
@@ -1195,8 +1231,8 @@ class FormulaireManager:
             "<i>Acceptez-vous cette prise en charge ?</i>"
         )
         alert_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Accepter la mission", callback_data=f"vip_accept_{demande_id}")],
-            [InlineKeyboardButton("❌ Décliner la demande", callback_data=f"vip_decline_{demande_id}")]
+            [InlineKeyboardButton("✅ ACCEPTER LA MISSION 🎯", callback_data=f"vip_accept_{demande_id}")],
+            [InlineKeyboardButton("❌ DÉCLINER LA DEMANDE ❌", callback_data=f"vip_decline_{demande_id}")]
         ])
 
         try:
@@ -1273,8 +1309,8 @@ class FormulaireManager:
             f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}"
         )
         alert_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❤️ Prendre en charge", callback_data=f"suivre_demande_{demande_id}")],
-            [InlineKeyboardButton("📮 Voir les disponibles", callback_data="demandes_disponibles")]
+            [InlineKeyboardButton("⚡ PRENDRE EN CHARGE ⚡", callback_data=f"suivre_demande_{demande_id}")],
+            [InlineKeyboardButton("📮 VOIR LES DISPONIBLES 📮", callback_data="demandes_disponibles")]
         ])
 
         staff_destinataires = self.config.get_all_staff() or self.config.get_all_admins()
