@@ -1,4 +1,4 @@
-"""Module de consultation des profils statistiques pour opérateurs (Staff) et demandeurs."""
+"""Module de consultation des profils statistiques pour opérateurs (Staff) et demandeurs avec gestion des bannissements."""
 
 import html
 import logging
@@ -15,7 +15,7 @@ class ProfilsManager:
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
         self.config = config
-        logger.info("ProfilsManager initialisé avec supervision hiérarchique des demandes")
+        logger.info("ProfilsManager initialisé avec supervision hiérarchique et contrôle des bannissements")
 
     def _render_progress_bar(self, rate: float) -> str:
         """Génère une jauge graphique sur 10 blocs."""
@@ -27,6 +27,15 @@ class ProfilsManager:
         filled = max(0, min(10, filled))
         empty = 10 - filled
         return f"{'🟩' * filled}{'⬜' * empty}"
+
+    def _can_viewer_ban(self, viewer_id: int) -> bool:
+        """Indique si l'utilisateur consultant la fiche a le droit d'exécuter un ban."""
+        if self.config.is_owner(viewer_id):
+            return True
+        if self.config.is_admin(viewer_id):
+            privs = self.db_manager.get_admin_privileges(viewer_id)
+            return bool(privs.get("is_owner") or privs.get("can_ban_users") or privs.get("perm_ban"))
+        return False
 
     async def _render_clean_view(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
         """Met à jour le message ou supprime la photo existante pour envoyer le profil texte."""
@@ -112,21 +121,23 @@ class ProfilsManager:
     # ==================== PROFIL OPÉRATEUR / STAFF ====================
 
     async def show_admin_profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
-        """Affiche la fiche détaillée de performance d'un membre de l'équipe (visible admins ou soi-même)."""
+        """Affiche la fiche détaillée de performance d'un membre de l'équipe avec option ban."""
         query = update.callback_query
         if not query or not update.effective_user:
             return
 
-        user_id = update.effective_user.id
-        is_owner = self.config.is_owner(user_id)
-        is_admin = self.config.is_admin(user_id)
+        viewer_id = update.effective_user.id
+        is_owner = self.config.is_owner(viewer_id)
+        is_admin = self.config.is_admin(viewer_id)
 
-        if user_id != admin_id and not (is_admin or is_owner):
+        if viewer_id != admin_id and not (is_admin or is_owner):
             await query.answer("🔒 Les fiches des piégeurs sont réservées aux administrateurs.", show_alert=True)
             return
 
         stats = self.db_manager.get_admin_stats(admin_id)
         alias_esc = html.escape(str(stats.get("alias") or f"Membre_{admin_id}"))
+
+        is_target_banned = self.db_manager.is_user_banned(admin_id)
 
         if self.config.is_owner(admin_id):
             date_str = "Direction / Propriétaire"
@@ -151,6 +162,12 @@ class ProfilsManager:
             f"🆔 ID Telegram : <code>{admin_id}</code>",
             f"📅 Dans l'équipe : <b>{html.escape(date_str)}</b>",
             f"🛡️ Permissions : <i>{html.escape(str(res_label))} | {html.escape(str(typ_label))}</i>\n",
+        ]
+
+        if is_target_banned:
+            lines.insert(1, "🚫 <b>STATUT : COMPTE ACTUELLEMENT BANNI</b>\n")
+
+        lines.extend([
             "━━━━━━━━━━━━━━━━━━━━━━",
             "📊 <b>PERFORMANCE OPÉRATIONNELLE</b>\n",
             f"⏳ <b>En cours de traitement :</b> <code>{stats.get('en_cours', 0)}</code>",
@@ -162,197 +179,32 @@ class ProfilsManager:
             "💎 <b>DOSSIERS PRIORITAIRES</b>",
             f"• Demandes prioritaires traitées : <b>{stats.get('prioritaires_traitees', 0)}</b>",
             f"• Volume financier traité : <b>{montant_total:.2f} €</b>"
-        ]
+        ])
 
         text = "\n".join(lines)
         buttons = [
-            [InlineKeyboardButton("📂 Voir ses demandes", callback_data=f"staff_view_demandes_{admin_id}")]
+            [InlineKeyboardButton("📂 VOIR SES DEMANDES 📂", callback_data=f"staff_view_demandes_{admin_id}")]
         ]
 
-        if is_owner and user_id != admin_id:
+        # Bouton BANNIR / DÉBANNIR pour le staff (si viewer a la perm et ne se cible pas lui-même)
+        if self._can_viewer_ban(viewer_id) and viewer_id != admin_id and not self.config.is_owner(admin_id):
+            if is_target_banned:
+                buttons.append([InlineKeyboardButton("🟢 DÉBANNIR CE PIÉGEUR 🟢", callback_data=f"unban_staff_{admin_id}")])
+            else:
+                buttons.append([InlineKeyboardButton("🚫 BANNIR CE PIÉGEUR 🚫", callback_data=f"ban_prompt_staff_{admin_id}")])
+
+        if is_owner and viewer_id != admin_id:
             buttons.append([
-                InlineKeyboardButton("🛡️ Modifier ses droits", callback_data=f"perm_staff_{admin_id}"),
-                InlineKeyboardButton("🏷️ Renommer", callback_data=f"owner_edit_alias_{admin_id}")
+                InlineKeyboardButton("🛡️ MODIFIER SES DROITS 🛡️", callback_data=f"perm_staff_{admin_id}"),
+                InlineKeyboardButton("🏷️ RENOMMER 🏷️", callback_data=f"owner_edit_alias_{admin_id}")
             ])
-            buttons.append([InlineKeyboardButton("👥 Retour Équipe Staff", callback_data="gerer_staff")])
-        elif (is_admin or is_owner) and user_id != admin_id:
-            buttons.append([InlineKeyboardButton("👥 Retour Équipe Staff", callback_data="gerer_staff")])
+            buttons.append([InlineKeyboardButton("👥 RETOUR ÉQUIPE STAFF 👥", callback_data="gerer_staff")])
+        elif (is_admin or is_owner) and viewer_id != admin_id:
+            buttons.append([InlineKeyboardButton("👥 RETOUR ÉQUIPE STAFF 👥", callback_data="gerer_staff")])
         else:
-            buttons.append([InlineKeyboardButton("🔙 Menu Paramètres", callback_data="parametres")])
+            buttons.append([InlineKeyboardButton("🔙 MENU PARAMÈTRES 🔙", callback_data="parametres")])
 
         await self._render_clean_view(query, context, text, InlineKeyboardMarkup(buttons))
-
-    # ==================== SOUS-MENUS ET LISTES DEMANDES PIÉGEUR ====================
-
-    async def show_staff_demandes_menu(self, query, context: ContextTypes.DEFAULT_TYPE, staff_id: int):
-        alias = self.db_manager.get_staff_alias(staff_id)
-        alias_esc = html.escape(str(alias or f"Staff_{staff_id}"))
-
-        with self.db_manager.get_cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT COUNT(*) as cnt FROM demandes d
-                JOIN demandes_suivi ds ON d.id = ds.demande_id
-                WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours', '✅ Réussie')
-                """,
-                (staff_id,)
-            )
-            cnt_flw_act = cursor.fetchone()["cnt"]
-
-            cursor.execute("SELECT COUNT(*) as cnt FROM archives WHERE admin_en_charge = %s", (staff_id,))
-            cnt_flw_arch = cursor.fetchone()["cnt"]
-
-            cursor.execute("SELECT COUNT(*) as cnt FROM demandes WHERE user_id = %s", (staff_id,))
-            cnt_crt_act = cursor.fetchone()["cnt"]
-
-            cursor.execute("SELECT COUNT(*) as cnt FROM archives WHERE user_id = %s", (staff_id,))
-            cnt_crt_arch = cursor.fetchone()["cnt"]
-
-        text = (
-            f"📂 <b>Dossiers associés à {alias_esc}</b>\n\n"
-            "Choisissez la catégorie de demandes à consulter :"
-        )
-
-        keyboard = [
-            [InlineKeyboardButton(f"🔄 Dossiers suivis en cours ({cnt_flw_act})", callback_data=f"staff_list_{staff_id}_flwact_0")],
-            [InlineKeyboardButton(f"📦 Dossiers suivis archivés ({cnt_flw_arch})", callback_data=f"staff_list_{staff_id}_flwarch_0")],
-            [InlineKeyboardButton(f"📝 Demandes déposées actives ({cnt_crt_act})", callback_data=f"staff_list_{staff_id}_crtact_0")],
-            [InlineKeyboardButton(f"🗄️ Demandes déposées archivées ({cnt_crt_arch})", callback_data=f"staff_list_{staff_id}_crtarch_0")],
-            [InlineKeyboardButton("↩️ Retour Fiche Piégeur", callback_data=f"profil_admin_{staff_id}")]
-        ]
-
-        await self._render_clean_view(query, context, text, InlineKeyboardMarkup(keyboard))
-
-    async def show_staff_demandes_list(self, query, context: ContextTypes.DEFAULT_TYPE, staff_id: int, category: str, page: int = 0):
-        alias = self.db_manager.get_staff_alias(staff_id)
-        alias_esc = html.escape(str(alias or f"Staff_{staff_id}"))
-
-        limit = 5
-        offset = max(0, page * limit)
-
-        titles = {
-            "flwact": f"🔄 <b>Dossiers suivis en cours ({alias_esc})</b>",
-            "flwarch": f"📦 <b>Dossiers suivis archivés ({alias_esc})</b>",
-            "crtact": f"📝 <b>Demandes déposées actives ({alias_esc})</b>",
-            "crtarch": f"🗄️ <b>Demandes déposées archivées ({alias_esc})</b>",
-        }
-        titre = titles.get(category, "Dossiers")
-        current_list_callback = f"staff_list_{staff_id}_{category}_{page}"
-
-        items = []
-        total = 0
-
-        with self.db_manager.get_cursor() as cursor:
-            if category == "flwact":
-                cursor.execute(
-                    """
-                    SELECT COUNT(*) as cnt FROM demandes d
-                    JOIN demandes_suivi ds ON d.id = ds.demande_id
-                    WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours', '✅ Réussie')
-                    """,
-                    (staff_id,)
-                )
-                total = cursor.fetchone()["cnt"]
-
-                cursor.execute(
-                    """
-                    SELECT d.id, d.request_number, d.prenom, d.nom, d.statut, d.prioritaire, d.is_difficile, d.reussie_substatus
-                    FROM demandes d
-                    JOIN demandes_suivi ds ON d.id = ds.demande_id
-                    WHERE ds.admin_id = %s AND d.statut IN ('⏳ En attente', '🔄 En cours', '✅ Réussie')
-                    ORDER BY d.date_modification DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (staff_id, limit, offset)
-                )
-                items = cursor.fetchall()
-
-            elif category == "flwarch":
-                cursor.execute("SELECT COUNT(*) as cnt FROM archives WHERE admin_en_charge = %s", (staff_id,))
-                total = cursor.fetchone()["cnt"]
-
-                cursor.execute(
-                    """
-                    SELECT id, original_id, prenom, nom, statut, prioritaire
-                    FROM archives WHERE admin_en_charge = %s
-                    ORDER BY date_archivage DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (staff_id, limit, offset)
-                )
-                items = cursor.fetchall()
-
-            elif category == "crtact":
-                cursor.execute("SELECT COUNT(*) as cnt FROM demandes WHERE user_id = %s", (staff_id,))
-                total = cursor.fetchone()["cnt"]
-
-                cursor.execute(
-                    """
-                    SELECT id, request_number, prenom, nom, statut, prioritaire, is_difficile, reussie_substatus
-                    FROM demandes WHERE user_id = %s
-                    ORDER BY date_creation DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (staff_id, limit, offset)
-                )
-                items = cursor.fetchall()
-
-            elif category == "crtarch":
-                cursor.execute("SELECT COUNT(*) as cnt FROM archives WHERE user_id = %s", (staff_id,))
-                total = cursor.fetchone()["cnt"]
-
-                cursor.execute(
-                    """
-                    SELECT id, original_id, prenom, nom, statut, prioritaire
-                    FROM archives WHERE user_id = %s
-                    ORDER BY date_archivage DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (staff_id, limit, offset)
-                )
-                items = cursor.fetchall()
-
-        text_lines = [titre, f"Total : <b>{total}</b> dossier(s)\n"]
-        keyboard_rows = []
-
-        if not items:
-            text_lines.append("<i>Aucun dossier dans cette catégorie.</i>")
-        else:
-            for item in items:
-                req_num = html.escape(str(item.get("request_number") or item.get("original_id") or item["id"]))
-                prenom = html.escape(str(item.get("prenom") or "Inconnu"))
-                nom = html.escape(str(item.get("nom") or ""))
-                prio_tag = "💎 " if item.get("prioritaire") else ""
-                statut_display = html.escape(str(self.db_manager.format_statut_display(
-                    item.get("statut", ""),
-                    item.get("is_difficile", False),
-                    item.get("reussie_substatus")
-                )))
-
-                text_lines.append(f"• #{req_num} — {prio_tag}<b>{prenom} {nom}</b> : <code>{statut_display}</code>")
-
-                if category in ("flwact", "crtact"):
-                    keyboard_rows.append([
-                        InlineKeyboardButton(f"📄 Ouvrir #{req_num} ({prenom})", callback_data=f"retour_texte_{item['id']}_back_{current_list_callback}")
-                    ])
-                else:
-                    keyboard_rows.append([
-                        InlineKeyboardButton(f"📦 Archive #{req_num} ({prenom})", callback_data=f"archive_view_{item['id']}_back_{current_list_callback}")
-                    ])
-
-        # Pagination
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Précédent", callback_data=f"staff_list_{staff_id}_{category}_{page - 1}"))
-        if (offset + limit) < total:
-            nav_buttons.append(InlineKeyboardButton("Suivant ➡️", callback_data=f"staff_list_{staff_id}_{category}_{page + 1}"))
-
-        if nav_buttons:
-            keyboard_rows.append(nav_buttons)
-
-        keyboard_rows.append([InlineKeyboardButton("↩️ Retour Choix Catégorie", callback_data=f"staff_view_demandes_{staff_id}")])
-
-        await self._render_clean_view(query, context, "\n".join(text_lines), InlineKeyboardMarkup(keyboard_rows))
 
     # ==================== PROFIL DEMANDEUR / UTILISATEUR ====================
 
@@ -394,6 +246,7 @@ class ProfilsManager:
     async def _render_user_profile(
         self, query, context: ContextTypes.DEFAULT_TYPE, target_user_id: int, origin_demande_id: int = 0, demande_data: dict = None
     ):
+        viewer_id = query.from_user.id
         stats = self.db_manager.get_user_stats(target_user_id)
 
         raw_prenom = (
@@ -414,11 +267,18 @@ class ProfilsManager:
         date_act = str(dt_act)[:16] if dt_act else "Inconnue"
 
         montant_investi = float(stats.get("montant_total_investi") or 0.0)
+        is_target_banned = self.db_manager.is_user_banned(target_user_id)
 
         lines = [
             f"👤 <b>Fiche Utilisateur : {prenom_demandeur}</b>",
             f"🏷️ Pseudo : {pseudo}",
             f"🆔 ID : <code>{target_user_id}</code>\n",
+        ]
+
+        if is_target_banned:
+            lines.insert(1, "🚫 <b>STATUT : COMPTE ACTUELLEMENT BANNI</b>\n")
+
+        lines.extend([
             f"📅 Inscrit le : <b>{html.escape(date_insc)}</b>",
             f"⏱️ Dernière activité : <i>{html.escape(date_act)}</i>\n",
             "━━━━━━━━━━━━━━━━━━━━━━",
@@ -429,17 +289,24 @@ class ProfilsManager:
             f"✅ Terminées avec succès : <b>{stats.get('reussies', 0)}</b>",
             f"❌ Demandes échouées / refusées : <b>{stats.get('abandonnees', 0)}</b>\n",
             f"💎 <b>Demandes payantes :</b> {stats.get('total_prio', 0)} (Total investi : <b>{montant_investi:.2f} €</b>)"
-        ]
+        ])
 
         text = "\n".join(lines)
         buttons = [
-            [InlineKeyboardButton("📋 Voir ses demandes", callback_data=f"user_view_demandes_{target_user_id}_{origin_demande_id}")]
+            [InlineKeyboardButton("📋 VOIR SES DEMANDES 📋", callback_data=f"user_view_demandes_{target_user_id}_{origin_demande_id}")]
         ]
 
+        # Bouton BANNIR / DÉBANNIR sous VOIR SES DEMANDES
+        if self._can_viewer_ban(viewer_id) and viewer_id != target_user_id and not self.config.is_owner(target_user_id):
+            if is_target_banned:
+                buttons.append([InlineKeyboardButton("🟢 DÉBANNIR L'UTILISATEUR 🟢", callback_data=f"unban_user_{target_user_id}_{origin_demande_id}")])
+            else:
+                buttons.append([InlineKeyboardButton("🚫 BANNIR L'UTILISATEUR 🚫", callback_data=f"ban_prompt_user_{target_user_id}_{origin_demande_id}")])
+
         if origin_demande_id:
-            buttons.append([InlineKeyboardButton("↩️ Retour à la demande", callback_data=f"retour_texte_{origin_demande_id}")])
+            buttons.append([InlineKeyboardButton("↩️ RETOUR À LA DEMANDE ↩️", callback_data=f"retour_texte_{origin_demande_id}")])
         else:
-            buttons.append([InlineKeyboardButton("🔙 Menu Gestion", callback_data="gerer_demandes")])
+            buttons.append([InlineKeyboardButton("🔙 MENU GESTION 🔙", callback_data="gerer_demandes")])
 
         await self._render_clean_view(query, context, text, InlineKeyboardMarkup(buttons))
 
@@ -670,7 +537,7 @@ class ProfilsManager:
         )
 
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("↩️ Retour à la liste", callback_data=back_callback)
+            InlineKeyboardButton("↩️ RETOUR À LA LISTE ↩️", callback_data=back_callback)
         ]])
 
         await self._render_clean_view(query, context, text, keyboard)

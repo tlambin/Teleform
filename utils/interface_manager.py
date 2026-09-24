@@ -186,10 +186,10 @@ class InterfaceManager:
             )
             keyboard.append([stats_btn, archives_btn])
 
-        # 5. ⭐ MEMBRES VIP ⭐ (Gestion du cercle VIP - Admin & Owner)
+        # 5. 👥 MEMBRES 👥 (Unification Utilisateurs, VIP et Bannis - Admin & Owner)
         if is_admin:
             keyboard.append([
-                InlineKeyboardButton("⭐ MEMBRES VIP ⭐", callback_data="gerer_vips")
+                InlineKeyboardButton("👥 MEMBRES 👥", callback_data="menu_membres")
             ])
 
         # 6. ✨ PRÉFÉRENCES VIP ✨ (si VIP) OU ⭐ DEVENIR VIP ⭐ (si non VIP)
@@ -214,6 +214,26 @@ class InterfaceManager:
         ])
 
         return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== SOUS-MENU MEMBRES (Admin & Owner) ==========
+
+    def get_membres_menu(self):
+        """Sous-menu unifié regroupant la recherche d'utilisateurs, la gestion VIP et la liste des bannis."""
+        text = (
+            "👥 <b>GESTION DES MEMBRES</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Sélectionnez une catégorie pour gérer les comptes de la plateforme :\n\n"
+            "• <b>Rechercher un membre :</b> Trouver un utilisateur par ID ou pseudo pour consulter sa fiche et le gérer.\n"
+            "• <b>Membres VIP :</b> Gérer les privilèges et abonnements VIP.\n"
+            "• <b>Liste des bannis :</b> Consulter et réhabiliter les comptes révoqués."
+        )
+        keyboard = [
+            [InlineKeyboardButton("🔍 RECHERCHER UN MEMBRE 🔍", callback_data="search_member_prompt")],
+            [InlineKeyboardButton("⭐ MEMBRES VIP ⭐", callback_data="gerer_vips")],
+            [InlineKeyboardButton("🚫 LISTE DES BANNIS 🚫", callback_data="liste_bannis_0")],
+            [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data="parametres")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
 
     # ========== SOUS-MENU MON PROFIL ==========
 
@@ -446,6 +466,7 @@ class InterfaceManager:
             ]
         ]
         return text, InlineKeyboardMarkup(keyboard)
+
     # ========== SOUS-MENU ADHÉSION OBLIGATOIRE GROUPE (Owner Only) ==========
 
     def get_group_subscription_config_menu(self):
@@ -650,7 +671,6 @@ class InterfaceManager:
                     alias_raw = str(st.get("alias") or f"Piégeur_{st['user_id']}")
                     alias_esc = html.escape(alias_raw)
 
-                    # Traduction propre et lisible des permissions (façon maquette)
                     res_tag = str(st.get("perm_reseaux") or "all").lower()
                     type_tag = str(st.get("perm_type") or "all").lower()
                     ori_tag = str(st.get("perm_orientation") or "all").lower()
@@ -676,7 +696,6 @@ class InterfaceManager:
                         f"🛡️ <i>{html.escape(perm_readable)}</i>\n\n"
                     )
 
-                    # Boutons individuels par piégeur (en majuscules)
                     keyboard.append([
                         InlineKeyboardButton(f"📂 DOSSIERS : {alias_raw.upper()}", callback_data=f"staff_view_demandes_{st['user_id']}_0")
                     ])
@@ -685,7 +704,6 @@ class InterfaceManager:
                         InlineKeyboardButton("📊 STATS", callback_data=f"profil_admin_{st['user_id']}")
                     ])
 
-            # Bouton retour en bas
             keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
 
         except Exception as exc:
@@ -733,7 +751,8 @@ class InterfaceManager:
 
                     arch_badge = "✅" if admin.get("can_view_archives") else "❌"
                     mon_badge = "✅" if admin.get("can_monitor_staff") else "❌"
-                    perm_info = f" | Archives: {arch_badge} | Suivi: {mon_badge}" if not admin.get("is_owner") else ""
+                    ban_badge = "✅" if admin.get("can_ban_users") else "❌"
+                    perm_info = f" | Archives: {arch_badge} | Suivi: {mon_badge} | Ban: {ban_badge}" if not admin.get("is_owner") else ""
 
                     message += (
                         f"• {role_badge} <b>{alias_esc}</b> ({pseudo})\n"
@@ -791,12 +810,12 @@ class InterfaceManager:
                 InlineKeyboardButton("➕ Promouvoir un membre", callback_data="owner_add_vip"),
                 InlineKeyboardButton("➖ Révoquer un accès VIP", callback_data="owner_remove_vip")
             ])
-            keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
+            keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_membres")])
 
         except Exception as exc:
             logger.error("Erreur génération menu VIP : %s", exc, exc_info=True)
             message = "⭐ <b>Gestion des Membres VIP</b>\n\n❌ Erreur de lecture des données."
-            keyboard = [[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]]
+            keyboard = [[InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_membres")]]
 
         return message, InlineKeyboardMarkup(keyboard)
 
@@ -866,6 +885,7 @@ class InterfaceManager:
             "staff_payment_settings": lambda: self.get_staff_payment_settings_menu(user_id),
             "gerer_staff": self.get_gerer_staff_menu,
             "gerer_admins": self.get_gerer_admins_menu,
+            "menu_membres": self.get_membres_menu,
             "gerer_vips": self.get_gerer_vips_menu,
             "menu_vip_shop": lambda: self.get_vip_shop_menu(is_vip=is_vip),
             "gerer_bot": self.get_gerer_bot_menu,

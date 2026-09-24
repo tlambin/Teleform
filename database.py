@@ -114,7 +114,6 @@ class DatabaseManager:
 
     def _get_connection(self):
         """Récupère une connexion saine avec détection post-fork et reconnexion automatique."""
-        # Si un fork WSGI est intervenu, régénérer le pool pour ce nouveau processus
         if self._pool_pid != os.getpid():
             self._init_connection_pool()
 
@@ -129,7 +128,6 @@ class DatabaseManager:
         if conn is None:
             conn = self._create_direct_connection()
 
-        # Vérification active de la santé de la connexion
         try:
             conn.ping(reconnect=True, attempts=3, delay=1)
             if not conn.is_connected():
@@ -223,6 +221,15 @@ class DatabaseManager:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """,
             """
+            CREATE TABLE IF NOT EXISTS banned_users (
+                user_id BIGINT PRIMARY KEY,
+                banned_by BIGINT DEFAULT NULL,
+                reason TEXT DEFAULT NULL,
+                date_ban DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_banned_date (date_ban)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """,
+            """
             CREATE TABLE IF NOT EXISTS staff (
                 user_id BIGINT PRIMARY KEY,
                 alias VARCHAR(64) NOT NULL,
@@ -252,6 +259,7 @@ class DatabaseManager:
                 can_manage_delais BOOLEAN DEFAULT FALSE,
                 can_view_archives BOOLEAN DEFAULT FALSE,
                 can_monitor_staff BOOLEAN DEFAULT FALSE,
+                can_ban_users BOOLEAN DEFAULT FALSE,
                 added_by BIGINT DEFAULT NULL,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -387,6 +395,7 @@ class DatabaseManager:
             ("admins", "can_manage_delais", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_view_archives", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_monitor_staff", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "can_ban_users", "BOOLEAN DEFAULT FALSE"),
             ("demandes", "orientation", "VARCHAR(16) DEFAULT 'hetero'"),
             ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
@@ -533,9 +542,9 @@ class DatabaseManager:
                     owner_alias = self.get_config_value("owner_alias", "Propriétaire")
                     cursor.execute(
                         """
-                        INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff)
-                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
-                        ON DUPLICATE KEY UPDATE is_owner = TRUE, is_vip = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE, can_monitor_staff = TRUE
+                        INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, can_ban_users)
+                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+                        ON DUPLICATE KEY UPDATE is_owner = TRUE, is_vip = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE, can_monitor_staff = TRUE, can_ban_users = TRUE
                         """,
                         (owner_id, owner_alias)
                     )
@@ -544,6 +553,100 @@ class DatabaseManager:
         except Exception as exc:
             logger.error("Erreur lors de la création des tables : %s", exc)
             raise
+
+    # ==================== GESTION DES BANNISSEMENTS ====================
+
+    def is_user_banned(self, user_id: int) -> bool:
+        """Indique si un utilisateur est actuellement banni de la plateforme."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        cache_key = f"is_banned_{uid}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT user_id FROM banned_users WHERE user_id = %s", (uid,))
+                val = bool(cursor.fetchone())
+                self._set_cached_value(cache_key, val)
+                return val
+        except Exception as exc:
+            logger.error("Erreur contrôle bannissement pour %s : %s", uid, exc)
+            return False
+
+    def ban_user(self, user_id: int, banned_by: Optional[int] = None, reason: str = "Non spécifié") -> bool:
+        """Enregistre le bannissement d'un utilisateur ou membre du staff."""
+        try:
+            uid = int(user_id)
+            by_id = int(banned_by) if banned_by else None
+            clean_reason = str(reason or "Non spécifié").strip()
+
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO banned_users (user_id, banned_by, reason, date_ban)
+                    VALUES (%s, %s, %s, NOW())
+                    ON DUPLICATE KEY UPDATE banned_by = VALUES(banned_by), reason = VALUES(reason), date_ban = NOW()
+                    """,
+                    (uid, by_id, clean_reason)
+                )
+
+            self.clear_cache(f"is_banned_{uid}")
+            logger.warning("🚫 Utilisateur %s banni par %s (Motif: %s)", uid, by_id, clean_reason)
+            return True
+        except Exception as exc:
+            logger.error("Erreur enregistrement ban pour %s : %s", user_id, exc)
+            return False
+
+    def unban_user(self, user_id: int) -> bool:
+        """Réhabilite un utilisateur banni."""
+        try:
+            uid = int(user_id)
+            with self.transaction() as cursor:
+                cursor.execute("DELETE FROM banned_users WHERE user_id = %s", (uid,))
+            self.clear_cache(f"is_banned_{uid}")
+            logger.info("🟢 Utilisateur %s débanni avec succès", uid)
+            return True
+        except Exception as exc:
+            logger.error("Erreur débannissement pour %s : %s", user_id, exc)
+            return False
+
+    def get_banned_users_count(self) -> int:
+        """Compte le nombre total d'utilisateurs bannis."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) AS total FROM banned_users")
+                row = cursor.fetchone()
+                return int(row["total"]) if row else 0
+        except Exception as exc:
+            logger.error("Erreur comptage bannis : %s", exc)
+            return 0
+
+    def get_banned_users_list(self, limit: int = 5, offset: int = 0) -> List[Dict[str, Any]]:
+        """Retourne la liste paginée des utilisateurs bannis avec métadonnées."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT b.user_id, b.banned_by, b.reason, b.date_ban,
+                           u.first_name, u.username,
+                           a.alias AS admin_alias
+                    FROM banned_users b
+                    LEFT JOIN users u ON b.user_id = u.user_id
+                    LEFT JOIN admins a ON b.banned_by = a.user_id
+                    ORDER BY b.date_ban DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (max(1, limit), max(0, offset))
+                )
+                return cursor.fetchall()
+        except Exception as exc:
+            logger.error("Erreur lecture liste bannis : %s", exc)
+            return []
 
     # ==================== GESTION DES OFFRES DE RÉMUNÉRATION ====================
 
@@ -896,13 +999,14 @@ class DatabaseManager:
                 "can_manage_delais": True,
                 "can_view_archives": True,
                 "can_monitor_staff": True,
+                "can_ban_users": True,
             }
 
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff
+                    SELECT is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, can_ban_users
                     FROM admins WHERE user_id = %s
                     """,
                     (int(user_id),)
@@ -918,6 +1022,7 @@ class DatabaseManager:
                         "can_manage_delais": bool(row["can_manage_delais"]),
                         "can_view_archives": bool(row.get("can_view_archives", False)),
                         "can_monitor_staff": bool(row.get("can_monitor_staff", False)),
+                        "can_ban_users": bool(row.get("can_ban_users", False)),
                     }
         except Exception as exc:
             logger.error("Erreur lecture privilèges admin %s : %s", user_id, exc)
@@ -931,12 +1036,13 @@ class DatabaseManager:
             "can_manage_delais": False,
             "can_view_archives": False,
             "can_monitor_staff": False,
+            "can_ban_users": False,
         }
 
     def update_admin_privilege(self, user_id: int, priv_key: str, value: bool) -> bool:
         allowed_keys = {
             "can_manage_staff", "can_manage_vips", "can_view_stats",
-            "can_manage_delais", "can_view_archives", "can_monitor_staff", "is_vip"
+            "can_manage_delais", "can_view_archives", "can_monitor_staff", "can_ban_users", "is_vip"
         }
         if priv_key not in allowed_keys:
             return False
@@ -2211,7 +2317,6 @@ class DatabaseManager:
                 insta = arch.get("instagram")
                 snap = arch.get("snapchat")
 
-                # 1. Vérification : y a-t-il déjà un dossier actif identique en cours de traitement ?
                 active_statuses = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours", "✅ Réussie")
                 placeholders = ", ".join(["%s"] * len(active_statuses))
 
@@ -2244,7 +2349,6 @@ class DatabaseManager:
                         else:
                             return False, f"Ce dossier existe déjà dans les demandes disponibles (#{existing.get('request_number') or existing['id']}).", None
 
-                # 2. Restauration de l'archive vers 'demandes'
                 req_num = orig_id or arch["id"]
                 prio = bool(arch.get("prioritaire", False))
                 montant = float(arch.get("montant") or 0.0)
@@ -2286,7 +2390,6 @@ class DatabaseManager:
                 )
                 nouvelle_demande_id = cursor.lastrowid
 
-                # 3. Réactivation dans demandes_suivi
                 cursor.execute(
                     """
                     UPDATE demandes_suivi
@@ -2304,7 +2407,6 @@ class DatabaseManager:
                         (int(nouvelle_demande_id), int(operator_id))
                     )
 
-                # 4. Suppression de l'archive
                 cursor.execute("DELETE FROM archives WHERE id = %s", (int(archive_id),))
 
                 arch["new_demande_id"] = nouvelle_demande_id
@@ -3089,6 +3191,7 @@ class DatabaseManager:
 
                 elif target == "users":
                     cursor.execute("DELETE FROM user_preferences WHERE user_id != %s", (owner_id,))
+                    cursor.execute("DELETE FROM banned_users WHERE user_id != %s", (owner_id,))
                     cursor.execute("DELETE FROM users WHERE user_id != %s", (owner_id,))
 
                 elif target == "staff":
@@ -3104,6 +3207,7 @@ class DatabaseManager:
                     cursor.execute("DELETE FROM staff WHERE user_id != %s", (owner_id,))
                     cursor.execute("DELETE FROM admins WHERE user_id != %s AND is_owner = FALSE", (owner_id,))
                     cursor.execute("DELETE FROM user_preferences WHERE user_id != %s", (owner_id,))
+                    cursor.execute("DELETE FROM banned_users WHERE user_id != %s", (owner_id,))
                     cursor.execute("DELETE FROM users WHERE user_id != %s", (owner_id,))
 
                     try:

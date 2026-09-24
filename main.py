@@ -606,6 +606,10 @@ class TelegramBot:
 
     async def wrapped_start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Wrapper pour la commande /start purgeant automatiquement les états temporaires orphelins."""
+        user_id = update.effective_user.id
+        if self.db_manager.is_user_banned(user_id):
+            await update.message.reply_text("🚫 <b>Votre compte a été banni par l'administration.</b>", parse_mode="HTML")
+            return
         clear_transient_user_data(context)
         return await self.user_handlers.start(update, context)
 
@@ -624,7 +628,7 @@ class TelegramBot:
     async def wrapped_interface_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Wrapper des callbacks de navigation d'interface purgeant les états temporaires lors des retours."""
         query = update.callback_query
-        if query and query.data in ("start_menu", "parametres", "gerer_demandes"):
+        if query and query.data in ("start_menu", "parametres", "gerer_demandes", "menu_membres"):
             clear_transient_user_data(context)
         return await self.user_handlers.handle_interface_callbacks(update, context)
 
@@ -984,10 +988,10 @@ class TelegramBot:
             pattern=r"^self_pref_.*$",
         ))
 
-        # 2. Aiguillage Gouvernance & Administration (Admin/Owner + Délais + Zone de Danger + Dossiers Piégeurs + Purge Config)
+        # 2. Aiguillage Gouvernance & Administration (Admin/Owner + Délais + Zone de Danger + Dossiers Piégeurs + Purge Config + Membres + Bannissements)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|staff_view_demandes_.*|admin_remind_staff_demande_.*|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|set_remun_days_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*|unarchive_reussie_.*|unarchive_abandon_.*|contacter_archive_.*)$",
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|menu_membres|search_member_prompt|liste_bannis_.*|ban_prompt_.*|unban_.*|gerer_vips|gerer_staff|staff_view_demandes_.*|admin_remind_staff_demande_.*|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|set_remun_days_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*|unarchive_reussie_.*|unarchive_abandon_.*|contacter_archive_.*)$",
         ))
 
         # 3. Aiguillage Traitement opérationnel des dossiers (Staff) - Inclut la bascule contenu et la clôture conversation
@@ -999,7 +1003,7 @@ class TelegramBot:
         # 4. Menus d'interface et navigation avec purge de session
         app.add_handler(CallbackQueryHandler(
             self.wrapped_interface_callbacks,
-            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|menu_mon_profil|staff_self_prefs|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|bot_toggle_suspension|menu_danger_zone|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|limit_.*|stat_access_denied|arch_access_denied)$",
+            pattern=r"^(voir_demandes|start_menu|gerer_demandes|parametres|menu_mon_profil|staff_self_prefs|staff_payment_settings|modifier_alias|gerer_admins|gerer_staff|gerer_bot|bot_toggle_suspension|menu_danger_zone|menu_channels|menu_limits|menu_cfg_group|menu_cfg_support|menu_membres|limit_.*|stat_access_denied|arch_access_denied)$",
         ))
 
         # 5. Callbacks utilisateurs / clients avec purge de session sur les annulations
@@ -1062,19 +1066,42 @@ class TelegramBot:
         if not update.effective_chat or update.effective_chat.type != "private":
             return
 
+        user_id = update.effective_user.id
+
+        # 0. Contrôle de bannissement (blocage immédiat de toute interaction)
+        if self.db_manager.is_user_banned(user_id):
+            await update.message.reply_text(
+                "🚫 <b>Votre compte a été banni de la plateforme.</b>\n"
+                "L'accès aux services vous est définitivement révoqué.",
+                parse_mode="HTML"
+            )
+            return
+
         # 1. Confirmation textuelle de purge de la Zone de Danger (Owner only)
         if context.user_data.get("waiting_danger_confirmation"):
             handled = await self.admin_handlers.handle_danger_text_input(update, context)
             if handled:
                 return
 
-        # 2. Collecte de messages/médias par l'opérateur (Mode direct ou lot)
+        # 2. Saisie du motif de bannissement
+        if context.user_data.get("waiting_ban_reason"):
+            handled = await self.admin_handlers.handle_ban_reason_input(update, context)
+            if handled:
+                return
+
+        # 3. Saisie de recherche d'un membre (ID ou @username)
+        if context.user_data.get("waiting_member_search"):
+            handled = await self.admin_handlers.handle_member_search_input(update, context)
+            if handled:
+                return
+
+        # 4. Collecte de messages/médias par l'opérateur (Mode direct ou lot)
         if context.user_data.get("contact_session"):
             handled = await self.staff_handlers.handle_collect_admin_media(update, context)
             if handled:
                 return
 
-        # 3. Messages et réponses des demandeurs / utilisateurs courants
+        # 5. Messages et réponses des demandeurs / utilisateurs courants
         await self.user_handlers.handle_text_messages(update, context)
 
     def run(self):

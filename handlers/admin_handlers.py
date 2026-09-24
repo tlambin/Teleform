@@ -4,7 +4,7 @@ import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
-from utils.interface_manager import InterfaceManager
+from utils.interface_manager import InterfaceManager, format_datetime_fr
 from utils.maintenance import check_storage_usage, daily_maintenance
 from .staff.alias import AliasManager
 from .staff.archives import ArchivesManager
@@ -23,13 +23,14 @@ ALLOWED_ADMIN_PERMISSIONS = frozenset({
     "can_manage_delais",
     "can_view_archives",
     "can_monitor_staff",
+    "can_ban_users",
     "is_vip",
     "is_owner",
 })
 
 
 class AdminHandlers:
-    """Gestionnaire des opérations système, de la gouvernance (Admins/Staff), des stats et des VIPs."""
+    """Gestionnaire des opérations système, de la gouvernance (Admins/Staff), des stats, des membres et des bannissements."""
 
     # États pour l'ajout/suppression Staff
     WAITING_STAFF_ID = 1
@@ -47,6 +48,10 @@ class AdminHandlers:
     WAITING_VIP_DURATION = 11
     WAITING_VIP_REMOVE = 12
 
+    # États pour la recherche et le bannissement
+    WAITING_MEMBER_SEARCH = 20
+    WAITING_BAN_REASON = 21
+
     def __init__(self, config, db_manager):
         self.config = config
         self.db_manager = db_manager
@@ -60,7 +65,7 @@ class AdminHandlers:
         self.bot_manager = BotManager(db_manager, config, self.interface)
         self.staff_manager = StaffManager(db_manager, config, self.interface)
 
-        logger.info("AdminHandlers initialisé avec architecture RBAC, support Archives Générales et Surveillance Staff.")
+        logger.info("AdminHandlers initialisé avec architecture RBAC, Gestion Membres et Contrôle Bannissements.")
 
     async def _safe_edit_or_send(self, query, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None):
         """Met à jour le message ou envoie un message texte propre."""
@@ -241,6 +246,7 @@ class AdminHandlers:
 
         privs = self.db_manager.get_admin_privileges(user_id)
         is_owner = privs.get("is_owner", False) or self.config.is_owner(user_id)
+        can_ban = is_owner or privs.get("can_ban_users", False) or privs.get("perm_ban", False)
 
         # Actions Service (Owner only)
         if data == "bot_on" and is_owner:
@@ -355,11 +361,75 @@ class AdminHandlers:
         elif data == "bot_stats" and privs.get("can_view_stats", True):
             await self.stats_manager.show_general_stats(update, context)
 
+        # ==================== MENU MEMBRES ET BANNISSEMENTS ====================
+        elif data == "menu_membres":
+            await query.answer()
+            msg, kb = self.interface.get_membres_menu()
+            await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+
+        elif data == "search_member_prompt":
+            await query.answer()
+            context.user_data["waiting_member_search"] = True
+            text_search = (
+                "🔍 <b>RECHERCHER UN MEMBRE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Envoyez ci-dessous son <b>ID Telegram numérique</b> ou son <b>@pseudo</b> :\n\n"
+                "<i>Exemples : <code>123456789</code> ou <code>@nom_utilisateur</code></i>"
+            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data="menu_membres")]])
+            await self._safe_edit_or_send(query, context, text_search, reply_markup=kb)
+
+        elif data.startswith("liste_bannis_"):
+            try:
+                page = int(data.replace("liste_bannis_", ""))
+            except ValueError:
+                page = 0
+            await self.show_banned_users_list(update, context, page=page)
+
         # VIPs
         elif data == "gerer_vips" and privs.get("can_manage_vips", True):
             await query.answer()
             msg, kb = self.interface.get_gerer_vips_menu()
             await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
+
+        # Actions de Bannissement et Débannissement (Demandeur & Staff)
+        elif data.startswith("ban_prompt_user_") and can_ban:
+            await query.answer()
+            parts = data.split("_")
+            target_user_id = int(parts[3])
+            origin_demande_id = int(parts[4]) if len(parts) > 4 else 0
+            await self._prompt_ban_reason(query, context, target_user_id, is_staff=False, origin_demande_id=origin_demande_id)
+
+        elif data.startswith("ban_prompt_staff_") and can_ban:
+            await query.answer()
+            target_staff_id = int(data.replace("ban_prompt_staff_", ""))
+            await self._prompt_ban_reason(query, context, target_staff_id, is_staff=True)
+
+        elif data.startswith("unban_user_") and can_ban:
+            await query.answer()
+            parts = data.split("_")
+            target_user_id = int(parts[2])
+            origin_demande_id = int(parts[3]) if len(parts) > 3 else 0
+            self.db_manager.unban_user(target_user_id)
+            await query.answer("🟢 Utilisateur débanni avec succès !", show_alert=True)
+            from handlers.staff.profils import ProfilsManager
+            prof = ProfilsManager(self.db_manager, self.config)
+            await prof._render_user_profile(query, context, target_user_id, origin_demande_id=origin_demande_id)
+
+        elif data.startswith("unban_staff_") and can_ban:
+            await query.answer()
+            target_staff_id = int(data.replace("unban_staff_", ""))
+            self.db_manager.unban_user(target_staff_id)
+            await query.answer("🟢 Piégeur débanni avec succès !", show_alert=True)
+            from handlers.staff.profils import ProfilsManager
+            prof = ProfilsManager(self.db_manager, self.config)
+            await prof.show_admin_profile(update, context, target_staff_id)
+
+        elif data.startswith("unban_from_list_") and can_ban:
+            target_id = int(data.replace("unban_from_list_", ""))
+            self.db_manager.unban_user(target_id)
+            await query.answer("🟢 Compte débanni avec succès !", show_alert=True)
+            await self.show_banned_users_list(update, context, page=0)
 
         # Archives Générales (Owner ou Admin avec permission)
         elif data == "admin_global_archives":
@@ -473,6 +543,184 @@ class AdminHandlers:
                 pass
         elif data.startswith("set_permadmin_") and is_owner:
             await self.handle_set_admin_permission(update, context, data)
+
+    # ==================== GESTION DES BANNISSEMENTS ====================
+
+    async def _prompt_ban_reason(self, query, context: ContextTypes.DEFAULT_TYPE, target_id: int, is_staff: bool, origin_demande_id: int = 0):
+        """Demande le motif du bannissement."""
+        context.user_data["pending_ban_data"] = {
+            "target_id": target_id,
+            "is_staff": is_staff,
+            "origin_demande_id": origin_demande_id
+        }
+        context.user_data["waiting_ban_reason"] = True
+
+        role_str = "Piégeur (Staff)" if is_staff else "Utilisateur (Client)"
+        text = (
+            f"🚫 <b>Bannissement d'un compte : {role_str}</b>\n"
+            f"🆔 ID Cible : <code>{target_id}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Veuillez envoyer au clavier la <b>raison du bannissement</b> :\n"
+            "<i>(Tapez 'Passer' ou 'Non' pour ne spécifier aucun motif particulier).</i>"
+        )
+        back_cb = f"staff_view_demandes_{target_id}" if is_staff else (f"profil_demande_{origin_demande_id}" if origin_demande_id else "menu_membres")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data=back_cb)]])
+        await self._safe_edit_or_send(query, context, text, reply_markup=kb)
+
+    async def handle_ban_reason_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Enregistre le bannissement après saisie de la raison."""
+        if not update.message or not update.message.text:
+            return False
+
+        ban_data = context.user_data.pop("pending_ban_data", None)
+        context.user_data.pop("waiting_ban_reason", None)
+        if not ban_data:
+            return False
+
+        reason = update.message.text.strip()
+        if reason.lower() in ("passer", "non", "aucun", "none"):
+            reason = "Non spécifié"
+
+        target_id = ban_data["target_id"]
+        is_staff = ban_data["is_staff"]
+        admin_id = update.effective_user.id
+
+        # 1. Enregistrement du ban en BDD
+        self.db_manager.ban_user(target_id, banned_by=admin_id, reason=reason)
+
+        # 2. Si c'est un membre du staff, libérer ses dossiers actifs
+        if is_staff:
+            self.db_manager.abandon_staff_demandes_for_pause(target_id)
+            self.db_manager.set_staff_pause_status(target_id, paused=True)
+
+        # 3. Notification au banni
+        try:
+            msg_banni = (
+                "🚫 <b>VOTRE COMPTE A ÉTÉ BANNI</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "L'accès aux services de la plateforme vous a été révoqué par la direction.\n"
+                f"• <b>Motif :</b> <i>{html.escape(reason)}</i>\n\n"
+                "Si vous pensez qu'il s'agit d'une erreur, vous pouvez contacter le support."
+            )
+            await context.bot.send_message(chat_id=target_id, text=msg_banni, parse_mode="HTML")
+        except Exception:
+            pass
+
+        role_str = "Piégeur" if is_staff else "Utilisateur"
+        success_msg = (
+            f"✅ <b>{role_str} banni avec succès !</b>\n\n"
+            f"• <b>ID Cible :</b> <code>{target_id}</code>\n"
+            f"• <b>Motif enregistré :</b> <i>{html.escape(reason)}</i>"
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("👥 GESTION DES MEMBRES", callback_data="menu_membres")]])
+        await update.message.reply_text(success_msg, parse_mode="HTML", reply_markup=kb)
+        return True
+
+    async def show_banned_users_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+        """Affiche la liste paginée des comptes révoqués."""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        limit = 5
+        offset = page * limit
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) AS total FROM banned_users")
+            total = cursor.fetchone()["total"]
+
+            cursor.execute(
+                """
+                SELECT b.user_id, b.banned_by, b.reason, b.date_ban,
+                       u.first_name, u.username,
+                       a.alias AS admin_alias
+                FROM banned_users b
+                LEFT JOIN users u ON b.user_id = u.user_id
+                LEFT JOIN admins a ON b.banned_by = a.user_id
+                ORDER BY b.date_ban DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset)
+            )
+            bannis = cursor.fetchall()
+
+        lines = [
+            f"🚫 <b>LISTE DES COMPTES BANNIS ({total})</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+        ]
+
+        keyboard = []
+
+        if not bannis:
+            lines.append("<i>Aucun compte banni sur la plateforme.</i>")
+        else:
+            for b in bannis:
+                u_id = b["user_id"]
+                pseudo = f"@{b['username']}" if b.get("username") else "Sans pseudo"
+                nom = html.escape(str(b.get("first_name") or pseudo))
+                par_qui = html.escape(str(b.get("admin_alias") or f"Admin_{b.get('banned_by')}"))
+                dt_str = format_datetime_fr(b.get("date_ban"))
+                raison = html.escape(str(b.get("reason") or "Non spécifiée"))
+
+                lines.append(
+                    f"• <b>{nom}</b> (<code>{u_id}</code>)\n"
+                    f"  Banni le {dt_str} par {par_qui}\n"
+                    f"  <i>Motif : {raison}</i>\n"
+                )
+                keyboard.append([InlineKeyboardButton(f"🟢 DÉBANNIR {nom.upper()[:15]}", callback_data=f"unban_from_list_{u_id}")])
+
+        # Pagination
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ PRÉCÉDENT", callback_data=f"liste_bannis_{page - 1}"))
+        if (offset + limit) < total:
+            nav_row.append(InlineKeyboardButton("SUIVANT ➡️", callback_data=f"liste_bannis_{page + 1}"))
+        if nav_row:
+            keyboard.append(nav_row)
+
+        keyboard.append([InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data="menu_membres")])
+
+        text = "\n".join(lines)
+        if query:
+            await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        elif update.message:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def handle_member_search_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Traite la recherche d'un membre et affiche son profil."""
+        if not update.message or not update.message.text:
+            return False
+
+        if not context.user_data.pop("waiting_member_search", False):
+            return False
+
+        saisie = update.message.text.strip().replace("@", "")
+
+        with self.db_manager.get_cursor() as cursor:
+            if saisie.isdigit():
+                cursor.execute("SELECT user_id, first_name, username FROM users WHERE user_id = %s", (int(saisie),))
+            else:
+                cursor.execute("SELECT user_id, first_name, username FROM users WHERE LOWER(username) = LOWER(%s)", (saisie,))
+            user_data = cursor.fetchone()
+
+        if not user_data:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔍 RÉESSAYER", callback_data="search_member_prompt")],
+                [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_membres")]
+            ])
+            await update.message.reply_text("❌ <b>Membre introuvable.</b>\nL'utilisateur doit avoir démarré le bot au moins une fois.", parse_mode="HTML", reply_markup=kb)
+            return True
+
+        target_id = int(user_data["user_id"])
+        from handlers.staff.profils import ProfilsManager
+        prof = ProfilsManager(self.db_manager, self.config)
+
+        # Si c'est un piégeur, ouvrir sa fiche piégeur, sinon son profil demandeur
+        if self.db_manager.is_staff(target_id):
+            await prof.show_admin_profile(update, context, target_id)
+        else:
+            await prof._render_user_profile(update, context, target_id)
+        return True
 
     # ==================== TRAITEMENT DU TEXTE DE CONFIRMATION PURGE ====================
 
@@ -768,6 +1016,7 @@ class AdminHandlers:
         st_delais = "✅ OUI" if privs.get("can_manage_delais") else "❌ NON"
         st_archives = "✅ OUI" if privs.get("can_view_archives") else "❌ NON"
         st_monitor = "✅ OUI" if privs.get("can_monitor_staff") else "❌ NON"
+        st_ban = "✅ OUI" if privs.get("can_ban_users") else "❌ NON"
         st_vip_status = "✅ OUI" if privs.get("is_vip") else "❌ NON"
         st_owner = "👑 CO-GÉRANT" if privs.get("is_owner") else "🛡️ MANAGER"
 
@@ -785,6 +1034,7 @@ class AdminHandlers:
                 InlineKeyboardButton(f"Surveillance Staff : {st_monitor}", callback_data=f"set_permadmin_{admin_id}_can_monitor_staff"),
             ],
             [
+                InlineKeyboardButton(f"🚫 Bannir Membres : {st_ban}", callback_data=f"set_permadmin_{admin_id}_can_ban_users"),
                 InlineKeyboardButton(f"⭐ Accès VIP : {st_vip_status}", callback_data=f"set_permadmin_{admin_id}_is_vip"),
             ],
         ]
@@ -911,8 +1161,8 @@ class AdminHandlers:
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, added_by, date_added)
-                    VALUES (%s, %s, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, %s, NOW())
+                    INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, can_ban_users, added_by, date_added)
+                    VALUES (%s, %s, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, %s, NOW())
                     """,
                     (target_id, alias, user_id)
                 )
