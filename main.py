@@ -160,7 +160,7 @@ async def _send_single_admin_reminder(context: ContextTypes.DEFAULT_TYPE, db_man
 
     text_rappel = "\n".join(lines)
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")
+        InlineKeyboardButton("💌 MES SUIVIS 💌", callback_data="demandes_suivies")
     ]])
 
     try:
@@ -271,13 +271,13 @@ async def _send_single_delivery_reminder(context: ContextTypes.DEFAULT_TYPE, db_
 
     msg = (
         f"⚠️ <b>Rappel de livraison (Demande #{req_num})</b>\n\n"
-        f"Le dossier concernant <b>{prenom}</b> est passé en <b>✅ Réussie (❎ Terminée)</b> "
+        f"Le dossier concernant <b>{prenom}</b> est passé en <b>✅ Réussie (Terminée)</b> "
         f"depuis plus de {days} jours, mais <b>aucun contenu n'a encore été transmis</b> au demandeur.\n\n"
         "👉 Pensez à lui envoyer ses fichiers afin de finaliser la prestation et débloquer l'archivage du dossier."
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💬 Transmettre le contenu", callback_data=f"contacter_{dem_id}")],
-        [InlineKeyboardButton("📋 Ouvrir mes suivis", callback_data="demandes_suivies")]
+        [InlineKeyboardButton("💬 TRANSMETTRE LE CONTENU 💬", callback_data=f"contacter_{dem_id}")],
+        [InlineKeyboardButton("📋 OUVRIR MES SUIVIS 📋", callback_data="demandes_suivies")]
     ])
 
     try:
@@ -326,8 +326,8 @@ async def _send_single_paid_delivery_reminder(context: ContextTypes.DEFAULT_TYPE
         "Merci de lui envoyer les fichiers sans attendre pour clore la prestation."
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💬 Transmettre les fichiers maintenant", callback_data=f"contacter_{dem_id}")],
-        [InlineKeyboardButton("📋 Ouvrir mes suivis", callback_data="demandes_suivies")]
+        [InlineKeyboardButton("💬 TRANSMETTRE LES FICHIERS MAINTENANT 💬", callback_data=f"contacter_{dem_id}")],
+        [InlineKeyboardButton("📋 OUVRIR MES SUIVIS 📋", callback_data="demandes_suivies")]
     ])
 
     try:
@@ -376,9 +376,9 @@ async def _send_single_unpaid_demande_reminder(context: ContextTypes.DEFAULT_TYP
         "Dès confirmation de votre paiement, votre référent vous transmettra l'ensemble des contenus obtenus."
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"⭐ Régler en Stars ({stars_amount} ⭐)", callback_data=f"pay_stars_prio_{dem_id}")],
-        [InlineKeyboardButton("💬 Convenir d'un autre paiement", callback_data=f"pay_contact_prio_{dem_id}")],
-        [InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")]
+        [InlineKeyboardButton(f"⭐ RÉGLER EN STARS ({stars_amount} ⭐) ⭐", callback_data=f"pay_stars_prio_{dem_id}")],
+        [InlineKeyboardButton("💬 CONVENIR D'UN AUTRE PAIEMENT 💬", callback_data=f"pay_contact_prio_{dem_id}")],
+        [InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")]
     ])
 
     try:
@@ -437,7 +437,7 @@ async def _process_single_remun_abandon(context: ContextTypes.DEFAULT_TYPE, db_m
                 text=msg_client,
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")
+                    InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")
                 ]])
             )
         except Forbidden:
@@ -518,8 +518,8 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
             "Merci pour votre confiance !"
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗳️ Créer une demande VIP", callback_data="new_demande")],
-            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+            [InlineKeyboardButton("🗳️ CRÉER UNE DEMANDE VIP 🗳️", callback_data="new_demande")],
+            [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]
         ])
         await update.message.reply_text(merci_msg, parse_mode="HTML", reply_markup=kb)
         logger.info("Abonnement VIP 30 jours activé via Stars pour l'utilisateur %s", user_id)
@@ -561,7 +561,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
             merci_msg,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📋 Consulter mes demandes", callback_data="voir_demandes")
+                InlineKeyboardButton("📋 CONSULTER MES DEMANDES 📋", callback_data="voir_demandes")
             ]])
         )
 
@@ -574,8 +574,8 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
                 "👉 Vous pouvez désormais transmettre les fichiers obtenus au client."
             )
             alert_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💬 Transmettre le contenu maintenant", callback_data=f"contacter_{demande_id}")],
-                [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")]
+                [InlineKeyboardButton("💬 TRANSMETTRE LE CONTENU MAINTENANT 💬", callback_data=f"contacter_{demande_id}")],
+                [InlineKeyboardButton("💌 OUVRIR MES SUIVIS 💌", callback_data="demandes_suivies")]
             ])
             try:
                 await context.bot.send_message(
@@ -617,7 +617,7 @@ class TelegramBot:
             "Toutes vos saisies temporaires en cours ont été annulées.\n"
             "Tapez /start ou cliquez ci-dessous pour revenir au menu d'accueil."
         )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Principal", callback_data="start_menu")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 MENU PRINCIPAL 🏠", callback_data="start_menu")]])
         if update.message:
             await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
 
@@ -984,16 +984,16 @@ class TelegramBot:
             pattern=r"^self_pref_.*$",
         ))
 
-        # 2. Aiguillage Gouvernance & Administration (Admin/Owner + Délais + Zone de Danger + Dossiers Piégeurs)
+        # 2. Aiguillage Gouvernance & Administration (Admin/Owner + Délais + Zone de Danger + Dossiers Piégeurs + Purge Config)
         app.add_handler(CallbackQueryHandler(
             self.admin_handlers.handle_admin_callbacks,
-            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|staff_view_demandes_.*|admin_remind_staff_demande_.*|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|set_remun_days_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*)$",
+            pattern=r"^(bot_on|bot_off|confirm_bot_off|cancel_bot_off|maintenance|bot_stats|admin_global_archives|global_arch_page_.*|gerer_vips|gerer_staff|staff_view_demandes_.*|admin_remind_staff_demande_.*|gerer_admins|menu_channels|toggle_allow_.*|menu_delais|cfg_sub_.*|set_arch_.*|set_rem_.*|set_payrem_.*|set_remun_days_.*|perm_staff_.*|set_permstaff_.*|perm_admin_.*|set_permadmin_.*|menu_cfg_group|toggle_cfg_group_enabled|set_cfg_group_id|set_cfg_group_link|menu_cfg_support|set_cfg_support_contact|menu_danger_zone|danger_purge_.*|danger_confirm_yes_.*|toggle_pay_staff_.*|unarchive_reussie_.*|unarchive_abandon_.*|contacter_archive_.*)$",
         ))
 
-        # 3. Aiguillage Traitement opérationnel des dossiers (Staff)
+        # 3. Aiguillage Traitement opérationnel des dossiers (Staff) - Inclut la bascule contenu et la clôture conversation
         app.add_handler(CallbackQueryHandler(
             self.staff_handlers.handle_staff_callbacks,
-            pattern=r"^(demandes_disponibles|dispo_.*|dispo_remun_pending_info|admin_del_dispo_.*|dispo_ask_remun_.*|staff_report_dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|menu_surveillance_notifs|toggle_mon_.*|profil_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
+            pattern=r"^(demandes_disponibles|dispo_.*|dispo_remun_pending_info|admin_del_dispo_.*|dispo_ask_remun_.*|staff_report_dispo_.*|demandes_suivies|suivi_.*|confirm_payment_prio_.*|confirm_payment_prio_exec_.*|vip_accept_.*|vip_decline_.*|demandes_archives|archive_page_.*|mark_treated_menu_.*|change_status_.*|set_status_.*|status_.*|voir_photo_.*|retour_texte_.*|suivre_demande_.*|contacter_.*|contact_mode_.*|toggle_contact_content_.*|contact_close_conv_.*|cancel_contact_.*|send_batch_.*|menu_notifs|pref_.*|menu_surveillance_notifs|toggle_mon_.*|profil_.*|staff_list_.*|user_view_demandes_.*|user_list_.*|archive_view_.*|admin_contact_staff_.*|admin_pause_.*|admin_resume)$",
         ))
 
         # 4. Menus d'interface et navigation avec purge de session
@@ -1008,7 +1008,7 @@ class TelegramBot:
             pattern=r"^(check_subscription|nav_.*|mes_archives|user_arch_page_.*|modify_.*|edit_.*|delete_.*|confirm_delete_.*|cancel_demande_.*|form_.*|cancel_edit|reply_to_admin_.*|cancel_user_reply|quota_reached_info|reprendre_demande_.*|archiver_demande_.*|menu_vip_shop|buy_vip_.*|menu_vip_settings|vip_set_assign_.*|vip_pick_auto_staff|remind_admin_free_.*|remind_admin_pay_.*|vip_contact_admin_.*|vip_assign_admin_.*|ask_cancel_demande_.*|accept_cancel_.*|refuse_cancel_.*|contact_admin_.*|upgrade_prio_.*|pay_stars_prio_.*|pay_contact_prio_.*|user_accept_remun_.*|user_refuse_remun_.*)$",
         ))
 
-        # Réception des messages & médias privés
+        # Réception des messages & médias privés (avec confirmation de purge et envoi direct / lot)
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & ((filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & ~filters.COMMAND),
             self.handle_incoming_messages,
@@ -1062,11 +1062,19 @@ class TelegramBot:
         if not update.effective_chat or update.effective_chat.type != "private":
             return
 
+        # 1. Confirmation textuelle de purge de la Zone de Danger (Owner only)
+        if context.user_data.get("waiting_danger_confirmation"):
+            handled = await self.admin_handlers.handle_danger_text_input(update, context)
+            if handled:
+                return
+
+        # 2. Collecte de messages/médias par l'opérateur (Mode direct ou lot)
         if context.user_data.get("contact_session"):
             handled = await self.staff_handlers.handle_collect_admin_media(update, context)
             if handled:
                 return
 
+        # 3. Messages et réponses des demandeurs / utilisateurs courants
         await self.user_handlers.handle_text_messages(update, context)
 
     def run(self):

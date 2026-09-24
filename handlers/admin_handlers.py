@@ -113,7 +113,6 @@ class AdminHandlers:
             await update.message.reply_text("🔧 <b>Maintenance en cours...</b>", parse_mode="HTML")
 
         try:
-            # Appels asynchrones non-bloquants
             storage_before = await check_storage_usage()
             await daily_maintenance(self.db_manager)
             storage_after = await check_storage_usage()
@@ -321,6 +320,7 @@ class AdminHandlers:
                 "users": "des utilisateurs",
                 "staff": "du staff",
                 "admins": "des administrateurs",
+                "config": "de configuration (config)",
                 "totale": "TOTALE (de toute la base de données)",
             }
             libelle = labels.get(target, target)
@@ -371,6 +371,10 @@ class AdminHandlers:
             except ValueError:
                 page = 0
             await self.archives_manager.show_archives(update, context, page=page, is_global=True)
+
+        # Actions sur les archives (Contact, Réussie Active, Reprendre dossier abandonné)
+        elif data.startswith(("contacter_archive_", "unarchive_reussie_", "unarchive_abandon_")):
+            await self.archives_manager.handle_archives_callbacks(update, context)
 
         # Gestion Staff
         elif data == "gerer_staff" and privs.get("can_manage_staff", True):
@@ -450,7 +454,7 @@ class AdminHandlers:
             except Exception:
                 await query.answer("❌ Erreur valeur.", show_alert=True)
 
-        # Permissions Staff (Réseau, Type, Orientation, Verrouillage Préférences, Mode à l'essai)
+        # Permissions Staff
         elif data.startswith("perm_staff_") and privs.get("can_manage_staff", True):
             try:
                 target_id = int(data.replace("perm_staff_", ""))
@@ -469,6 +473,42 @@ class AdminHandlers:
                 pass
         elif data.startswith("set_permadmin_") and is_owner:
             await self.handle_set_admin_permission(update, context, data)
+
+    # ==================== TRAITEMENT DU TEXTE DE CONFIRMATION PURGE ====================
+
+    async def handle_danger_text_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Traite la confirmation textuelle 'Effacer' pour valider la purge d'une table."""
+        if not update.message or not update.message.text:
+            return False
+
+        target = context.user_data.get("waiting_danger_confirmation")
+        if not target:
+            return False
+
+        user_id = update.effective_user.id
+        if not self.config.is_owner(user_id):
+            context.user_data.pop("waiting_danger_confirmation", None)
+            return False
+
+        saisie = update.message.text.strip()
+        context.user_data.pop("waiting_danger_confirmation", None)
+        context.user_data.pop("pending_danger_target", None)
+
+        if saisie == "Effacer":
+            success = self.db_manager.purge_table_data(target, owner_id=user_id)
+            if success:
+                msg = (
+                    f"✅ <b>Purge de la cible « {target} » exécutée avec succès !</b>\n\n"
+                    "La base de données a été mise à jour et le cache a été nettoyé."
+                )
+            else:
+                msg = f"❌ <b>Échec lors de la purge de « {target} ».</b> Consultez les logs d'erreurs."
+        else:
+            msg = "❌ <b>Suppression annulée :</b> Le mot de confirmation n'était pas exactement 'Effacer'."
+
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Zone de Danger", callback_data="menu_danger_zone")]])
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+        return True
 
     # ==================== CONSULTATION DES DOSSIERS D'UN PIÉGEUR PAR L'ADMIN ====================
 
@@ -774,7 +814,6 @@ class AdminHandlers:
             admin_id = int(parts[2])
             flag = "_".join(parts[3:])
 
-            # Validation stricte par liste blanche
             if flag not in ALLOWED_ADMIN_PERMISSIONS:
                 logger.warning("Tentative de modification d'une permission admin invalide : '%s' par user %s", flag, update.effective_user.id)
                 await query.answer("❌ Permission invalide.", show_alert=True)

@@ -2198,6 +2198,123 @@ class DatabaseManager:
             logger.error("Erreur archivage demande réussie %s : %s", demande_id, exc)
             return False
 
+    def desarchiver_demande_abandonnee(self, archive_id: int, operator_id: int) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """Restaure une archive abandonnée vers la table active 'demandes' avec verrou anti-collision."""
+        try:
+            with self.transaction() as cursor:
+                cursor.execute("SELECT * FROM archives WHERE id = %s FOR UPDATE", (int(archive_id),))
+                arch = cursor.fetchone()
+                if not arch:
+                    return False, "Archive introuvable.", None
+
+                orig_id = arch.get("original_id")
+                insta = arch.get("instagram")
+                snap = arch.get("snapchat")
+
+                # 1. Vérification : y a-t-il déjà un dossier actif identique en cours de traitement ?
+                active_statuses = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours", "✅ Réussie")
+                placeholders = ", ".join(["%s"] * len(active_statuses))
+
+                check_clauses = ["statut IN (" + placeholders + ")"]
+                check_params = list(active_statuses)
+                sub_or = []
+
+                if orig_id:
+                    sub_or.append("id = %s")
+                    check_params.append(orig_id)
+                if insta:
+                    clean_insta = insta.strip().lstrip("@")
+                    sub_or.append("instagram = %s")
+                    check_params.append(clean_insta)
+                if snap:
+                    clean_snap = snap.strip()
+                    sub_or.append("snapchat = %s")
+                    check_params.append(clean_snap)
+
+                if sub_or:
+                    check_sql = f"SELECT id, request_number, admin_en_charge FROM demandes WHERE {' AND '.join(check_clauses)} AND ({' OR '.join(sub_or)}) LIMIT 1"
+                    cursor.execute(check_sql, tuple(check_params))
+                    existing = cursor.fetchone()
+
+                    if existing:
+                        admin_id = existing.get("admin_en_charge")
+                        if admin_id:
+                            alias_charge = self.get_staff_alias(admin_id)
+                            return False, f"Impossible de désarchiver : ce dossier est déjà actif et pris en charge par {alias_charge} (Dossier #{existing.get('request_number') or existing['id']}).", None
+                        else:
+                            return False, f"Ce dossier existe déjà dans les demandes disponibles (#{existing.get('request_number') or existing['id']}).", None
+
+                # 2. Restauration de l'archive vers 'demandes'
+                req_num = orig_id or arch["id"]
+                prio = bool(arch.get("prioritaire", False))
+                montant = float(arch.get("montant") or 0.0)
+
+                cursor.execute(
+                    """
+                    INSERT INTO demandes (
+                        request_number, user_id, orientation, prenom, nom, age, localisation,
+                        photo_id, instagram, snapchat, details, prioritaire, montant,
+                        statut, is_difficile, reussie_substatus, paiement_statut,
+                        has_delivered_content, date_livraison, admin_en_charge,
+                        date_creation, date_modification
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s,
+                        '⏳ En attente', FALSE, NULL, %s,
+                        FALSE, NULL, %s,
+                        %s, NOW()
+                    )
+                    """,
+                    (
+                        req_num,
+                        arch["user_id"],
+                        arch.get("orientation", "hetero"),
+                        arch.get("prenom"),
+                        arch.get("nom"),
+                        arch.get("age"),
+                        arch.get("localisation"),
+                        arch.get("photo_id"),
+                        arch.get("instagram"),
+                        arch.get("snapchat"),
+                        arch.get("details"),
+                        prio,
+                        montant,
+                        arch.get("paiement_statut", "non_requis"),
+                        int(operator_id),
+                        arch.get("date_creation") or datetime.now(),
+                    )
+                )
+                nouvelle_demande_id = cursor.lastrowid
+
+                # 3. Réactivation dans demandes_suivi
+                cursor.execute(
+                    """
+                    UPDATE demandes_suivi
+                    SET admin_id = %s, derniere_action = NOW(), statut_suivi = 'active'
+                    WHERE demande_id = %s
+                    """,
+                    (int(operator_id), int(nouvelle_demande_id))
+                )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                        VALUES (%s, %s, NOW(), NOW(), 'active')
+                        """,
+                        (int(nouvelle_demande_id), int(operator_id))
+                    )
+
+                # 4. Suppression de l'archive
+                cursor.execute("DELETE FROM archives WHERE id = %s", (int(archive_id),))
+
+                arch["new_demande_id"] = nouvelle_demande_id
+                logger.info("♻️ Archive abandonnée #%s désarchivée et assignée à l'opérateur %s (nouvelle demande #%s).", archive_id, operator_id, nouvelle_demande_id)
+                return True, "Dossier restauré avec succès !", arch
+
+        except Exception as exc:
+            logger.error("Erreur lors du désarchivage de l'archive abandonnée %s : %s", archive_id, exc, exc_info=True)
+            return False, "Erreur technique lors du désarchivage.", None
+
     def get_expired_delivered_demandes(self, hours: Optional[int] = None) -> List[Dict[str, Any]]:
         effective_hours = hours if hours is not None else self.get_auto_archive_hours()
         try:

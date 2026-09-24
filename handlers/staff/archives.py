@@ -118,7 +118,7 @@ class ArchivesManager:
             return
 
         caption = self._format_archive_card(demande, page, total, is_global=is_global)
-        kb = self._build_archive_keyboard(page, total, is_global=is_global)
+        kb = self._build_archive_keyboard(demande, page, total, user_id=user_id, is_global=is_global)
         photo_id = demande.get("photo_id")
 
         if query:
@@ -191,12 +191,35 @@ class ArchivesManager:
 
         return "\n".join(lines)
 
-    def _build_archive_keyboard(self, page: int, total: int, is_global: bool = False) -> InlineKeyboardMarkup:
-        """Génère la barre de navigation dans les archives."""
+    def _build_archive_keyboard(self, item: dict, page: int, total: int, user_id: int, is_global: bool = False) -> InlineKeyboardMarkup:
+        """Génère la barre d'actions et de navigation dans les archives avec vérification stricte des permissions."""
         prefix = "global_arch_page_" if is_global else "archive_page_"
         back_cb = "parametres" if is_global else "gerer_demandes"
 
         buttons = []
+        archive_id = item["id"]
+        admin_charge = item.get("admin_en_charge")
+        statut_raw = str(item.get("statut") or "")
+
+        # Contrôle des droits : référent qui a traité le dossier ou administrateur/propriétaire
+        is_admin_or_owner = self.config.is_admin(user_id) or self.config.is_owner(user_id)
+        is_referent = (admin_charge is not None and int(admin_charge) == int(user_id))
+        can_manage = is_admin_or_owner or is_referent
+
+        if can_manage:
+            action_row = []
+            # 1. Contacter le client
+            action_row.append(InlineKeyboardButton("💬 Contacter le client", callback_data=f"contacter_archive_{archive_id}"))
+
+            # 2. Boutons d'annulation d'archivage conditionnels
+            if "Réussie" in statut_raw:
+                action_row.append(InlineKeyboardButton("🔄 Réussie Active", callback_data=f"unarchive_reussie_{archive_id}_{page}_{int(is_global)}"))
+            elif "Abandon" in statut_raw or "Annul" in statut_raw:
+                action_row.append(InlineKeyboardButton("🔄 Reprendre le dossier", callback_data=f"unarchive_abandon_{archive_id}_{page}_{int(is_global)}"))
+
+            if action_row:
+                buttons.append(action_row)
+
         nav = []
         if page > 0:
             nav.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"{prefix}{page - 1}"))
@@ -208,3 +231,100 @@ class ArchivesManager:
 
         buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data=back_cb)])
         return InlineKeyboardMarkup(buttons)
+
+    # ==================== ROUTEUR DES ACTIONS SUR ARCHIVES ====================
+
+    async def handle_archives_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Traite les actions de contact et d'annulation d'archivage."""
+        query = update.callback_query
+        if not query or not query.data or not update.effective_user:
+            return
+
+        user_id = update.effective_user.id
+        data = query.data
+
+        # 1. Contacter le client depuis une archive
+        if data.startswith("contacter_archive_"):
+            archive_id = int(data.replace("contacter_archive_", ""))
+            archive = self.db_manager.get_archive_by_id(archive_id)
+            if not archive:
+                await query.answer("❌ Archive introuvable.", show_alert=True)
+                return
+
+            admin_charge = archive.get("admin_en_charge")
+            can_manage = (self.config.is_admin(user_id) or self.config.is_owner(user_id) or (admin_charge and int(admin_charge) == user_id))
+            if not can_manage:
+                await query.answer("🔒 Action réservée à l'opérateur en charge ou à un administrateur.", show_alert=True)
+                return
+
+            # Configuration de la session de contact vers le client
+            context.user_data["contact_session"] = {
+                "target_user_id": archive["user_id"],
+                "origin_type": "archive",
+                "archive_id": archive_id,
+            }
+            client_prenom = html.escape(str(archive.get("prenom") or "le client"))
+            msg = (
+                f"💬 <b>Messagerie directe avec le client (Dossier #{archive.get('original_id') or archive['id']})</b>\n\n"
+                f"Cible : <b>{client_prenom}</b>\n\n"
+                "Tapez votre message ou transmettez des fichiers (photos, vidéos, documents).\n"
+                "Tapez /stop pour annuler à tout moment."
+            )
+            cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_contact")]])
+            await self._safe_edit_text_or_send(query, context, msg, cancel_kb)
+            return
+
+        # 2. Annuler l'archivage d'une demande Réussie -> Passer en Réussie Active
+        elif data.startswith("unarchive_reussie_"):
+            parts = data.split("_")
+            archive_id = int(parts[2])
+            page = int(parts[3]) if len(parts) > 3 else 0
+            is_global = bool(int(parts[4])) if len(parts) > 4 else False
+
+            archive = self.db_manager.get_archive_by_id(archive_id)
+            if not archive:
+                await query.answer("❌ Archive introuvable.", show_alert=True)
+                return
+
+            admin_charge = archive.get("admin_en_charge")
+            can_manage = (self.config.is_admin(user_id) or self.config.is_owner(user_id) or (admin_charge and int(admin_charge) == user_id))
+            if not can_manage:
+                await query.answer("🔒 Action réservée à l'opérateur en charge ou à un administrateur.", show_alert=True)
+                return
+
+            restored = self.db_manager.desarchiver_vers_reussie_active(archive_id)
+            if restored:
+                new_id = restored.get("new_demande_id")
+                await query.answer("✅ Dossier restauré en statut « Réussie (Active) » !", show_alert=True)
+                logger.info("Dossier archive #%s restauré en active #%s par %s", archive_id, new_id, user_id)
+                await self.show_archives(update, context, page=max(0, page - 1), is_global=is_global)
+            else:
+                await query.answer("❌ Échec lors de la restauration du dossier.", show_alert=True)
+            return
+
+        # 3. Annuler l'archivage d'une demande Abandonnée/Annulée avec verrou anti-collision
+        elif data.startswith("unarchive_abandon_"):
+            parts = data.split("_")
+            archive_id = int(parts[2])
+            page = int(parts[3]) if len(parts) > 3 else 0
+            is_global = bool(int(parts[4])) if len(parts) > 4 else False
+
+            archive = self.db_manager.get_archive_by_id(archive_id)
+            if not archive:
+                await query.answer("❌ Archive introuvable.", show_alert=True)
+                return
+
+            admin_charge = archive.get("admin_en_charge")
+            can_manage = (self.config.is_admin(user_id) or self.config.is_owner(user_id) or (admin_charge and int(admin_charge) == user_id))
+            if not can_manage:
+                await query.answer("🔒 Action réservée à l'opérateur en charge ou à un administrateur.", show_alert=True)
+                return
+
+            success, alert_msg, restored = self.db_manager.desarchiver_demande_abandonnee(archive_id, operator_id=user_id)
+            if success:
+                await query.answer(f"✅ {alert_msg}", show_alert=True)
+                await self.show_archives(update, context, page=max(0, page - 1), is_global=is_global)
+            else:
+                # Alerte explicite si un autre membre est déjà dessus
+                await query.answer(f"🚫 {alert_msg}", show_alert=True)
+            return

@@ -420,28 +420,32 @@ class InterfaceManager:
     def get_danger_zone_menu(self):
         """Affiche le menu de la Zone de Danger (Réservé au Propriétaire)."""
         text = (
-            "🚨 <b>ZONE DE DANGER — PURGE DES DONNÉES</b>\n"
+            "🚨 <b>ZONE DE DANGER — PURGE DES DONNÉES</b> 🚨\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "⚠️ <b>Attention :</b> Les actions lancées ici effacent immédiatement et définitivement les données ciblées dans MySQL.\n\n"
             "<i>Sélectionnez le lot de données à vider :</i>"
         )
         keyboard = [
             [
-                InlineKeyboardButton("📦 Vider Archives", callback_data="danger_purge_archives"),
-                InlineKeyboardButton("📋 Vider Demandes", callback_data="danger_purge_demandes")
+                InlineKeyboardButton("📦 VIDER ARCHIVES", callback_data="danger_purge_archives"),
+                InlineKeyboardButton("📋 VIDER DEMANDES", callback_data="danger_purge_demandes")
             ],
             [
-                InlineKeyboardButton("👤 Vider Clients", callback_data="danger_purge_users"),
-                InlineKeyboardButton("🦈 Vider Staff", callback_data="danger_purge_staff")
+                InlineKeyboardButton("👤 VIDER CLIENTS", callback_data="danger_purge_users"),
+                InlineKeyboardButton("🦈 VIDER STAFF", callback_data="danger_purge_staff")
             ],
             [
-                InlineKeyboardButton("🛡️ Vider Managers", callback_data="danger_purge_admins"),
-                InlineKeyboardButton("💥 PURGE TOTALE", callback_data="danger_purge_totale")
+                InlineKeyboardButton("🛡️ VIDER MANAGERS", callback_data="danger_purge_admins"),
+                InlineKeyboardButton("⚙️ VIDER CONFIG", callback_data="danger_purge_config")
             ],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
+            [
+                InlineKeyboardButton("💥 PURGE TOTALE 💥", callback_data="danger_purge_totale")
+            ],
+            [
+                InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data="gerer_bot")
+            ]
         ]
         return text, InlineKeyboardMarkup(keyboard)
-
     # ========== SOUS-MENU ADHÉSION OBLIGATOIRE GROUPE (Owner Only) ==========
 
     def get_group_subscription_config_menu(self):

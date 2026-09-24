@@ -117,8 +117,8 @@ class UserHandlers:
             "Cliquez sur le bouton ci-dessous pour vous inscrire via le bot dédié, puis cliquez sur <b>Vérifier mon adhésion</b> :"
         )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✍️ S'inscrire au groupe", url=sub_url)],
-            [InlineKeyboardButton("🔄 Vérifier mon adhésion", callback_data="check_subscription")]
+            [InlineKeyboardButton("✍️ S'INSCRIRE AU GROUPE ✍️", url=sub_url)],
+            [InlineKeyboardButton("🔄 VÉRIFIER MON ADHÉSION 🔄", callback_data="check_subscription")]
         ])
 
         if update.callback_query:
@@ -198,7 +198,7 @@ class UserHandlers:
                 "La création et la navigation des demandes sont actuellement désactivées par l'administration.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                    [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]
                 ]),
             )
             return
@@ -220,8 +220,8 @@ class UserHandlers:
                         reason_msg,
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("⭐ Passer VIP", callback_data="menu_vip_shop")],
-                            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
+                            [InlineKeyboardButton("⭐ PASSER VIP ⭐", callback_data="menu_vip_shop")],
+                            [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]
                         ]),
                     )
                     return
@@ -278,7 +278,7 @@ class UserHandlers:
                     "<i>Votre dossier sera automatiquement converti en priorité et proposé aux piégeurs.</i>"
                 )
                 kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ Annuler", callback_data="voir_demandes")
+                    InlineKeyboardButton("❌ ANNULER ❌", callback_data="voir_demandes")
                 ]])
                 await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=kb)
                 return
@@ -297,7 +297,7 @@ class UserHandlers:
                         "Votre quota de demandes actives a été libéré.",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")
+                            InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")
                         ]])
                     )
                 else:
@@ -323,7 +323,7 @@ class UserHandlers:
                         "Il est désormais en statut <b>⏳ En attente</b> dans vos demandes en cours.",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("📋 Consulter mes demandes", callback_data="voir_demandes")
+                            InlineKeyboardButton("📋 CONSULTER MES DEMANDES 📋", callback_data="voir_demandes")
                         ]])
                     )
 
@@ -334,8 +334,8 @@ class UserHandlers:
                             "Le dossier est maintenant présent dans vos <b>Demandes suivies</b> sous le statut <b>⏳ En attente</b>."
                         )
                         kb_staff = InlineKeyboardMarkup([
-                            [InlineKeyboardButton("📄 Ouvrir le dossier", callback_data=f"retour_texte_{demande_id}")],
-                            [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
+                            [InlineKeyboardButton("📄 OUVRIR LE DOSSIER 📄", callback_data=f"retour_texte_{demande_id}")],
+                            [InlineKeyboardButton("💌 MES SUIVIS 💌", callback_data="demandes_suivies")]
                         ])
                         await context.bot.send_message(
                             chat_id=staff_id,
@@ -373,7 +373,7 @@ class UserHandlers:
                         f"Votre dossier #{req_num} reste actif en file d'attente à son tarif initial de <b>{montant_initial:.2f} €</b>.",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")
+                            InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")
                         ]])
                     )
 
@@ -389,7 +389,7 @@ class UserHandlers:
                                 text=alert_staff,
                                 parse_mode="HTML",
                                 reply_markup=InlineKeyboardMarkup([[
-                                    InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")
+                                    InlineKeyboardButton("📮 DEMANDES DISPONIBLES 📮", callback_data="demandes_disponibles")
                                 ]])
                             )
                         except Exception as err_s:
@@ -410,7 +410,7 @@ class UserHandlers:
                     "<i>(Les demandes prioritaires sont examinées et traitées en priorité par l'équipe).</i>"
                 )
                 kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ Annuler", callback_data="voir_demandes")
+                    InlineKeyboardButton("❌ ANNULER ❌", callback_data="voir_demandes")
                 ]])
 
                 if query.message and query.message.photo:
@@ -527,7 +527,7 @@ class UserHandlers:
                         text=admin_alert,
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("📄 Ouvrir la fiche du dossier", callback_data=f"retour_texte_{demande_id}")]
+                            [InlineKeyboardButton("📄 OUVRIR LA FICHE DU DOSSIER 📄", callback_data=f"retour_texte_{demande_id}")]
                         ])
                     )
                 except Exception as notif_err:
@@ -540,7 +540,7 @@ class UserHandlers:
                     "<i>Dès réception des fonds, votre référent validera le paiement et vous transmettra les fichiers.</i>"
                 )
                 contact_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_reply")
+                    InlineKeyboardButton("❌ ANNULER ❌", callback_data="cancel_user_reply")
                 ]])
 
                 if query.message and query.message.photo:
@@ -661,7 +661,7 @@ class UserHandlers:
                     "Tapez votre message ou envoyez vos fichiers ci-dessous. Ils lui seront immédiatement transmis :"
                 )
                 contact_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_reply")
+                    InlineKeyboardButton("❌ ANNULER ❌", callback_data="cancel_user_reply")
                 ]])
 
                 if query.message and query.message.photo:
@@ -704,7 +704,7 @@ class UserHandlers:
                         "Elle est de nouveau disponible et visible par toute l'équipe opérationnelle.",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes")
+                            InlineKeyboardButton("📋 VOIR MES DEMANDES 📋", callback_data="voir_demandes")
                         ]])
                     )
                 except Exception as exc:
@@ -722,10 +722,10 @@ class UserHandlers:
                         "🗑️ <b>Demande classée sans suite.</b>\n\n"
                         "Votre demande a été archivée sous « 🗑️ Supprimée ». Une place vient d'être libérée dans votre quota.",
                         parse_mode="HTML",
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton("🗳️ Nouvelle demande", callback_data="new_demande"),
-                            InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")
-                        ]])
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🗳️ NOUVELLE DEMANDE 🗳️", callback_data="new_demande")],
+                            [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]
+                        ])
                     )
                 else:
                     await query.answer("❌ Erreur technique lors de l'archivage.", show_alert=True)
@@ -742,7 +742,7 @@ class UserHandlers:
                     "Indiquez au clavier la <b>raison</b> de votre annulation :\n"
                     "<i>Elle sera transmise à l'opérateur en charge pour validation.</i>"
                 )
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="voir_demandes")]])
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 RETOUR 🔙", callback_data="voir_demandes")]])
 
                 if query.message and query.message.photo:
                     try:
@@ -827,11 +827,10 @@ class UserHandlers:
                     "admin_id": admin_id,
                 }
                 await query.message.reply_text(
-                    "✍️ <b>Tapez votre réponse ou envoyez votre fichier ci-dessous :</b>\n\n"
-                    "⚠️ <i>Attention : vous ne disposez que d'une seule réponse autorisée pour ce message.</i>",
+                    "✍️ <b>Tapez votre réponse ou envoyez votre fichier ci-dessous :</b>",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("❌ Annuler", callback_data="cancel_user_reply")
+                        InlineKeyboardButton("❌ ANNULER ❌", callback_data="cancel_user_reply")
                     ]])
                 )
             elif data == "cancel_user_reply":
@@ -872,7 +871,7 @@ class UserHandlers:
                     "❌ Une erreur est survenue lors du traitement de votre demande.",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔙 Retour au menu", callback_data="start_menu")]
+                        [InlineKeyboardButton("🔙 RETOUR AU MENU 🔙", callback_data="start_menu")]
                     ]),
                 )
             except Exception:
@@ -914,8 +913,8 @@ class UserHandlers:
             "Merci de consulter vos suivis ou de lui apporter une réponse."
         )
         admin_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")],
-            [InlineKeyboardButton("💬 Contacter le demandeur", callback_data=f"contacter_{demande_id}")]
+            [InlineKeyboardButton("💌 OUVRIR MES SUIVIS 💌", callback_data="demandes_suivies")],
+            [InlineKeyboardButton("💬 CONTACTER LE DEMANDEUR 💬", callback_data=f"contacter_{demande_id}")]
         ])
 
         try:
@@ -1010,7 +1009,7 @@ class UserHandlers:
                 await query.edit_message_text(
                     "🔢 Tapez au clavier le <b>nombre total maximum</b> de demandes autorisées (0 = illimité) :",
                     parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_limits")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data="menu_limits")]])
                 )
                 return
 
@@ -1019,7 +1018,7 @@ class UserHandlers:
                 await query.edit_message_text(
                     "🔢 Tapez au clavier le <b>nombre maximum de demandes par personne</b> (0 = illimité) :",
                     parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_limits")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data="menu_limits")]])
                 )
                 return
 
@@ -1038,7 +1037,7 @@ class UserHandlers:
                 await query.edit_message_text(
                     f"🔢 Tapez au clavier le <b>{labels.get(field, field)}</b> autorisé (0 = illimité) :",
                     parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annuler", callback_data="menu_limits")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data="menu_limits")]])
                 )
                 return
 
@@ -1119,8 +1118,8 @@ class UserHandlers:
                 )
                 client_kb = InlineKeyboardMarkup([
                     [
-                        InlineKeyboardButton(f"✅ Accepter ({nouveau_prix:.2f} €)", callback_data=f"user_accept_remun_prio_{demande_id}"),
-                        InlineKeyboardButton("❌ Refuser", callback_data=f"user_refuse_remun_prio_{demande_id}")
+                        InlineKeyboardButton(f"✅ ACCEPTER ({nouveau_prix:.2f} €)", callback_data=f"user_accept_remun_prio_{demande_id}"),
+                        InlineKeyboardButton("❌ REFUSER", callback_data=f"user_refuse_remun_prio_{demande_id}")
                     ]
                 ])
 
@@ -1163,7 +1162,7 @@ class UserHandlers:
                     "Il est à présent proposé en priorité à l'ensemble de l'équipe !",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🗂️ Mes demandes", callback_data="voir_demandes")
+                        InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")
                     ]])
                 )
             else:
@@ -1200,10 +1199,10 @@ class UserHandlers:
             )
             admin_kb = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("💰 Rémunération", callback_data=f"dispo_ask_remun_std_{demande_id}"),
-                    InlineKeyboardButton("🗑️ Supprimer", callback_data=f"admin_del_dispo_{demande_id}")
+                    InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_std_{demande_id}"),
+                    InlineKeyboardButton("🗑️ SUPPRIMER", callback_data=f"admin_del_dispo_{demande_id}")
                 ],
-                [InlineKeyboardButton("📄 Voir le dossier", callback_data=f"retour_texte_{demande_id}")]
+                [InlineKeyboardButton("📄 VOIR LE DOSSIER 📄", callback_data=f"retour_texte_{demande_id}")]
             ])
 
             monitors = self.db_manager.get_monitoring_admins()
@@ -1238,7 +1237,7 @@ class UserHandlers:
 
             if ok:
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📋 Voir mes demandes", callback_data="voir_demandes")]
+                    [InlineKeyboardButton("📋 VOIR MES DEMANDES 📋", callback_data="voir_demandes")]
                 ])
                 await update.message.reply_text(
                     f"🎉 <b>Félicitations !</b>\n\nVotre dossier #{demande_id} est désormais <b>💎 Prioritaire</b> avec un montant de <b>{montant:.2f} €</b>.\n"
@@ -1269,7 +1268,7 @@ class UserHandlers:
                                 f"💰 <b>Nouveau montant convenu :</b> <code>{montant:.2f} €</code>"
                             )
                             kb_ref = InlineKeyboardMarkup([
-                                [InlineKeyboardButton("📄 Voir le dossier", callback_data=f"retour_texte_{demande_id}")]
+                                [InlineKeyboardButton("📄 VOIR LE DOSSIER 📄", callback_data=f"retour_texte_{demande_id}")]
                             ])
                             try:
                                 await context.bot.send_message(
@@ -1316,8 +1315,10 @@ class UserHandlers:
                                     "Disponible immédiatement dans les demandes ouvertes."
                                 )
                                 kb_staff = InlineKeyboardMarkup([
-                                    [InlineKeyboardButton("⚡ Prendre en charge", callback_data=f"suivre_demande_{demande_id}")],
-                                    [InlineKeyboardButton("📮 Demandes disponibles", callback_data="demandes_disponibles")]
+                                    [
+                                        InlineKeyboardButton("⚡ PRENDRE EN CHARGE", callback_data=f"suivre_demande_{demande_id}"),
+                                        InlineKeyboardButton("📮 DEMANDES DISPO", callback_data="demandes_disponibles")
+                                    ]
                                 ])
 
                                 try:
@@ -1349,7 +1350,7 @@ class UserHandlers:
                     owner_id = getattr(self.config, "OWNER_ID", 0) or self.db_manager.get_owner_id()
                     success = self.db_manager.purge_table_data(target, owner_id)
                     if success:
-                        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚨 Zone de Danger", callback_data="menu_danger_zone")]])
+                        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚨 ZONE DE DANGER 🚨", callback_data="menu_danger_zone")]])
                         await update.message.reply_text(
                             f"✅ <b>Purge réussie !</b>\n\nLa table ou cible <code>{target}</code> a été vidée.",
                             parse_mode="HTML",
@@ -1482,8 +1483,10 @@ class UserHandlers:
             if admin_id:
                 context.user_data[f"cancel_reason_{demande_id}"] = raison
                 kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Accepter l'annulation", callback_data=f"accept_cancel_{demande_id}")],
-                    [InlineKeyboardButton("❌ Refuser l'annulation", callback_data=f"refuse_cancel_{demande_id}")]
+                    [
+                        InlineKeyboardButton("✅ ACCEPTER L'ANNULATION", callback_data=f"accept_cancel_{demande_id}"),
+                        InlineKeyboardButton("❌ REFUSER L'ANNULATION", callback_data=f"refuse_cancel_{demande_id}")
+                    ]
                 ])
                 try:
                     await context.bot.send_message(
@@ -1533,7 +1536,7 @@ class UserHandlers:
             if await self.staff_handlers.handle_collect_admin_media(update, context):
                 return
 
-        # Réponse du Demandeur vers l'opérateur
+        # Réponse du Demandeur vers l'opérateur (avec gestion du mode conversation)
         if context.user_data and context.user_data.get("replying_to_admin"):
             await self._handle_user_reply_relay(update, context)
             return
@@ -1547,7 +1550,7 @@ class UserHandlers:
         await self.compte.handle_text_messages(update, context)
 
     async def _handle_user_reply_relay(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Transmet la réponse de l'utilisateur vers l'opérateur référent avec notification de surveillance."""
+        """Transmet la réponse de l'utilisateur vers l'opérateur référent avec notification de surveillance et gestion du mode conversation."""
         reply_info = context.user_data.pop("replying_to_admin", None)
         if not reply_info:
             return
@@ -1565,12 +1568,23 @@ class UserHandlers:
         user_comment = (msg.caption or msg.text or "").strip()
         corps = f"\n\n« {html.escape(user_comment)} »" if user_comment else ""
 
-        admin_keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("💬 Répondre à nouveau", callback_data=f"contacter_{demande_id}"),
-                InlineKeyboardButton("📄 Voir la fiche", callback_data=f"retour_texte_{demande_id}")
-            ]
-        ])
+        # Détection du mode conversation continue active
+        active_convs = context.bot_data.setdefault("active_conversations", {})
+        is_conv = (demande_id in active_convs)
+
+        # Clavier pour l'opérateur
+        if is_conv:
+            admin_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 RÉPONDRE 💬", callback_data=f"contacter_{demande_id}")],
+                [InlineKeyboardButton("🔒 CLÔTURER LA CONVERSATION 🔒", callback_data=f"contact_close_conv_{demande_id}")]
+            ])
+        else:
+            admin_keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("💬 RÉPONDRE À NOUVEAU", callback_data=f"contacter_{demande_id}"),
+                    InlineKeyboardButton("📄 VOIR LA FICHE", callback_data=f"retour_texte_{demande_id}")
+                ]
+            ])
 
         header_text = (
             f"📩 <b>Message du demandeur{badge_vip} (Demande #{demande_id})</b>\n"
@@ -1610,7 +1624,7 @@ class UserHandlers:
                     f"{corps}"
                 )
                 kb_spy = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📄 Voir le dossier", callback_data=f"retour_texte_{demande_id}")]
+                    [InlineKeyboardButton("📄 VOIR LE DOSSIER 📄", callback_data=f"retour_texte_{demande_id}")]
                 ])
 
                 for mon_id in monitors:
@@ -1623,27 +1637,39 @@ class UserHandlers:
                                     message_id=msg.message_id,
                                     caption=alert_text,
                                     parse_mode="HTML",
-                                    reply_markup=kb_spy
+                                    reply_markup=kb_spy,
                                 )
                             else:
                                 await context.bot.send_message(
                                     chat_id=mon_id,
                                     text=alert_text,
                                     parse_mode="HTML",
-                                    reply_markup=kb_spy
+                                    reply_markup=kb_spy,
                                 )
                         except Exception:
                             pass
             except Exception as mon_err:
                 logger.warning("Erreur surveillance user_msg : %s", mon_err)
 
-            await msg.reply_text(
-                "✅ <b>Votre message a été transmis à votre référent !</b>",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Mes demandes", callback_data="voir_demandes")
-                ]])
-            )
+            # Confirmation au client selon le mode (Conversation continue vs Réponse unique)
+            if is_conv:
+                client_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 ENVOYER UN AUTRE MESSAGE 💬", callback_data=f"reply_to_admin_{demande_id}_{admin_id}")]
+                ])
+                await msg.reply_text(
+                    "✅ <b>Message transmis à votre référent !</b>\n\n"
+                    "<i>La conversation reste ouverte. Cliquez ci-dessous si vous souhaitez ajouter un autre message ou document :</i>",
+                    parse_mode="HTML",
+                    reply_markup=client_kb
+                )
+            else:
+                await msg.reply_text(
+                    "✅ <b>Votre message a été transmis à votre référent !</b>",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")
+                    ]])
+                )
 
         except Exception as exc:
             logger.error("Erreur renvoi réponse utilisateur vers staff %s : %s", admin_id, exc)
@@ -1665,7 +1691,7 @@ class UserHandlers:
             f"L'annulation de la demande n°<code>{demande_id}</code> n'est pas encore activée.",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 Mes demandes", callback_data="voir_demandes")],
-                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")],
+                [InlineKeyboardButton("📋 MES DEMANDES 📋", callback_data="voir_demandes")],
+                [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")],
             ]),
         )
