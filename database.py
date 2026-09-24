@@ -260,6 +260,7 @@ class DatabaseManager:
                 can_view_archives BOOLEAN DEFAULT FALSE,
                 can_monitor_staff BOOLEAN DEFAULT FALSE,
                 can_ban_users BOOLEAN DEFAULT FALSE,
+                can_edit_others_demandes BOOLEAN DEFAULT FALSE,
                 added_by BIGINT DEFAULT NULL,
                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -396,6 +397,7 @@ class DatabaseManager:
             ("admins", "can_view_archives", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_monitor_staff", "BOOLEAN DEFAULT FALSE"),
             ("admins", "can_ban_users", "BOOLEAN DEFAULT FALSE"),
+            ("admins", "can_edit_others_demandes", "BOOLEAN DEFAULT FALSE"),
             ("demandes", "orientation", "VARCHAR(16) DEFAULT 'hetero'"),
             ("demandes", "is_difficile", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("demandes", "reussie_substatus", "VARCHAR(20) DEFAULT NULL"),
@@ -542,9 +544,15 @@ class DatabaseManager:
                     owner_alias = self.get_config_value("owner_alias", "Propriétaire")
                     cursor.execute(
                         """
-                        INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, can_ban_users)
-                        VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
-                        ON DUPLICATE KEY UPDATE is_owner = TRUE, is_vip = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE, can_monitor_staff = TRUE, can_ban_users = TRUE
+                        INSERT INTO admins (
+                            user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, 
+                            can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, 
+                            can_ban_users, can_edit_others_demandes
+                        ) VALUES (%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+                        ON DUPLICATE KEY UPDATE 
+                            is_owner = TRUE, is_vip = TRUE, can_manage_staff = TRUE, can_manage_vips = TRUE, 
+                            can_view_stats = TRUE, can_manage_delais = TRUE, can_view_archives = TRUE, 
+                            can_monitor_staff = TRUE, can_ban_users = TRUE, can_edit_others_demandes = TRUE
                         """,
                         (owner_id, owner_alias)
                     )
@@ -1000,13 +1008,16 @@ class DatabaseManager:
                 "can_view_archives": True,
                 "can_monitor_staff": True,
                 "can_ban_users": True,
+                "can_edit_others_demandes": True,
             }
 
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, can_ban_users
+                    SELECT is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats,
+                           can_manage_delais, can_view_archives, can_monitor_staff, can_ban_users,
+                           can_edit_others_demandes
                     FROM admins WHERE user_id = %s
                     """,
                     (int(user_id),)
@@ -1023,6 +1034,7 @@ class DatabaseManager:
                         "can_view_archives": bool(row.get("can_view_archives", False)),
                         "can_monitor_staff": bool(row.get("can_monitor_staff", False)),
                         "can_ban_users": bool(row.get("can_ban_users", False)),
+                        "can_edit_others_demandes": bool(row.get("can_edit_others_demandes", False)),
                     }
         except Exception as exc:
             logger.error("Erreur lecture privilèges admin %s : %s", user_id, exc)
@@ -1037,12 +1049,14 @@ class DatabaseManager:
             "can_view_archives": False,
             "can_monitor_staff": False,
             "can_ban_users": False,
+            "can_edit_others_demandes": False,
         }
 
     def update_admin_privilege(self, user_id: int, priv_key: str, value: bool) -> bool:
         allowed_keys = {
             "can_manage_staff", "can_manage_vips", "can_view_stats",
-            "can_manage_delais", "can_view_archives", "can_monitor_staff", "can_ban_users", "is_vip"
+            "can_manage_delais", "can_view_archives", "can_monitor_staff",
+            "can_ban_users", "can_edit_others_demandes", "is_vip"
         }
         if priv_key not in allowed_keys:
             return False
@@ -1055,6 +1069,29 @@ class DatabaseManager:
             return True
         except Exception as exc:
             logger.error("Erreur mise à jour privilège admin %s (%s) : %s", user_id, priv_key, exc)
+            return False
+
+    def toggle_admin_privilege(self, user_id: int, priv_key: str) -> bool:
+        """Bascule l'état d'un privilège pour un administrateur."""
+        allowed_keys = {
+            "can_manage_staff", "can_manage_vips", "can_view_stats",
+            "can_manage_delais", "can_view_archives", "can_monitor_staff",
+            "can_ban_users", "can_edit_others_demandes", "is_vip"
+        }
+        if priv_key not in allowed_keys:
+            return False
+
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    f"UPDATE admins SET `{priv_key}` = NOT COALESCE(`{priv_key}`, FALSE) WHERE user_id = %s",
+                    (int(user_id),)
+                )
+            self.clear_cache(f"is_admin_{user_id}")
+            self.clear_cache(f"vip_{user_id}")
+            return True
+        except Exception as exc:
+            logger.error("Erreur bascule privilège admin %s (%s) : %s", user_id, priv_key, exc)
             return False
 
     def get_monitoring_admins(self, action: Optional[str] = None) -> List[int]:

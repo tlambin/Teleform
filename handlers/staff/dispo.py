@@ -402,7 +402,6 @@ class DispoManager:
                     (nouveau_statut, staff_id, demande_id)
                 )
 
-                # Pattern anti-deadlock : UPDATE puis INSERT si la ligne de suivi n'existait pas encore
                 cursor.execute(
                     """
                     UPDATE demandes_suivi
@@ -472,7 +471,7 @@ class DispoManager:
 
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Aller à mes suivis", callback_data="demandes_suivies")],
-                [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
+                [InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")]
             ])
             success_msg = (
                 f"🎉 <b>PRISE EN CHARGE VALIDÉE</b>\n"
@@ -511,7 +510,7 @@ class DispoManager:
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🧹 Effacer la recherche", callback_data="dispo_clear_search")],
                 [InlineKeyboardButton("⚙️ Menu Filtres", callback_data="dispo_filters_menu")],
-                [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
+                [InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")]
             ])
             await update.message.reply_text(
                 "🔍 Aucun résultat ne correspond à votre recherche.",
@@ -688,7 +687,7 @@ class DispoManager:
             LEFT JOIN users u ON d.user_id = u.user_id
             LEFT JOIN demandes_suivi ds ON d.id = ds.demande_id AND ds.admin_id = %s
             WHERE {' AND '.join(sql_where)}
-            ORDER BY 
+            ORDER BY
                 d.prioritaire DESC,
                 CASE WHEN d.prioritaire = 1 THEN d.montant END DESC,
                 d.date_creation ASC
@@ -723,7 +722,7 @@ class DispoManager:
                 )
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("💌 Ouvrir mes suivis", callback_data="demandes_suivies")],
-                    [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
+                    [InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")]
                 ])
                 await self._render_clean_text(query, context, msg, kb)
                 return
@@ -738,7 +737,7 @@ class DispoManager:
                 )
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔄 Réessayer", callback_data="demandes_disponibles")],
-                    [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
+                    [InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")]
                 ])
                 await self._render_clean_text(query, context, msg, kb)
                 return
@@ -746,8 +745,8 @@ class DispoManager:
             text_card = self._format_trial_demande_card(demande)
             demande_id = demande["id"]
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("❤️ PRENDRE EN CHARGE ❤️", callback_data=f"suivre_demande_{demande_id}")],
-                [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
+                [InlineKeyboardButton("🎯 PRENDRE EN CHARGE", callback_data=f"suivre_demande_{demande_id}")],
+                [InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")]
             ])
             photo_id = demande.get("photo_id")
             if photo_id:
@@ -769,7 +768,7 @@ class DispoManager:
                 [InlineKeyboardButton("⚙️ Modifier les filtres", callback_data="dispo_filters_menu")],
                 [InlineKeyboardButton("🔄 Réinitialiser filtres", callback_data="dispo_filter_reset")],
                 [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")],
-                [InlineKeyboardButton("🔙 Menu principal", callback_data="start_menu")]
+                [InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")]
             ])
             await self._render_clean_text(query, context, msg, keyboard)
             return
@@ -1057,8 +1056,8 @@ class DispoManager:
         is_remun_asked = bool(demande.get("remun_asked_at"))
 
         buttons = [
-            # 1. ❤️ PRENDRE EN CHARGE ❤️
-            [InlineKeyboardButton("❤️ PRENDRE EN CHARGE ❤️", callback_data=f"suivre_demande_{demande_id}")]
+            # 1. 🎯 PRENDRE EN CHARGE
+            [InlineKeyboardButton("🎯 PRENDRE EN CHARGE", callback_data=f"suivre_demande_{demande_id}")]
         ]
 
         # 2. 👤 PROFIL | 🗑️ SUPPRIMER (Admin) OU 👤 PROFIL | ⚠️ SIGNALER (Staff)
@@ -1069,7 +1068,7 @@ class DispoManager:
             row_profil.append(InlineKeyboardButton("⚠️ SIGNALER", callback_data=f"staff_report_dispo_{demande_id}"))
         buttons.append(row_profil)
 
-        # 3. 💰 RÉMUNÉRATION 💰 ou ⏳ RÉMUNÉRATION DEMANDÉE
+        # 3. 💰 RÉMUNÉRATION ou ⏳ RÉMUNÉRATION DEMANDÉE
         perms = self.db_manager.get_staff_permissions(user_id)
         can_handle_prio = (perms.get("perm_type") in ("all", "prio_only") or is_admin)
 
@@ -1080,11 +1079,11 @@ class DispoManager:
         else:
             if not is_prio and is_admin:
                 buttons.append([
-                    InlineKeyboardButton("💰 RÉMUNÉRATION 💰", callback_data=f"dispo_ask_remun_std_{demande_id}")
+                    InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_std_{demande_id}")
                 ])
             elif is_prio and can_handle_prio:
                 buttons.append([
-                    InlineKeyboardButton("💰 RÉMUNÉRATION 💰", callback_data=f"dispo_ask_remun_prio_{demande_id}")
+                    InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_prio_{demande_id}")
                 ])
 
         # 4. ⬅️ PRÉCÉDENTE | SUIVANTE ➡️
@@ -1108,3 +1107,70 @@ class DispoManager:
         ])
 
         return InlineKeyboardMarkup(buttons)
+
+    async def show_single_dispo(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int, back_callback: str = "demandes_disponibles"):
+        """Affiche la fiche officielle complète d'une demande disponible unitaire (avec photo et boutons dispo)."""
+        viewer_id = query.from_user.id
+        is_admin = self.db_manager.is_admin(viewer_id) or self.config.is_owner(viewer_id)
+
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT d.*, u.username, u.first_name AS user_first_name
+                FROM demandes d
+                LEFT JOIN users u ON d.user_id = u.user_id
+                WHERE d.id = %s
+                LIMIT 1
+                """,
+                (demande_id,)
+            )
+            demande = cursor.fetchone()
+
+        if not demande:
+            await query.answer("❌ Demande introuvable.", show_alert=True)
+            return
+
+        text_card = self._format_demande_card(demande, 0, 1, context)
+
+        is_vip = (demande.get("statut") == "🎯 Assignée (VIP)")
+        buttons = []
+
+        if is_vip and demande.get("admin_en_charge") == viewer_id:
+            buttons.append([
+                InlineKeyboardButton("✅ ACCEPTER LA MISSION", callback_data=f"vip_accept_{demande_id}"),
+                InlineKeyboardButton("❌ DÉCLINER", callback_data=f"vip_decline_{demande_id}")
+            ])
+        else:
+            buttons.append([
+                InlineKeyboardButton("🎯 PRENDRE EN CHARGE", callback_data=f"suivre_demande_{demande_id}")
+            ])
+
+        row_actions = [InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}")]
+        if is_admin:
+            row_actions.append(InlineKeyboardButton("🗑️ SUPPRIMER", callback_data=f"admin_del_dispo_{demande_id}"))
+        else:
+            row_actions.append(InlineKeyboardButton("⚠️ SIGNALER", callback_data=f"staff_report_dispo_{demande_id}"))
+        buttons.append(row_actions)
+
+        # Optionnel : bouton de rémunération unitaire
+        is_prio = bool(demande.get("prioritaire"))
+        is_remun_asked = bool(demande.get("remun_asked_at"))
+        perms = self.db_manager.get_staff_permissions(viewer_id)
+        can_handle_prio = (perms.get("perm_type") in ("all", "prio_only") or is_admin)
+
+        if is_remun_asked:
+            buttons.append([InlineKeyboardButton("⏳ RÉMUNÉRATION DEMANDÉE", callback_data="dispo_remun_pending_info")])
+        else:
+            if not is_prio and is_admin:
+                buttons.append([InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_std_{demande_id}")])
+            elif is_prio and can_handle_prio:
+                buttons.append([InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_prio_{demande_id}")])
+
+        buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data=back_callback)])
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        photo_id = demande.get("photo_id")
+        if photo_id:
+            await self._render_photo(query, context, photo_id, text_card, keyboard)
+        else:
+            await self._render_clean_text(query, context, text_card, keyboard)

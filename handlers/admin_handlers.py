@@ -24,6 +24,7 @@ ALLOWED_ADMIN_PERMISSIONS = frozenset({
     "can_view_archives",
     "can_monitor_staff",
     "can_ban_users",
+    "can_edit_others_demandes",
     "is_vip",
     "is_owner",
 })
@@ -143,7 +144,7 @@ class AdminHandlers:
             )
 
             keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")
+                InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")
             ]])
 
             if update.callback_query:
@@ -376,7 +377,7 @@ class AdminHandlers:
                 "Envoyez ci-dessous son <b>ID Telegram numérique</b> ou son <b>@pseudo</b> :\n\n"
                 "<i>Exemples : <code>123456789</code> ou <code>@nom_utilisateur</code></i>"
             )
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data="menu_membres")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER", callback_data="menu_membres")]])
             await self._safe_edit_or_send(query, context, text_search, reply_markup=kb)
 
         elif data.startswith("liste_bannis_"):
@@ -564,7 +565,7 @@ class AdminHandlers:
             "<i>(Tapez 'Passer' ou 'Non' pour ne spécifier aucun motif particulier).</i>"
         )
         back_cb = f"staff_view_demandes_{target_id}" if is_staff else (f"profil_demande_{origin_demande_id}" if origin_demande_id else "menu_membres")
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data=back_cb)]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER", callback_data=back_cb)]])
         await self._safe_edit_or_send(query, context, text, reply_markup=kb)
 
     async def handle_ban_reason_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -678,7 +679,7 @@ class AdminHandlers:
         if nav_row:
             keyboard.append(nav_row)
 
-        keyboard.append([InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data="menu_membres")])
+        keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_membres")])
 
         text = "\n".join(lines)
         if query:
@@ -754,7 +755,7 @@ class AdminHandlers:
         else:
             msg = "❌ <b>Suppression annulée :</b> Le mot de confirmation n'était pas exactement 'Effacer'."
 
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Zone de Danger", callback_data="menu_danger_zone")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_danger_zone")]])
         await update.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
         return True
 
@@ -806,7 +807,7 @@ class AdminHandlers:
         page = max(0, min(page, total - 1))
         demande = dossiers[page]
         demande_id = demande["id"]
-        req_num = demande.get("request_number", demande_id)
+        req_num = demande_id
 
         nom_cible = f"{html.escape(str(demande.get('prenom') or ''))} {html.escape(str(demande.get('nom') or ''))}".strip() or "Non renseigné"
         statut_fmt = self.db_manager.format_statut_display(
@@ -866,14 +867,14 @@ class AdminHandlers:
         admin_alias = self.db_manager.get_staff_alias(admin_id)
 
         with self.db_manager.get_cursor() as cursor:
-            cursor.execute("SELECT id, request_number, prenom FROM demandes WHERE id = %s", (demande_id,))
+            cursor.execute("SELECT id, prenom FROM demandes WHERE id = %s", (demande_id,))
             dem = cursor.fetchone()
 
         if not dem:
             await query.answer("❌ Dossier introuvable.", show_alert=True)
             return
 
-        req_num = dem.get("request_number", demande_id)
+        req_num = dem["id"]
         prenom = html.escape(str(dem.get("prenom") or "la cible"))
 
         msg_staff = (
@@ -948,7 +949,7 @@ class AdminHandlers:
             [
                 InlineKeyboardButton(trial_btn_label, callback_data=f"set_permstaff_{staff_id}_trial_toggle")
             ],
-            [InlineKeyboardButton("🔙 Équipe Staff", callback_data="gerer_staff")]
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_staff")]
         ]
 
         text = (
@@ -1017,6 +1018,7 @@ class AdminHandlers:
         st_archives = "✅ OUI" if privs.get("can_view_archives") else "❌ NON"
         st_monitor = "✅ OUI" if privs.get("can_monitor_staff") else "❌ NON"
         st_ban = "✅ OUI" if privs.get("can_ban_users") else "❌ NON"
+        st_edit_others = "✅ OUI" if privs.get("can_edit_others_demandes") else "❌ NON"
         st_vip_status = "✅ OUI" if privs.get("is_vip") else "❌ NON"
         st_owner = "👑 CO-GÉRANT" if privs.get("is_owner") else "🛡️ MANAGER"
 
@@ -1034,7 +1036,10 @@ class AdminHandlers:
                 InlineKeyboardButton(f"Surveillance Staff : {st_monitor}", callback_data=f"set_permadmin_{admin_id}_can_monitor_staff"),
             ],
             [
+                InlineKeyboardButton(f"Gérer Dossiers Tiers : {st_edit_others}", callback_data=f"set_permadmin_{admin_id}_can_edit_others_demandes"),
                 InlineKeyboardButton(f"🚫 Bannir Membres : {st_ban}", callback_data=f"set_permadmin_{admin_id}_can_ban_users"),
+            ],
+            [
                 InlineKeyboardButton(f"⭐ Accès VIP : {st_vip_status}", callback_data=f"set_permadmin_{admin_id}_is_vip"),
             ],
         ]
@@ -1044,7 +1049,7 @@ class AdminHandlers:
                 InlineKeyboardButton(f"Rôle Suprême : {st_owner}", callback_data=f"set_permadmin_{admin_id}_is_owner"),
             ])
 
-        keyboard.append([InlineKeyboardButton("🔙 Liste Managers", callback_data="gerer_admins")])
+        keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_admins")])
 
         text = (
             f"⚙️ <b>Droits Administrateur : {alias}</b>\n"
@@ -1074,8 +1079,7 @@ class AdminHandlers:
                 await query.answer("❌ Impossible de modifier le rôle du propriétaire principal.", show_alert=True)
                 return
 
-            with self.db_manager.transaction() as cursor:
-                cursor.execute(f"UPDATE admins SET `{flag}` = NOT `{flag}` WHERE user_id = %s", (admin_id,))
+            self.db_manager.toggle_admin_privilege(admin_id, flag)
 
             self.config.reload_roles()
             self.db_manager.clear_cache(f"vip_{admin_id}")
@@ -1161,8 +1165,11 @@ class AdminHandlers:
             with self.db_manager.transaction() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO admins (user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, can_ban_users, added_by, date_added)
-                    VALUES (%s, %s, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, %s, NOW())
+                    INSERT INTO admins (
+                        user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, 
+                        can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, 
+                        can_ban_users, can_edit_others_demandes, added_by, date_added
+                    ) VALUES (%s, %s, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, %s, NOW())
                     """,
                     (target_id, alias, user_id)
                 )
@@ -1172,7 +1179,7 @@ class AdminHandlers:
 
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚙️ Régler ses privilèges", callback_data=f"perm_admin_{target_id}")],
-                [InlineKeyboardButton("🛡️ Liste Managers", callback_data="gerer_admins")]
+                [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_admins")]
             ])
             await update.message.reply_text(f"✅ <b>Manager nommé :</b> <code>{alias_esc}</code> ({target_id})", parse_mode="HTML", reply_markup=kb)
             return ConversationHandler.END
@@ -1206,7 +1213,7 @@ class AdminHandlers:
                 admins = cursor.fetchall()
 
             if not admins:
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_admins")]])
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_admins")]])
                 await self._safe_edit_or_send(query, context, "📭 Aucun administrateur révocable.", reply_markup=kb)
                 return ConversationHandler.END
 
@@ -1271,7 +1278,7 @@ class AdminHandlers:
                 cursor.execute("DELETE FROM admins WHERE user_id = %s", (target_id,))
 
             self.config.reload_roles()
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🛡️ Liste Managers", callback_data="gerer_admins")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_admins")]])
             await self._safe_edit_or_send(query, context, "✅ <b>Administrateur révoqué.</b>", reply_markup=kb)
             return ConversationHandler.END
         except Exception as exc:
@@ -1373,7 +1380,7 @@ class AdminHandlers:
 
         dur_txt = f"{duration_days} jours" if duration_days else "À vie"
         succes_msg = f"✅ Statut VIP activé pour {target_user.get('first_name', target_id)} ({dur_txt}) !"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Gestion VIPs", callback_data="gerer_vips")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_vips")]])
 
         if update.callback_query:
             await self._safe_edit_or_send(update.callback_query, context, succes_msg, reply_markup=kb)
@@ -1390,7 +1397,7 @@ class AdminHandlers:
 
         vips = self.db_manager.get_vip_users_list()
         if not vips:
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_vips")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_vips")]])
             await self._safe_edit_or_send(query, context, "📭 Aucun membre VIP actif.", reply_markup=kb)
             return ConversationHandler.END
 
@@ -1423,7 +1430,7 @@ class AdminHandlers:
         await update.message.reply_text(
             f"✅ <b>Statut VIP révoqué pour {selected.get('first_name', selected['user_id'])}.</b>",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Gestion VIPs", callback_data="gerer_vips")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_vips")]])
         )
         return ConversationHandler.END
 

@@ -774,3 +774,88 @@ class SuiviManager:
         ])
 
         return InlineKeyboardMarkup(buttons)
+
+    async def show_single_demande(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int, back_callback: str = "demandes_suivies"):
+        """Affiche la fiche complète officielle d'une demande unitaire (avec photo et permissions adaptées)."""
+        viewer_id = query.from_user.id
+        is_owner = self.config.is_owner(viewer_id)
+        is_admin = self.config.is_admin(viewer_id) or is_owner
+
+        privs = self.db_manager.get_admin_privileges(viewer_id) if is_admin else {}
+        can_edit_all = is_owner or bool(privs.get("can_edit_others_demandes"))
+
+        demande = None
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT d.*, u.username, u.first_name AS user_first_name,
+                       COALESCE(ds.date_suivi, d.date_modification) AS date_suivi
+                FROM demandes d
+                LEFT JOIN demandes_suivi ds ON d.id = ds.demande_id
+                LEFT JOIN users u ON d.user_id = u.user_id
+                WHERE d.id = %s
+                LIMIT 1
+                """,
+                (demande_id,)
+            )
+            demande = cursor.fetchone()
+
+        if not demande:
+            await query.answer("❌ Demande introuvable.", show_alert=True)
+            return
+
+        text_card = self._format_suivi_card(demande, 0, 1, context)
+
+        admin_en_charge = demande.get("admin_en_charge")
+        is_assigned_to_viewer = (admin_en_charge == viewer_id)
+
+        buttons = []
+
+        # 1. Mode Opérateur complet (Assigné à soi-même, Owner ou Admin avec permission spéciale)
+        if is_assigned_to_viewer or can_edit_all:
+            statut_raw = str(demande.get("statut") or "").strip()
+            is_reussie = (statut_raw == "✅ Réussie")
+            is_prio = bool(demande.get("prioritaire"))
+            paiement_statut = demande.get("paiement_statut", "non_requis")
+            has_delivered = bool(demande.get("has_delivered_content", False))
+
+            buttons.append([InlineKeyboardButton("📌 CHANGER LE STATUT 📌", callback_data=f"change_status_{demande_id}")])
+            buttons.append([
+                InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}"),
+                InlineKeyboardButton("💬 CONTACT", callback_data=f"contacter_{demande_id}")
+            ])
+
+            if is_prio and is_reussie and paiement_statut == "en_attente":
+                buttons.append([
+                    InlineKeyboardButton("💰 VALIDER LE PAIEMENT 💰", callback_data=f"confirm_payment_prio_{demande_id}")
+                ])
+
+            if is_reussie:
+                if not is_prio or paiement_statut == "paye":
+                    if has_delivered:
+                        buttons.append([
+                            InlineKeyboardButton("📦 ARCHIVER LE DOSSIER 📦", callback_data=f"status_archive_now_{demande_id}")
+                        ])
+                    else:
+                        buttons.append([
+                            InlineKeyboardButton("📤 ENVOYER LE CONTENU 📤", callback_data=f"contacter_{demande_id}")
+                        ])
+
+        # 2. Mode Supervision / Lecture seule
+        else:
+            buttons.append([
+                InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}")
+            ])
+            if admin_en_charge:
+                buttons.append([
+                    InlineKeyboardButton("🛡️ CONTACTER LE PIÉGEUR", callback_data=f"admin_contact_staff_{demande_id}_{admin_en_charge}")
+                ])
+
+        buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data=back_callback)])
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        photo_id = demande.get("photo_id")
+        if photo_id:
+            await self._render_photo(query, context, photo_id, text_card, keyboard)
+        else:
+            await self._render_clean_text(query, context, text_card, keyboard)
