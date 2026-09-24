@@ -131,7 +131,6 @@ class InterfaceManager:
             else:
                 keyboard.append([InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")])
 
-            # Bouton Contacter le support (avant RETOUR)
             support_link = self.db_manager.get_support_contact()
             if support_link.startswith("@"):
                 support_url = f"https://t.me/{support_link.lstrip('@')}"
@@ -238,11 +237,14 @@ class InterfaceManager:
     # ========== SOUS-MENU MON PROFIL ==========
 
     def get_mon_profil_menu(self, user_id: int):
-        """Construit le sous-menu individuel 'MON PROFIL' avec le bouton PRÉFÉRENCES sous NOTIFICATIONS."""
+        """Construit le sous-menu individuel 'MON PROFIL' avec la pause au-dessus de la démission."""
         user_role = self._get_user_role(user_id)
         is_admin = (user_role in ["admin", "owner"])
         is_paused = self.db_manager.is_staff_paused(user_id)
         alias = self.db_manager.get_staff_alias(user_id) or f"Membre_{user_id}"
+
+        primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
+        is_primary_owner = (int(user_id) == int(primary_owner_id))
 
         statut_dispo = "⏸️ <b>En pause</b>" if is_paused else "🟢 <b>En service</b>"
 
@@ -266,7 +268,18 @@ class InterfaceManager:
             InlineKeyboardButton("🎯 PRÉFÉRENCES 🎯", callback_data="staff_self_prefs")
         ])
 
-        # 3. ⏸️ SE METTRE EN PAUSE / ▶️ REPRENDRE LE SERVICE
+        # 3. 🏷️ MODIFIER MON ALIAS 🏷️ (si admin ou staff non encore verrouillé)
+        if is_admin or self.db_manager.can_staff_edit_alias(user_id):
+            keyboard.append([
+                InlineKeyboardButton("🏷️ MODIFIER MON ALIAS 🏷️", callback_data="modifier_alias")
+            ])
+
+        # 4. 💰 MOYEN DE PAIEMENT 💰
+        keyboard.append([
+            InlineKeyboardButton("💰 MOYEN DE PAIEMENT 💰", callback_data="staff_payment_settings")
+        ])
+
+        # 5. ⏸️ SE METTRE EN PAUSE / ▶️ REPRENDRE LE SERVICE (Placé juste au-dessus de démissionner)
         if is_paused:
             keyboard.append([
                 InlineKeyboardButton("▶️ REPRENDRE LE SERVICE ▶️", callback_data="admin_resume")
@@ -276,29 +289,73 @@ class InterfaceManager:
                 InlineKeyboardButton("⏸️ SE METTRE EN PAUSE ⏸️", callback_data="admin_pause_prompt")
             ])
 
-        # 4. 🏷️ MODIFIER MON ALIAS 🏷️ (si admin ou staff non encore verrouillé)
-        if is_admin or self.db_manager.can_staff_edit_alias(user_id):
+        # 6. ❌ DÉMISSIONNER ❌ (affiché pour Staff et Admins, exclu pour le propriétaire principal)
+        if (user_role in ["staff", "admin"]) or (user_role == "owner" and not is_primary_owner):
             keyboard.append([
-                InlineKeyboardButton("🏷️ MODIFIER MON ALIAS 🏷️", callback_data="modifier_alias")
+                InlineKeyboardButton("❌ DÉMISSIONNER ❌", callback_data="menu_demission")
             ])
 
-        # 5. 💰 MOYEN DE PAIEMENT 💰
-        keyboard.append([
-            InlineKeyboardButton("💰 MOYEN DE PAIEMENT 💰", callback_data="staff_payment_settings")
-        ])
-
-        # 6. 🧮 MES STATS | 📦 MES ARCHIVES (Performances individuelles du membre)
+        # 7. 🧮 MES STATS | 📦 MES ARCHIVES (Performances individuelles du membre)
         keyboard.append([
             InlineKeyboardButton("🧮 MES STATS", callback_data=f"profil_admin_{user_id}"),
             InlineKeyboardButton("📦 MES ARCHIVES", callback_data="demandes_archives")
         ])
 
-        # 7. ⬅️ RETOUR (vers Paramètres)
+        # 8. ⬅️ RETOUR (vers Paramètres)
         keyboard.append([
             InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")
         ])
 
         return message, InlineKeyboardMarkup(keyboard)
+
+    # ========== MENUS DE DÉMISSION ==========
+
+    def get_demission_choice_menu(self):
+        """Affiche le choix de démission pour un membre cumulant Admin et Piégeur."""
+        text = (
+            "❌ <b>CHOIX DE DÉMISSION</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Vous occupez actuellement deux fonctions dans l'équipe :\n"
+            "• 🧠 <b>Administrateur</b>\n"
+            "• 🎣 <b>Piégeur</b>\n\n"
+            "<i>De quel rôle souhaitez-vous démissionner ?</i>"
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("🧠 ADMIN 🧠", callback_data="demission_confirm_admin"),
+                InlineKeyboardButton("🎣 PIÉGEUR 🎣", callback_data="demission_confirm_staff")
+            ],
+            [
+                InlineKeyboardButton("🧠 LES DEUX 🎣", callback_data="demission_confirm_all")
+            ],
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
+
+    def get_demission_confirm_menu(self, scope: str):
+        """Demande une confirmation claire avant d'acter la démission."""
+        if scope == "admin":
+            role_label = "de l'<b>Administration</b>"
+            warning = "Vous perdrez l'accès aux panneaux de gestion et de surveillance."
+        elif scope == "staff":
+            role_label = "de l'équipe des <b>Piégeurs</b>"
+            warning = "Vos demandes en cours seront immédiatement libérées et remises dans la file."
+        else:
+            role_label = "de <b>toutes vos fonctions</b> (Admin & Piégeur)"
+            warning = "Vous redeviendrez simple utilisateur. Vos dossiers actifs seront libérés."
+
+        text = (
+            "⚠️ <b>CONFIRMATION DE DÉMISSION</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Êtes-vous certain de vouloir démissionner {role_label} ?\n\n"
+            f"<i>{warning}</i>\n\n"
+            "Cette action prend effet immédiatement."
+        )
+        keyboard = [
+            [InlineKeyboardButton("⚠️ OUI, DÉMISSIONNER", callback_data=f"demission_exec_{scope}")],
+            [InlineKeyboardButton("⬅️ ANNULER", callback_data="menu_mon_profil")]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)
 
     # ========== SOUS-MENU AUTONOMIE PRÉFÉRENCES OPÉRATEUR (CIBLES) ==========
 
@@ -876,11 +933,29 @@ class InterfaceManager:
             self.db_manager.set_config_value("demandes_enabled", nouvel_etat)
             return self.get_gerer_bot_menu()
 
+        def demission_handler():
+            is_adm = self.db_manager.is_admin(user_id)
+            is_stf = False
+            with self.db_manager.get_cursor() as cursor:
+                cursor.execute("SELECT user_id FROM staff WHERE user_id = %s", (int(user_id),))
+                is_stf = bool(cursor.fetchone())
+
+            if is_adm and is_stf:
+                return self.get_demission_choice_menu()
+            elif is_adm:
+                return self.get_demission_confirm_menu("admin")
+            else:
+                return self.get_demission_confirm_menu("staff")
+
         routing_map = {
             "start_menu": lambda: self.get_start_interface(user_id, first_name),
             "gerer_demandes": lambda: self.get_gerer_demandes_menu(user_id),
             "parametres": lambda: self.get_parametres_menu(user_id),
             "menu_mon_profil": lambda: self.get_mon_profil_menu(user_id),
+            "menu_demission": demission_handler,
+            "demission_confirm_admin": lambda: self.get_demission_confirm_menu("admin"),
+            "demission_confirm_staff": lambda: self.get_demission_confirm_menu("staff"),
+            "demission_confirm_all": lambda: self.get_demission_confirm_menu("all"),
             "staff_self_prefs": lambda: self.get_staff_self_preferences_menu(user_id),
             "staff_payment_settings": lambda: self.get_staff_payment_settings_menu(user_id),
             "gerer_staff": self.get_gerer_staff_menu,

@@ -100,6 +100,18 @@ class StaffHandlers:
         user_id = update.effective_user.id
         data = query.data or ""
 
+        # Gestion des flux de démission
+        if data in ("menu_demission", "demission_confirm_admin", "demission_confirm_staff", "demission_confirm_all"):
+            text, kb = self.interface.route_callback(data, user_id, update.effective_user.first_name)
+            if text and kb:
+                await self._safe_edit_or_reply(query, text, reply_markup=kb)
+            return
+
+        elif data.startswith("demission_exec_"):
+            scope = data.replace("demission_exec_", "")
+            await self._handle_staff_demission(update, context, user_id, scope)
+            return
+
         if not self.db_manager.is_staff(user_id):
             logger.warning("Tentative d'accès staff refusée pour l'utilisateur %s", user_id)
             return
@@ -242,6 +254,81 @@ class StaffHandlers:
             await self._handle_callback_error(query)
 
     handle_admin_callbacks = handle_staff_callbacks
+
+    # ==================== DÉMISSION DU PERSONNEL ====================
+
+    async def _handle_staff_demission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, scope: str):
+        """Traite la démission d'un membre selon le périmètre sélectionné."""
+        query = update.callback_query
+        primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
+
+        if int(user_id) == int(primary_owner_id):
+            if query:
+                await query.answer("❌ Le propriétaire principal ne peut pas démissionner.", show_alert=True)
+            return
+
+        alias = self.db_manager.get_staff_alias(user_id) or f"Membre_{user_id}"
+        alias_esc = html.escape(str(alias))
+
+        details_demission = []
+
+        try:
+            with self.db_manager.transaction() as cursor:
+                # 1. Révocation du rôle Piégeur (Staff)
+                if scope in ("staff", "all"):
+                    # Libérer et notifier tous les dossiers en cours pris en charge
+                    abandoned = self.db_manager.abandon_staff_demandes_for_pause(user_id)
+                    cursor.execute("DELETE FROM staff WHERE user_id = %s", (int(user_id),))
+                    details_demission.append(f"Piégeur ({len(abandoned)} dossier(s) libéré(s))")
+
+                # 2. Révocation du rôle Administrateur
+                if scope in ("admin", "all"):
+                    cursor.execute("DELETE FROM admins WHERE user_id = %s AND is_owner = FALSE", (int(user_id),))
+                    details_demission.append("Administrateur")
+
+            # Nettoyage des caches et rafraîchissement des rôles
+            self.db_manager.clear_cache(f"is_staff_{user_id}")
+            self.db_manager.clear_cache(f"is_admin_{user_id}")
+            self.db_manager.clear_cache(f"alias_{user_id}")
+            self.db_manager.clear_cache(f"perm_{user_id}")
+            self.config.reload_roles()
+
+            resume_roles = " et ".join(details_demission)
+            logger.info("🚪 Démission enregistrée pour %s (%s) : %s", alias, user_id, resume_roles)
+
+            # Notification au propriétaire principal
+            if primary_owner_id and int(primary_owner_id) != int(user_id):
+                try:
+                    notif_owner = (
+                        "🚪 <b>DÉMISSION D'UN MEMBRE DE L'ÉQUIPE</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        f"• <b>Membre :</b> {alias_esc} (<code>{user_id}</code>)\n"
+                        f"• <b>Fonction(s) quittée(s) :</b> {html.escape(resume_roles)}\n\n"
+                        "<i>Les autorisations ont été révoquées et les dossiers actifs ont été replacés dans les disponibles.</i>"
+                    )
+                    await context.bot.send_message(
+                        chat_id=primary_owner_id,
+                        text=notif_owner,
+                        parse_mode="HTML"
+                    )
+                except Exception as err_notif:
+                    logger.warning("Échec notification démission à l'Owner : %s", err_notif)
+
+            # Confirmation à l'utilisateur
+            msg_confirm = (
+                "✅ <b>Démission prise en compte</b>\n\n"
+                f"Vous avez démissionné avec succès de vos fonctions : <b>{html.escape(resume_roles)}</b>.\n\n"
+                "Merci pour votre contribution au service !"
+            )
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🏠 RETOUR À L'ACCUEIL", callback_data="start_menu")
+            ]])
+            await self._safe_edit_or_reply(query, msg_confirm, reply_markup=kb)
+
+        except Exception as exc:
+            logger.error("Erreur lors de la démission de %s : %s", user_id, exc, exc_info=True)
+            if query:
+                await query.answer("❌ Erreur technique lors du traitement de votre démission.", show_alert=True)
 
     # ==================== SUPERVISION ADMIN VERS PIÉGEUR ====================
 
