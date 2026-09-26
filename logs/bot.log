@@ -3808,3 +3808,433 @@ TypeError: float() argument must be a string or a real number, not 'coroutine'
 2026-09-24 23:52:13,723 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
 2026-09-24 23:52:13,898 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
 2026-09-24 23:52:13,899 - webhook_app - INFO - ✅ Update 816746448 traitée avec succès.
+2026-09-24 23:52:20,597 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 22:52:20 UTC)" (scheduled at 2026-09-24 21:52:20.589592+00:00)
+2026-09-24 23:52:20,707 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 22:52:20 UTC)" executed successfully
+2026-09-24 23:52:35,608 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 03:52:35 UTC)" (scheduled at 2026-09-24 21:52:35.592199+00:00)
+2026-09-24 23:52:35,618 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 03:52:35 UTC)" executed successfully
+2026-09-24 23:52:50,608 - apscheduler.executors.default - INFO - Running job "check_and_send_paid_delivery_reminders (trigger: interval[1 day, 0:00:00], next run at: 2026-09-25 21:52:50 UTC)" (scheduled at 2026-09-24 21:52:50.592577+00:00)
+2026-09-24 23:52:50,612 - apscheduler.executors.default - INFO - Job "check_and_send_paid_delivery_reminders (trigger: interval[1 day, 0:00:00], next run at: 2026-09-25 21:52:50 UTC)" executed successfully
+2026-09-24 23:52:56,751 - webhook_app - INFO - 📩 Update reçue : ID=816746449, type=autre
+2026-09-24 23:52:56,907 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/answerCallbackQuery "HTTP/1.1 200 OK"
+2026-09-24 23:52:57,040 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/editMessageText "HTTP/1.1 200 OK"
+2026-09-24 23:52:57,042 - webhook_app - INFO - ✅ Update 816746449 traitée avec succès.
+2026-09-24 23:53:05,602 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 03:53:05 UTC)" (scheduled at 2026-09-24 21:53:05.592856+00:00)
+2026-09-24 23:53:05,612 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 03:53:05 UTC)" executed successfully
+2026-09-24 23:53:20,609 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-25 03:53:20 UTC)" (scheduled at 2026-09-24 21:53:20.593238+00:00)
+2026-09-24 23:53:20,617 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-25 03:53:20 UTC)" executed successfully
+2026-09-25 00:01:06,694 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 00:01:06,882 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 00:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 23:52:05 UTC)" (scheduled at 2026-09-24 22:52:05.587308+00:00)
+2026-09-25 00:52:05,757 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-24 23:52:05 UTC)" executed successfully
+2026-09-25 00:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 23:52:20 UTC)" (scheduled at 2026-09-24 22:52:20.589592+00:00)
+2026-09-25 00:52:20,614 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-24 23:52:20 UTC)" executed successfully
+2026-09-25 00:57:22,083 - webhook_app - INFO - 📩 Update reçue : ID=816746450, type=autre
+2026-09-25 00:57:22,086 - webhook_app - INFO - ✅ Update 816746450 traitée avec succès.
+2026-09-25 01:00:59,434 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 01:00:59,599 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 01:52:05,690 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 00:52:05 UTC)" (scheduled at 2026-09-24 23:52:05.587308+00:00)
+2026-09-25 01:52:05,763 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 00:52:05 UTC)" executed successfully
+2026-09-25 01:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 00:52:20 UTC)" (scheduled at 2026-09-24 23:52:20.589592+00:00)
+2026-09-25 01:52:20,616 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 00:52:20 UTC)" executed successfully
+2026-09-25 02:01:08,747 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 02:01:09,585 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 02:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 01:52:05 UTC)" (scheduled at 2026-09-25 00:52:05.587308+00:00)
+2026-09-25 02:52:05,797 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 01:52:05 UTC)" executed successfully
+2026-09-25 02:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 01:52:20 UTC)" (scheduled at 2026-09-25 00:52:20.589592+00:00)
+2026-09-25 02:52:20,621 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 01:52:20 UTC)" executed successfully
+2026-09-25 03:00:59,048 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 03:00:59,292 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 03:52:05,687 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 02:52:05 UTC)" (scheduled at 2026-09-25 01:52:05.587308+00:00)
+2026-09-25 03:52:05,764 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 02:52:05 UTC)" executed successfully
+2026-09-25 03:52:20,607 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 02:52:20 UTC)" (scheduled at 2026-09-25 01:52:20.589592+00:00)
+2026-09-25 03:52:20,619 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 02:52:20 UTC)" executed successfully
+2026-09-25 04:01:03,140 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 04:01:03,670 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 04:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 03:52:05 UTC)" (scheduled at 2026-09-25 02:52:05.587308+00:00)
+2026-09-25 04:52:05,787 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 03:52:05 UTC)" executed successfully
+2026-09-25 04:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 03:52:20 UTC)" (scheduled at 2026-09-25 02:52:20.589592+00:00)
+2026-09-25 04:52:20,615 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 03:52:20 UTC)" executed successfully
+2026-09-25 05:00:59,994 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 05:01:00,527 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 05:52:05,687 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 04:52:05 UTC)" (scheduled at 2026-09-25 03:52:05.587308+00:00)
+2026-09-25 05:52:05,761 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 04:52:05 UTC)" executed successfully
+2026-09-25 05:52:20,607 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 04:52:20 UTC)" (scheduled at 2026-09-25 03:52:20.589592+00:00)
+2026-09-25 05:52:20,618 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 04:52:20 UTC)" executed successfully
+2026-09-25 05:52:35,608 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 09:52:35 UTC)" (scheduled at 2026-09-25 03:52:35.592199+00:00)
+2026-09-25 05:52:35,618 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 09:52:35 UTC)" executed successfully
+2026-09-25 05:53:05,623 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 09:53:05 UTC)" (scheduled at 2026-09-25 03:53:05.592856+00:00)
+2026-09-25 05:53:05,632 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 09:53:05 UTC)" executed successfully
+2026-09-25 05:53:20,608 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-25 09:53:20 UTC)" (scheduled at 2026-09-25 03:53:20.593238+00:00)
+2026-09-25 05:53:20,617 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-25 09:53:20 UTC)" executed successfully
+2026-09-25 06:01:00,023 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 06:01:00,262 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 06:52:05,689 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 05:52:05 UTC)" (scheduled at 2026-09-25 04:52:05.587308+00:00)
+2026-09-25 06:52:05,787 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 05:52:05 UTC)" executed successfully
+2026-09-25 06:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 05:52:20 UTC)" (scheduled at 2026-09-25 04:52:20.589592+00:00)
+2026-09-25 06:52:20,615 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 05:52:20 UTC)" executed successfully
+2026-09-25 07:00:58,659 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 07:00:58,821 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 07:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 06:52:05 UTC)" (scheduled at 2026-09-25 05:52:05.587308+00:00)
+2026-09-25 07:52:05,760 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 06:52:05 UTC)" executed successfully
+2026-09-25 07:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 06:52:20 UTC)" (scheduled at 2026-09-25 05:52:20.589592+00:00)
+2026-09-25 07:52:20,619 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 06:52:20 UTC)" executed successfully
+2026-09-25 08:01:06,449 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 08:01:06,671 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 08:52:05,687 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 07:52:05 UTC)" (scheduled at 2026-09-25 06:52:05.587308+00:00)
+2026-09-25 08:52:05,804 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 07:52:05 UTC)" executed successfully
+2026-09-25 08:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 07:52:20 UTC)" (scheduled at 2026-09-25 06:52:20.589592+00:00)
+2026-09-25 08:52:20,616 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 07:52:20 UTC)" executed successfully
+2026-09-25 09:01:00,626 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 09:01:00,779 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 09:39:04,901 - webhook_app - INFO - 📩 Update reçue : ID=816746451, type=Qui nude snap -25 ans je suis dz
+2026-09-25 09:39:04,923 - webhook_app - INFO - ✅ Update 816746451 traitée avec succès.
+2026-09-25 09:52:05,692 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 08:52:05 UTC)" (scheduled at 2026-09-25 07:52:05.587308+00:00)
+2026-09-25 09:52:05,868 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 08:52:05 UTC)" executed successfully
+2026-09-25 09:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 08:52:20 UTC)" (scheduled at 2026-09-25 07:52:20.589592+00:00)
+2026-09-25 09:52:20,633 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 08:52:20 UTC)" executed successfully
+2026-09-25 10:01:00,225 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 10:01:00,419 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 10:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 09:52:05 UTC)" (scheduled at 2026-09-25 08:52:05.587308+00:00)
+2026-09-25 10:52:05,831 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 09:52:05 UTC)" executed successfully
+2026-09-25 10:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 09:52:20 UTC)" (scheduled at 2026-09-25 08:52:20.589592+00:00)
+2026-09-25 10:52:20,624 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 09:52:20 UTC)" executed successfully
+2026-09-25 11:01:02,052 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 11:01:02,383 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 11:52:05,712 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 10:52:05 UTC)" (scheduled at 2026-09-25 09:52:05.587308+00:00)
+2026-09-25 11:52:05,880 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 10:52:05 UTC)" executed successfully
+2026-09-25 11:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 10:52:20 UTC)" (scheduled at 2026-09-25 09:52:20.589592+00:00)
+2026-09-25 11:52:20,694 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 10:52:20 UTC)" executed successfully
+2026-09-25 11:52:35,608 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 15:52:35 UTC)" (scheduled at 2026-09-25 09:52:35.592199+00:00)
+2026-09-25 11:52:35,637 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 15:52:35 UTC)" executed successfully
+2026-09-25 11:53:05,624 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 15:53:05 UTC)" (scheduled at 2026-09-25 09:53:05.592856+00:00)
+2026-09-25 11:53:05,651 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 15:53:05 UTC)" executed successfully
+2026-09-25 11:53:20,610 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-25 15:53:20 UTC)" (scheduled at 2026-09-25 09:53:20.593238+00:00)
+2026-09-25 11:53:20,654 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-25 15:53:20 UTC)" executed successfully
+2026-09-25 12:01:00,850 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 12:01:01,036 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 12:06:03,338 - webhook_app - INFO - 📩 Update reçue : ID=816746452, type=autre
+2026-09-25 12:06:03,356 - webhook_app - INFO - ✅ Update 816746452 traitée avec succès.
+2026-09-25 12:06:20,819 - webhook_app - INFO - 📩 Update reçue : ID=816746453, type=autre
+2026-09-25 12:06:20,821 - webhook_app - INFO - ✅ Update 816746453 traitée avec succès.
+2026-09-25 12:52:05,697 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 11:52:05 UTC)" (scheduled at 2026-09-25 10:52:05.587308+00:00)
+2026-09-25 12:52:05,904 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 11:52:05 UTC)" executed successfully
+2026-09-25 12:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 11:52:20 UTC)" (scheduled at 2026-09-25 10:52:20.589592+00:00)
+2026-09-25 12:52:20,702 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 11:52:20 UTC)" executed successfully
+2026-09-25 13:01:03,561 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 13:01:03,935 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 13:52:05,690 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 12:52:05 UTC)" (scheduled at 2026-09-25 11:52:05.587308+00:00)
+2026-09-25 13:52:05,802 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 12:52:05 UTC)" executed successfully
+2026-09-25 13:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 12:52:20 UTC)" (scheduled at 2026-09-25 11:52:20.589592+00:00)
+2026-09-25 13:52:20,633 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 12:52:20 UTC)" executed successfully
+2026-09-25 14:01:04,573 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 14:01:04,758 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 14:52:05,709 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 13:52:05 UTC)" (scheduled at 2026-09-25 12:52:05.587308+00:00)
+2026-09-25 14:52:05,836 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 13:52:05 UTC)" executed successfully
+2026-09-25 14:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 13:52:20 UTC)" (scheduled at 2026-09-25 12:52:20.589592+00:00)
+2026-09-25 14:52:20,620 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 13:52:20 UTC)" executed successfully
+2026-09-25 15:01:01,142 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 15:01:01,420 - webhook_app - INFO - 📩 Update reçue : ID=816746454, type=autre
+2026-09-25 15:01:01,611 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 15:01:01,614 - webhook_app - INFO - ✅ Update 816746454 traitée avec succès.
+2026-09-25 15:01:20,166 - webhook_app - INFO - 📩 Update reçue : ID=816746455, type=autre
+2026-09-25 15:01:20,168 - webhook_app - INFO - ✅ Update 816746455 traitée avec succès.
+2026-09-25 15:01:43,371 - webhook_app - INFO - 📩 Update reçue : ID=816746456, type=autre
+2026-09-25 15:01:43,372 - webhook_app - INFO - ✅ Update 816746456 traitée avec succès.
+2026-09-25 15:02:01,990 - webhook_app - INFO - 📩 Update reçue : ID=816746457, type=autre
+2026-09-25 15:02:01,992 - webhook_app - INFO - ✅ Update 816746457 traitée avec succès.
+2026-09-25 15:02:22,276 - webhook_app - INFO - 📩 Update reçue : ID=816746458, type=autre
+2026-09-25 15:02:22,278 - webhook_app - INFO - ✅ Update 816746458 traitée avec succès.
+2026-09-25 15:02:49,316 - webhook_app - INFO - 📩 Update reçue : ID=816746459, type=autre
+2026-09-25 15:02:49,317 - webhook_app - INFO - ✅ Update 816746459 traitée avec succès.
+2026-09-25 15:03:18,392 - webhook_app - INFO - 📩 Update reçue : ID=816746460, type=autre
+2026-09-25 15:03:18,396 - webhook_app - INFO - ✅ Update 816746460 traitée avec succès.
+2026-09-25 15:03:38,455 - webhook_app - INFO - 📩 Update reçue : ID=816746461, type=autre
+2026-09-25 15:03:38,456 - webhook_app - INFO - ✅ Update 816746461 traitée avec succès.
+2026-09-25 15:09:23,816 - webhook_app - INFO - 📩 Update reçue : ID=816746462, type=autre
+2026-09-25 15:09:23,825 - webhook_app - INFO - ✅ Update 816746462 traitée avec succès.
+2026-09-25 15:09:23,867 - webhook_app - INFO - 📩 Update reçue : ID=816746463, type=autre
+2026-09-25 15:09:23,872 - webhook_app - INFO - ✅ Update 816746463 traitée avec succès.
+2026-09-25 15:09:32,481 - webhook_app - INFO - 📩 Update reçue : ID=816746464, type=autre
+2026-09-25 15:09:32,485 - webhook_app - INFO - ✅ Update 816746464 traitée avec succès.
+2026-09-25 15:10:19,432 - webhook_app - INFO - 📩 Update reçue : ID=816746465, type=autre
+2026-09-25 15:10:19,436 - webhook_app - INFO - ✅ Update 816746465 traitée avec succès.
+2026-09-25 15:10:40,687 - webhook_app - INFO - 📩 Update reçue : ID=816746466, type=autre
+2026-09-25 15:10:40,692 - webhook_app - INFO - ✅ Update 816746466 traitée avec succès.
+2026-09-25 15:11:12,525 - webhook_app - INFO - 📩 Update reçue : ID=816746467, type=autre
+2026-09-25 15:11:12,534 - webhook_app - INFO - ✅ Update 816746467 traitée avec succès.
+2026-09-25 15:12:04,812 - webhook_app - INFO - 📩 Update reçue : ID=816746468, type=autre
+2026-09-25 15:12:04,817 - webhook_app - INFO - ✅ Update 816746468 traitée avec succès.
+2026-09-25 15:12:05,796 - webhook_app - INFO - 📩 Update reçue : ID=816746469, type=autre
+2026-09-25 15:12:05,798 - webhook_app - INFO - ✅ Update 816746469 traitée avec succès.
+2026-09-25 15:12:10,593 - webhook_app - INFO - 📩 Update reçue : ID=816746470, type=autre
+2026-09-25 15:12:10,597 - webhook_app - INFO - ✅ Update 816746470 traitée avec succès.
+2026-09-25 15:13:52,144 - webhook_app - INFO - 📩 Update reçue : ID=816746471, type=autre
+2026-09-25 15:13:52,145 - webhook_app - INFO - ✅ Update 816746471 traitée avec succès.
+2026-09-25 15:13:57,958 - webhook_app - INFO - 📩 Update reçue : ID=816746472, type=autre
+2026-09-25 15:13:57,961 - webhook_app - INFO - ✅ Update 816746472 traitée avec succès.
+2026-09-25 15:14:41,217 - webhook_app - INFO - 📩 Update reçue : ID=816746473, type=autre
+2026-09-25 15:14:41,222 - webhook_app - INFO - ✅ Update 816746473 traitée avec succès.
+2026-09-25 15:21:45,136 - webhook_app - INFO - 📩 Update reçue : ID=816746474, type=autre
+2026-09-25 15:21:45,143 - webhook_app - INFO - ✅ Update 816746474 traitée avec succès.
+2026-09-25 15:26:04,005 - webhook_app - INFO - 📩 Update reçue : ID=816746475, type=autre
+2026-09-25 15:26:04,014 - webhook_app - INFO - ✅ Update 816746475 traitée avec succès.
+2026-09-25 15:26:16,735 - webhook_app - INFO - 📩 Update reçue : ID=816746476, type=autre
+2026-09-25 15:26:16,736 - webhook_app - INFO - ✅ Update 816746476 traitée avec succès.
+2026-09-25 15:27:27,931 - webhook_app - INFO - 📩 Update reçue : ID=816746477, type=autre
+2026-09-25 15:27:27,933 - webhook_app - INFO - ✅ Update 816746477 traitée avec succès.
+2026-09-25 15:52:05,689 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 14:52:05 UTC)" (scheduled at 2026-09-25 13:52:05.587308+00:00)
+2026-09-25 15:52:05,796 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 14:52:05 UTC)" executed successfully
+2026-09-25 15:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 14:52:20 UTC)" (scheduled at 2026-09-25 13:52:20.589592+00:00)
+2026-09-25 15:52:20,617 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 14:52:20 UTC)" executed successfully
+2026-09-25 16:01:04,116 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 16:01:04,349 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 16:34:05,096 - webhook_app - INFO - 📩 Update reçue : ID=816746478, type=autre
+2026-09-25 16:34:05,107 - webhook_app - INFO - ✅ Update 816746478 traitée avec succès.
+2026-09-25 16:34:05,411 - webhook_app - INFO - 📩 Update reçue : ID=816746479, type=autre
+2026-09-25 16:34:05,416 - webhook_app - INFO - ✅ Update 816746479 traitée avec succès.
+2026-09-25 16:34:05,903 - webhook_app - INFO - 📩 Update reçue : ID=816746480, type=autre
+2026-09-25 16:34:05,914 - webhook_app - INFO - ✅ Update 816746480 traitée avec succès.
+2026-09-25 16:34:06,431 - webhook_app - INFO - 📩 Update reçue : ID=816746481, type=autre
+2026-09-25 16:34:06,433 - webhook_app - INFO - ✅ Update 816746481 traitée avec succès.
+2026-09-25 16:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 15:52:05 UTC)" (scheduled at 2026-09-25 14:52:05.587308+00:00)
+2026-09-25 16:52:05,836 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 15:52:05 UTC)" executed successfully
+2026-09-25 16:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 15:52:20 UTC)" (scheduled at 2026-09-25 14:52:20.589592+00:00)
+2026-09-25 16:52:20,644 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 15:52:20 UTC)" executed successfully
+2026-09-25 17:01:06,058 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 17:01:06,283 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 17:37:12,504 - webhook_app - INFO - 📩 Update reçue : ID=816746482, type=Ajt bg 18 ans grosse queue
+2026-09-25 17:37:12,510 - webhook_app - INFO - ✅ Update 816746482 traitée avec succès.
+2026-09-25 17:39:03,101 - webhook_app - INFO - 📩 Update reçue : ID=816746483, type=autre
+2026-09-25 17:39:03,104 - webhook_app - INFO - ✅ Update 816746483 traitée avec succès.
+2026-09-25 17:39:03,128 - webhook_app - INFO - 📩 Update reçue : ID=816746484, type=autre
+2026-09-25 17:39:03,130 - webhook_app - INFO - ✅ Update 816746484 traitée avec succès.
+2026-09-25 17:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 16:52:05 UTC)" (scheduled at 2026-09-25 15:52:05.587308+00:00)
+2026-09-25 17:52:05,756 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 16:52:05 UTC)" executed successfully
+2026-09-25 17:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 16:52:20 UTC)" (scheduled at 2026-09-25 15:52:20.589592+00:00)
+2026-09-25 17:52:20,618 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 16:52:20 UTC)" executed successfully
+2026-09-25 17:52:35,608 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 21:52:35 UTC)" (scheduled at 2026-09-25 15:52:35.592199+00:00)
+2026-09-25 17:52:35,620 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 21:52:35 UTC)" executed successfully
+2026-09-25 17:53:05,624 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 21:53:05 UTC)" (scheduled at 2026-09-25 15:53:05.592856+00:00)
+2026-09-25 17:53:05,641 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-25 21:53:05 UTC)" executed successfully
+2026-09-25 17:53:20,634 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-25 21:53:20 UTC)" (scheduled at 2026-09-25 15:53:20.593238+00:00)
+2026-09-25 17:53:20,660 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-25 21:53:20 UTC)" executed successfully
+2026-09-25 18:01:00,605 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 18:01:01,246 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/sendMessage "HTTP/1.1 200 OK"
+2026-09-25 18:01:01,272 - main - INFO - Rappel automatique envoyé au staff 6810540100 (silencieux: False)
+2026-09-25 18:01:01,273 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 18:39:57,959 - webhook_app - INFO - 📩 Update reçue : ID=816746485, type=Tristan de frenchie shore Vien d'annoncer qui se lance dans le x
+2026-09-25 18:39:57,961 - webhook_app - INFO - ✅ Update 816746485 traitée avec succès.
+2026-09-25 18:43:24,060 - webhook_app - INFO - 📩 Update reçue : ID=816746486, type=Ou ça ?
+2026-09-25 18:43:24,062 - webhook_app - INFO - ✅ Update 816746486 traitée avec succès.
+2026-09-25 18:44:04,347 - webhook_app - INFO - 📩 Update reçue : ID=816746487, type=autre
+2026-09-25 18:44:04,353 - webhook_app - INFO - ✅ Update 816746487 traitée avec succès.
+2026-09-25 18:48:31,402 - webhook_app - INFO - 📩 Update reçue : ID=816746488, type=Wescoop askip
+2026-09-25 18:48:31,405 - webhook_app - INFO - ✅ Update 816746488 traitée avec succès.
+2026-09-25 18:51:10,962 - webhook_app - INFO - 📩 Update reçue : ID=816746489, type=autre
+2026-09-25 18:51:10,973 - webhook_app - INFO - ✅ Update 816746489 traitée avec succès.
+2026-09-25 18:52:05,645 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 17:52:05 UTC)" (scheduled at 2026-09-25 16:52:05.587308+00:00)
+2026-09-25 18:52:05,792 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 17:52:05 UTC)" executed successfully
+2026-09-25 18:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 17:52:20 UTC)" (scheduled at 2026-09-25 16:52:20.589592+00:00)
+2026-09-25 18:52:20,621 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 17:52:20 UTC)" executed successfully
+2026-09-25 18:53:00,191 - webhook_app - INFO - 📩 Update reçue : ID=816746490, type=Et sur twizz
+2026-09-25 18:53:00,192 - webhook_app - INFO - ✅ Update 816746490 traitée avec succès.
+2026-09-25 19:01:04,229 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 19:01:04,401 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 19:02:42,669 - webhook_app - INFO - 📩 Update reçue : ID=816746491, type=autre
+2026-09-25 19:02:42,672 - webhook_app - INFO - ✅ Update 816746491 traitée avec succès.
+2026-09-25 19:03:11,130 - webhook_app - INFO - 📩 Update reçue : ID=816746492, type=autre
+2026-09-25 19:03:11,137 - webhook_app - INFO - ✅ Update 816746492 traitée avec succès.
+2026-09-25 19:03:12,107 - webhook_app - INFO - 📩 Update reçue : ID=816746493, type=autre
+2026-09-25 19:03:12,110 - webhook_app - INFO - ✅ Update 816746493 traitée avec succès.
+2026-09-25 19:03:22,492 - webhook_app - INFO - 📩 Update reçue : ID=816746494, type=Il a jouis en show à jetons dans l'aprem, dommage je suis arrivé trop tard mdr
+2026-09-25 19:03:22,495 - webhook_app - INFO - ✅ Update 816746494 traitée avec succès.
+2026-09-25 19:28:00,698 - webhook_app - INFO - 📩 Update reçue : ID=816746495, type=autre
+2026-09-25 19:28:00,703 - webhook_app - INFO - ✅ Update 816746495 traitée avec succès.
+2026-09-25 19:28:56,289 - webhook_app - INFO - 📩 Update reçue : ID=816746496, type=Oui sur Twizz, il a mis le lien sur l’application Wescoop il y a quelques photos visibles mais en sous vêtement ou torse nu
+2026-09-25 19:28:56,297 - webhook_app - INFO - ✅ Update 816746496 traitée avec succès.
+2026-09-25 19:40:19,924 - webhook_app - INFO - 📩 Update reçue : ID=816746497, type=autre
+2026-09-25 19:40:19,926 - webhook_app - INFO - ✅ Update 816746497 traitée avec succès.
+2026-09-25 19:40:19,998 - webhook_app - INFO - 📩 Update reçue : ID=816746498, type=autre
+2026-09-25 19:40:20,000 - webhook_app - INFO - ✅ Update 816746498 traitée avec succès.
+2026-09-25 19:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 18:52:05 UTC)" (scheduled at 2026-09-25 17:52:05.587308+00:00)
+2026-09-25 19:52:05,785 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 18:52:05 UTC)" executed successfully
+2026-09-25 19:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 18:52:20 UTC)" (scheduled at 2026-09-25 17:52:20.589592+00:00)
+2026-09-25 19:52:20,633 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 18:52:20 UTC)" executed successfully
+2026-09-25 20:01:02,538 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 20:01:02,834 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 20:49:02,384 - webhook_app - INFO - 📩 Update reçue : ID=816746499, type=T poilu ?
+2026-09-25 20:49:02,387 - webhook_app - INFO - ✅ Update 816746499 traitée avec succès.
+2026-09-25 20:52:05,689 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 19:52:05 UTC)" (scheduled at 2026-09-25 18:52:05.587308+00:00)
+2026-09-25 20:52:05,795 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 19:52:05 UTC)" executed successfully
+2026-09-25 20:52:20,606 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 19:52:20 UTC)" (scheduled at 2026-09-25 18:52:20.589592+00:00)
+2026-09-25 20:52:20,625 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 19:52:20 UTC)" executed successfully
+2026-09-25 20:54:57,459 - webhook_app - INFO - 📩 Update reçue : ID=816746500, type=Les dz les boss
+2026-09-25 20:54:57,461 - webhook_app - INFO - ✅ Update 816746500 traitée avec succès.
+2026-09-25 21:01:06,747 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 21:01:06,930 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 21:11:08,783 - webhook_app - INFO - 📩 Update reçue : ID=816746501, type=Il est en ligne actuellement en live
+2026-09-25 21:11:08,788 - webhook_app - INFO - ✅ Update 816746501 traitée avec succès.
+2026-09-25 21:22:46,903 - webhook_app - INFO - 📩 Update reçue : ID=816746502, type=ou ?
+2026-09-25 21:22:46,905 - webhook_app - INFO - ✅ Update 816746502 traitée avec succès.
+2026-09-25 21:24:15,139 - webhook_app - INFO - 📩 Update reçue : ID=816746503, type=autre
+2026-09-25 21:24:15,140 - webhook_app - INFO - ✅ Update 816746503 traitée avec succès.
+2026-09-25 21:52:05,689 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 20:52:05 UTC)" (scheduled at 2026-09-25 19:52:05.587308+00:00)
+2026-09-25 21:52:05,829 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 20:52:05 UTC)" executed successfully
+2026-09-25 21:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 20:52:20 UTC)" (scheduled at 2026-09-25 19:52:20.589592+00:00)
+2026-09-25 21:52:20,622 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 20:52:20 UTC)" executed successfully
+2026-09-25 22:00:58,085 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 22:00:58,248 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 22:12:49,414 - webhook_app - INFO - 📩 Update reçue : ID=816746504, type=Stripchat
+2026-09-25 22:12:49,416 - webhook_app - INFO - ✅ Update 816746504 traitée avec succès.
+2026-09-25 22:13:39,449 - webhook_app - INFO - 📩 Update reçue : ID=816746505, type=Bah surtout s'ils sont poilus
+2026-09-25 22:13:39,453 - webhook_app - INFO - ✅ Update 816746505 traitée avec succès.
+2026-09-25 22:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 21:52:05 UTC)" (scheduled at 2026-09-25 20:52:05.587308+00:00)
+2026-09-25 22:52:05,790 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 21:52:05 UTC)" executed successfully
+2026-09-25 22:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 21:52:20 UTC)" (scheduled at 2026-09-25 20:52:20.589592+00:00)
+2026-09-25 22:52:20,623 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 21:52:20 UTC)" executed successfully
+2026-09-25 23:01:04,006 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-25 23:01:04,160 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-25 23:24:32,846 - webhook_app - INFO - 📩 Update reçue : ID=816746506, type=autre
+2026-09-25 23:24:32,847 - webhook_app - INFO - ✅ Update 816746506 traitée avec succès.
+2026-09-25 23:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 22:52:05 UTC)" (scheduled at 2026-09-25 21:52:05.587308+00:00)
+2026-09-25 23:52:05,763 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 22:52:05 UTC)" executed successfully
+2026-09-25 23:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 22:52:20 UTC)" (scheduled at 2026-09-25 21:52:20.589592+00:00)
+2026-09-25 23:52:20,624 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 22:52:20 UTC)" executed successfully
+2026-09-25 23:52:35,607 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 03:52:35 UTC)" (scheduled at 2026-09-25 21:52:35.592199+00:00)
+2026-09-25 23:52:35,617 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 03:52:35 UTC)" executed successfully
+2026-09-25 23:52:50,608 - apscheduler.executors.default - INFO - Running job "check_and_send_paid_delivery_reminders (trigger: interval[1 day, 0:00:00], next run at: 2026-09-26 21:52:50 UTC)" (scheduled at 2026-09-25 21:52:50.592577+00:00)
+2026-09-25 23:52:50,614 - apscheduler.executors.default - INFO - Job "check_and_send_paid_delivery_reminders (trigger: interval[1 day, 0:00:00], next run at: 2026-09-26 21:52:50 UTC)" executed successfully
+2026-09-25 23:53:05,609 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 03:53:05 UTC)" (scheduled at 2026-09-25 21:53:05.592856+00:00)
+2026-09-25 23:53:05,621 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 03:53:05 UTC)" executed successfully
+2026-09-25 23:53:20,608 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-26 03:53:20 UTC)" (scheduled at 2026-09-25 21:53:20.593238+00:00)
+2026-09-25 23:53:20,617 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-26 03:53:20 UTC)" executed successfully
+2026-09-26 00:01:04,588 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 00:01:04,693 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 00:09:11,667 - webhook_app - INFO - 📩 Update reçue : ID=816746507, type=autre
+2026-09-26 00:09:11,669 - webhook_app - INFO - ✅ Update 816746507 traitée avec succès.
+2026-09-26 00:09:28,370 - webhook_app - INFO - 📩 Update reçue : ID=816746508, type=autre
+2026-09-26 00:09:28,371 - webhook_app - INFO - ✅ Update 816746508 traitée avec succès.
+2026-09-26 00:27:07,594 - webhook_app - INFO - 📩 Update reçue : ID=816746509, type=autre
+2026-09-26 00:27:07,595 - webhook_app - INFO - ✅ Update 816746509 traitée avec succès.
+2026-09-26 00:52:05,687 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 23:52:05 UTC)" (scheduled at 2026-09-25 22:52:05.587308+00:00)
+2026-09-26 00:52:05,803 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-25 23:52:05 UTC)" executed successfully
+2026-09-26 00:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 23:52:20 UTC)" (scheduled at 2026-09-25 22:52:20.589592+00:00)
+2026-09-26 00:52:20,615 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-25 23:52:20 UTC)" executed successfully
+2026-09-26 00:54:35,381 - webhook_app - INFO - 📩 Update reçue : ID=816746510, type=Il a une vidéo branlette si qqn l’a peut le mettre ici
+2026-09-26 00:54:35,383 - webhook_app - INFO - ✅ Update 816746510 traitée avec succès.
+2026-09-26 01:00:58,424 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 01:00:58,526 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 01:13:36,733 - webhook_app - INFO - 📩 Update reçue : ID=816746511, type=js cho moi les gars
+2026-09-26 01:13:36,735 - webhook_app - INFO - ✅ Update 816746511 traitée avec succès.
+2026-09-26 01:15:02,351 - webhook_app - INFO - 📩 Update reçue : ID=816746512, type=si vous voulez: WndMxmff sur Cam4
+2026-09-26 01:15:02,352 - webhook_app - INFO - ✅ Update 816746512 traitée avec succès.
+2026-09-26 01:30:05,045 - webhook_app - INFO - 📩 Update reçue : ID=816746513, type=autre
+2026-09-26 01:30:05,047 - webhook_app - INFO - ✅ Update 816746513 traitée avec succès.
+2026-09-26 01:31:42,570 - webhook_app - INFO - 📩 Update reçue : ID=816746514, type=autre
+2026-09-26 01:31:42,571 - webhook_app - INFO - ✅ Update 816746514 traitée avec succès.
+2026-09-26 01:31:42,583 - webhook_app - INFO - 📩 Update reçue : ID=816746515, type=autre
+2026-09-26 01:31:42,583 - webhook_app - INFO - ✅ Update 816746515 traitée avec succès.
+2026-09-26 01:52:05,687 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 00:52:05 UTC)" (scheduled at 2026-09-25 23:52:05.587308+00:00)
+2026-09-26 01:52:05,772 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 00:52:05 UTC)" executed successfully
+2026-09-26 01:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 00:52:20 UTC)" (scheduled at 2026-09-25 23:52:20.589592+00:00)
+2026-09-26 01:52:20,618 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 00:52:20 UTC)" executed successfully
+2026-09-26 01:53:40,377 - webhook_app - INFO - 📩 Update reçue : ID=816746516, type=autre
+2026-09-26 01:53:40,378 - webhook_app - INFO - ✅ Update 816746516 traitée avec succès.
+2026-09-26 02:01:00,051 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 02:01:00,536 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 02:07:03,727 - webhook_app - INFO - 📩 Update reçue : ID=816746517, type=autre
+2026-09-26 02:07:03,729 - webhook_app - INFO - ✅ Update 816746517 traitée avec succès.
+2026-09-26 02:12:53,301 - webhook_app - INFO - 📩 Update reçue : ID=816746518, type=autre
+2026-09-26 02:12:53,302 - webhook_app - INFO - ✅ Update 816746518 traitée avec succès.
+2026-09-26 02:12:56,653 - webhook_app - INFO - 📩 Update reçue : ID=816746519, type=autre
+2026-09-26 02:12:56,654 - webhook_app - INFO - ✅ Update 816746519 traitée avec succès.
+2026-09-26 02:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 01:52:05 UTC)" (scheduled at 2026-09-26 00:52:05.587308+00:00)
+2026-09-26 02:52:05,771 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 01:52:05 UTC)" executed successfully
+2026-09-26 02:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 01:52:20 UTC)" (scheduled at 2026-09-26 00:52:20.589592+00:00)
+2026-09-26 02:52:20,614 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 01:52:20 UTC)" executed successfully
+2026-09-26 03:00:59,862 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 03:00:59,996 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 03:51:54,389 - webhook_app - INFO - 📩 Update reçue : ID=816746520, type=autre
+2026-09-26 03:51:54,391 - webhook_app - INFO - ✅ Update 816746520 traitée avec succès.
+2026-09-26 03:52:05,599 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 02:52:05 UTC)" (scheduled at 2026-09-26 01:52:05.587308+00:00)
+2026-09-26 03:52:05,693 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 02:52:05 UTC)" executed successfully
+2026-09-26 03:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 02:52:20 UTC)" (scheduled at 2026-09-26 01:52:20.589592+00:00)
+2026-09-26 03:52:20,620 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 02:52:20 UTC)" executed successfully
+2026-09-26 04:00:56,501 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 04:00:56,607 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 04:52:05,687 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 03:52:05 UTC)" (scheduled at 2026-09-26 02:52:05.587308+00:00)
+2026-09-26 04:52:05,749 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 03:52:05 UTC)" executed successfully
+2026-09-26 04:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 03:52:20 UTC)" (scheduled at 2026-09-26 02:52:20.589592+00:00)
+2026-09-26 04:52:20,614 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 03:52:20 UTC)" executed successfully
+2026-09-26 05:00:57,876 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 05:00:57,974 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 05:52:05,689 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 04:52:05 UTC)" (scheduled at 2026-09-26 03:52:05.587308+00:00)
+2026-09-26 05:52:05,790 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 04:52:05 UTC)" executed successfully
+2026-09-26 05:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 04:52:20 UTC)" (scheduled at 2026-09-26 03:52:20.589592+00:00)
+2026-09-26 05:52:20,615 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 04:52:20 UTC)" executed successfully
+2026-09-26 05:52:35,608 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 09:52:35 UTC)" (scheduled at 2026-09-26 03:52:35.592199+00:00)
+2026-09-26 05:52:35,616 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 09:52:35 UTC)" executed successfully
+2026-09-26 05:53:05,624 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 09:53:05 UTC)" (scheduled at 2026-09-26 03:53:05.592856+00:00)
+2026-09-26 05:53:05,796 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 09:53:05 UTC)" executed successfully
+2026-09-26 05:53:20,609 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-26 09:53:20 UTC)" (scheduled at 2026-09-26 03:53:20.593238+00:00)
+2026-09-26 05:53:20,617 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-26 09:53:20 UTC)" executed successfully
+2026-09-26 06:00:55,738 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 06:00:55,832 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 06:52:05,689 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 05:52:05 UTC)" (scheduled at 2026-09-26 04:52:05.587308+00:00)
+2026-09-26 06:52:05,780 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 05:52:05 UTC)" executed successfully
+2026-09-26 06:52:20,606 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 05:52:20 UTC)" (scheduled at 2026-09-26 04:52:20.589592+00:00)
+2026-09-26 06:52:20,617 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 05:52:20 UTC)" executed successfully
+2026-09-26 07:00:57,150 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 07:00:57,261 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 07:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 06:52:05 UTC)" (scheduled at 2026-09-26 05:52:05.587308+00:00)
+2026-09-26 07:52:05,787 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 06:52:05 UTC)" executed successfully
+2026-09-26 07:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 06:52:20 UTC)" (scheduled at 2026-09-26 05:52:20.589592+00:00)
+2026-09-26 07:52:20,614 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 06:52:20 UTC)" executed successfully
+2026-09-26 08:00:59,651 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 08:00:59,787 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 08:04:33,050 - webhook_app - INFO - 📩 Update reçue : ID=816746521, type=autre
+2026-09-26 08:04:33,051 - webhook_app - INFO - ✅ Update 816746521 traitée avec succès.
+2026-09-26 08:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 07:52:05 UTC)" (scheduled at 2026-09-26 06:52:05.587308+00:00)
+2026-09-26 08:52:05,771 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 07:52:05 UTC)" executed successfully
+2026-09-26 08:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 07:52:20 UTC)" (scheduled at 2026-09-26 06:52:20.589592+00:00)
+2026-09-26 08:52:20,618 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 07:52:20 UTC)" executed successfully
+2026-09-26 09:01:04,352 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 09:01:05,009 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 09:37:41,807 - webhook_app - INFO - 📩 Update reçue : ID=816746522, type=autre
+2026-09-26 09:37:41,826 - webhook_app - INFO - ✅ Update 816746522 traitée avec succès.
+2026-09-26 09:42:02,303 - webhook_app - INFO - 📩 Update reçue : ID=816746523, type=autre
+2026-09-26 09:42:02,305 - webhook_app - INFO - ✅ Update 816746523 traitée avec succès.
+2026-09-26 09:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 08:52:05 UTC)" (scheduled at 2026-09-26 07:52:05.587308+00:00)
+2026-09-26 09:52:06,240 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 08:52:05 UTC)" executed successfully
+2026-09-26 09:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 08:52:20 UTC)" (scheduled at 2026-09-26 07:52:20.589592+00:00)
+2026-09-26 09:52:20,618 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 08:52:20 UTC)" executed successfully
+2026-09-26 10:01:03,010 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 10:01:03,168 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 10:06:20,703 - webhook_app - INFO - 📩 Update reçue : ID=816746524, type=autre
+2026-09-26 10:06:20,705 - webhook_app - INFO - ✅ Update 816746524 traitée avec succès.
+2026-09-26 10:10:31,076 - webhook_app - INFO - 📩 Update reçue : ID=816746525, type=autre
+2026-09-26 10:10:31,077 - webhook_app - INFO - ✅ Update 816746525 traitée avec succès.
+2026-09-26 10:10:31,095 - webhook_app - INFO - 📩 Update reçue : ID=816746526, type=autre
+2026-09-26 10:10:31,096 - webhook_app - INFO - ✅ Update 816746526 traitée avec succès.
+2026-09-26 10:11:25,459 - webhook_app - INFO - 📩 Update reçue : ID=816746527, type=autre
+2026-09-26 10:11:25,460 - webhook_app - INFO - ✅ Update 816746527 traitée avec succès.
+2026-09-26 10:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 09:52:05 UTC)" (scheduled at 2026-09-26 08:52:05.587308+00:00)
+2026-09-26 10:52:05,758 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 09:52:05 UTC)" executed successfully
+2026-09-26 10:52:20,604 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 09:52:20 UTC)" (scheduled at 2026-09-26 08:52:20.589592+00:00)
+2026-09-26 10:52:20,623 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 09:52:20 UTC)" executed successfully
+2026-09-26 11:00:59,023 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 11:00:59,180 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-26 11:21:54,302 - webhook_app - INFO - 📩 Update reçue : ID=816746528, type=autre
+2026-09-26 11:21:54,304 - webhook_app - INFO - ✅ Update 816746528 traitée avec succès.
+2026-09-26 11:52:05,688 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 10:52:05 UTC)" (scheduled at 2026-09-26 09:52:05.587308+00:00)
+2026-09-26 11:52:05,754 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-26 10:52:05 UTC)" executed successfully
+2026-09-26 11:52:20,605 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 10:52:20 UTC)" (scheduled at 2026-09-26 09:52:20.589592+00:00)
+2026-09-26 11:52:20,616 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-26 10:52:20 UTC)" executed successfully
+2026-09-26 11:52:35,607 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 15:52:35 UTC)" (scheduled at 2026-09-26 09:52:35.592199+00:00)
+2026-09-26 11:52:35,617 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 15:52:35 UTC)" executed successfully
+2026-09-26 11:53:05,623 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 15:53:05 UTC)" (scheduled at 2026-09-26 09:53:05.592856+00:00)
+2026-09-26 11:53:05,633 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-26 15:53:05 UTC)" executed successfully
+2026-09-26 11:53:20,609 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-26 15:53:20 UTC)" (scheduled at 2026-09-26 09:53:20.593238+00:00)
+2026-09-26 11:53:20,619 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-26 15:53:20 UTC)" executed successfully
+2026-09-26 12:01:01,230 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-26 12:01:01,379 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
