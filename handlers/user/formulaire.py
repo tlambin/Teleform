@@ -1,4 +1,4 @@
-"""Formulaire de création de demandes avec orientation cible, matrice de canaux, quotas, détection des doublons et choix du référent VIP."""
+"""Formulaire de création de demandes avec orientation cible, quotas, doublons et choix VIP."""
 
 import asyncio
 import html
@@ -13,8 +13,8 @@ from telegram.ext import (
     filters,
 )
 from utils.validators import ValidationError, Validators
-from typing import Optional
 from .navigation import NavigationManager
+from . import formulaire_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -65,15 +65,6 @@ class FormulaireManager:
 
         self.navigation = NavigationManager(self)
         logger.info("FormulaireManager initialisé avec support VIP Assignée & Auto-Assign")
-
-    def _get_support_url(self) -> str:
-        """Génère l'URL directe vers le contact support configuré en base."""
-        contact = self.db_manager.get_support_contact()
-        if contact.startswith("@"):
-            return f"https://t.me/{contact.lstrip('@')}"
-        elif contact.startswith(("http://", "https://")):
-            return contact
-        return f"https://t.me/{contact}"
 
     def get_conversation_handler(self):
         """Retourne le ConversationHandler complet du formulaire."""
@@ -146,17 +137,11 @@ class FormulaireManager:
             name="demande_creation",
             persistent=False,
             allow_reentry=True,
+            per_user=True,
+            per_message=False,
         )
 
-    async def _edit_or_send(
-        self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-        text: str,
-        reply_markup=None,
-        parse_mode="HTML"
-    ):
-        """Met à jour le message ou en envoie un nouveau si le précédent contenait une photo."""
+    async def _edit_or_send(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None, parse_mode="HTML"):
         if update.callback_query:
             query = update.callback_query
             if query.message and query.message.photo:
@@ -172,26 +157,13 @@ class FormulaireManager:
                 )
             else:
                 try:
-                    await query.edit_message_text(
-                        text=text,
-                        parse_mode=parse_mode,
-                        reply_markup=reply_markup
-                    )
+                    await query.edit_message_text(text=text, parse_mode=parse_mode, reply_markup=reply_markup)
                 except Exception:
-                    await query.message.reply_text(
-                        text=text,
-                        parse_mode=parse_mode,
-                        reply_markup=reply_markup
-                    )
+                    await query.message.reply_text(text=text, parse_mode=parse_mode, reply_markup=reply_markup)
         elif update.message:
-            await update.message.reply_text(
-                text=text,
-                parse_mode=parse_mode,
-                reply_markup=reply_markup
-            )
+            await update.message.reply_text(text=text, parse_mode=parse_mode, reply_markup=reply_markup)
 
     async def _check_service_active(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-        """Vérifie si les demandes sont acceptées actuellement."""
         val_enabled = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
         if val_enabled not in ("true", "1", "yes"):
             msg = (
@@ -208,11 +180,9 @@ class FormulaireManager:
         return True
 
     async def _check_active_submission_allowed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-        """Vérifie en temps réel si les demandes restent actives et si les quotas ne sont pas dépassés."""
         user_id = update.effective_user.id
         is_vip = self.db_manager.is_user_vip(user_id)
 
-        # 1. Contrôle en direct de la suspension des demandes
         val_enabled = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
         if val_enabled not in ("true", "1", "yes"):
             msg_stop = (
@@ -222,7 +192,6 @@ class FormulaireManager:
                 "<i>Votre saisie en cours est annulée. Veuillez réessayer ultérieurement.</i>"
             )
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]])
-
             if update.callback_query:
                 await update.callback_query.answer("⛔ Demandes suspendues.", show_alert=True)
                 try:
@@ -235,17 +204,13 @@ class FormulaireManager:
             context.user_data.pop("demande", None)
             return False
 
-        # 2. Contrôle du quota utilisateur en direct (contourné pour VIP)
         if not is_vip:
             max_user = self.config.get_max_demandes_per_user()
             if max_user > 0:
                 placeholders = ", ".join(["%s"] * len(self.ACTIVE_STATUSES))
                 with self.db_manager.get_cursor() as cursor:
                     cursor.execute(
-                        f"""
-                        SELECT COUNT(*) AS total FROM demandes
-                        WHERE user_id = %s AND statut IN ({placeholders})
-                        """,
+                        f"SELECT COUNT(*) AS total FROM demandes WHERE user_id = %s AND statut IN ({placeholders})",
                         (int(user_id), *self.ACTIVE_STATUSES)
                     )
                     row = cursor.fetchone()
@@ -260,7 +225,6 @@ class FormulaireManager:
                         "<i>Cette création ne peut pas être finalisée pour le moment.</i>"
                     )
                     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]])
-
                     if update.callback_query:
                         await update.callback_query.answer("⚠️ Quota maximal atteint.", show_alert=True)
                         try:
@@ -276,7 +240,6 @@ class FormulaireManager:
         return True
 
     async def _check_quotas(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-        """Vérifie que les quotas ne sont pas atteints avant d'entamer le formulaire."""
         if self.db_manager.is_user_vip(user_id):
             return True
 
@@ -286,10 +249,7 @@ class FormulaireManager:
         max_total = self.config.get_max_total_demandes()
         if max_total > 0:
             with self.db_manager.get_cursor() as cursor:
-                cursor.execute(
-                    f"SELECT COUNT(*) AS total FROM demandes WHERE {status_filter}",
-                    tuple(self.ACTIVE_STATUSES)
-                )
+                cursor.execute(f"SELECT COUNT(*) AS total FROM demandes WHERE {status_filter}", tuple(self.ACTIVE_STATUSES))
                 row = cursor.fetchone()
                 total_actif = row["total"] if row else 0
 
@@ -337,18 +297,7 @@ class FormulaireManager:
 
         return True
 
-    def _get_orientation_keyboard(self) -> InlineKeyboardMarkup:
-        """Construit le clavier de choix de l'orientation cible."""
-        buttons = [
-            [InlineKeyboardButton("🫂 HÉTÉRO 🫂", callback_data="ori_hetero")],
-            [InlineKeyboardButton("🌈 GAY 🌈", callback_data="ori_gay")],
-            [InlineKeyboardButton("💃 BI 🕺", callback_data="ori_bi")],
-            [InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")]
-        ]
-        return InlineKeyboardMarkup(buttons)
-
     async def new_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Initialise le formulaire via la commande /new."""
         if not await self._check_service_active(update, context):
             return ConversationHandler.END
 
@@ -369,21 +318,15 @@ class FormulaireManager:
             "🎯 <b>Nouvelle demande — Étape 1/10</b>\n\n"
             "Pour commencer, quelle est l'<b>orientation de la cible</b> ou le type de piège souhaité ?"
         )
-        await update.message.reply_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=self._get_orientation_keyboard()
-        )
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=ui.get_orientation_keyboard())
         return self.ORIENTATION
 
     async def new_demande_from_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Initialise le formulaire suite à un clic sur bouton Inline."""
         query = update.callback_query
         if not query or not update.effective_user:
             return ConversationHandler.END
 
         await query.answer()
-
         if not await self._check_service_active(update, context):
             return ConversationHandler.END
 
@@ -403,11 +346,10 @@ class FormulaireManager:
             "🎯 <b>Nouvelle demande — Étape 1/10</b>\n\n"
             "Pour commencer, quelle est l'<b>orientation de la cible</b> ou le type de piège souhaité ?"
         )
-        await self._edit_or_send(update, context, text, reply_markup=self._get_orientation_keyboard())
+        await self._edit_or_send(update, context, text, reply_markup=ui.get_orientation_keyboard())
         return self.ORIENTATION
 
     async def handle_orientation_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Intercepte et valide le choix d'orientation."""
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
 
@@ -416,27 +358,19 @@ class FormulaireManager:
             return self.ORIENTATION
 
         orientation = query.data.replace("ori_", "")
-
         allow_insta = self.db_manager.is_channel_combination_allowed(orientation, "insta")
         allow_snap = self.db_manager.is_channel_combination_allowed(orientation, "snap")
 
         if not allow_insta and not allow_snap:
             labels = {"hetero": "hétéro", "gay": "gay", "bi": "bi"}
             lbl = labels.get(orientation, orientation)
-            await query.answer(
-                f"🚫 Les demandes {lbl} (Insta & Snap) sont actuellement suspendues par l'administration.",
-                show_alert=True
-            )
+            await query.answer(f"🚫 Les demandes {lbl} (Insta & Snap) sont actuellement suspendues par l'administration.", show_alert=True)
             return self.ORIENTATION
 
         await query.answer()
         context.user_data.setdefault("demande", {})["orientation"] = orientation
 
-        label_map = {
-            "hetero": "🫂 Hétéro",
-            "gay": "🌈 Gay",
-            "bi": "💃 Bi"
-        }
+        label_map = {"hetero": "🫂 Hétéro", "gay": "🌈 Gay", "bi": "💃 Bi"}
         ori_label = label_map.get(orientation, orientation.capitalize())
 
         text = (
@@ -451,7 +385,6 @@ class FormulaireManager:
     async def prenom(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.text:
             return self.PRENOM
 
@@ -482,7 +415,6 @@ class FormulaireManager:
     async def nom(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.text:
             return self.NOM
 
@@ -515,11 +447,7 @@ class FormulaireManager:
             return ConversationHandler.END
 
         context.user_data.setdefault("demande", {})["nom"] = None
-        text = (
-            "⏭️ Nom ignoré.\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🎂 Indiquez son âge (entre 18 et 40 ans) :"
-        )
+        text = "⏭️ Nom ignoré.\n━━━━━━━━━━━━━━━━━━━━━━\n\n🎂 Indiquez son âge (entre 18 et 40 ans) :"
         kb = self.navigation.create_navigation_keyboard(self.AGE)
         await self._edit_or_send(update, context, text, reply_markup=kb)
         return self.AGE
@@ -527,7 +455,6 @@ class FormulaireManager:
     async def age(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.text:
             return self.AGE
 
@@ -558,7 +485,6 @@ class FormulaireManager:
     async def localisation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.text:
             return self.LOCALISATION
 
@@ -589,7 +515,6 @@ class FormulaireManager:
     async def photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.photo:
             if update.message:
                 await update.message.reply_text(
@@ -607,7 +532,6 @@ class FormulaireManager:
                     break
 
             context.user_data.setdefault("demande", {})["photo_id"] = best.file_id
-
             text = (
                 "✅ Photo reçue avec succès !\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -628,26 +552,22 @@ class FormulaireManager:
             return self.PHOTO
 
     async def retry_instagram(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Permet de recommencer la saisie Instagram suite à un doublon."""
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
 
-        query = update.callback_query
-        if query:
-            await query.answer()
+        if update.callback_query:
+            await update.callback_query.answer()
         text = "👤 Indiquez à nouveau le profil <b>Instagram</b> de la cible (ou passez) :"
         kb = self.navigation.create_navigation_keyboard(self.INSTAGRAM, include_skip=True)
         await self._edit_or_send(update, context, text, reply_markup=kb)
         return self.INSTAGRAM
 
     async def retry_snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Permet de recommencer la saisie Snapchat suite à un doublon."""
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
 
-        query = update.callback_query
-        if query:
-            await query.answer()
+        if update.callback_query:
+            await update.callback_query.answer()
         demande = context.user_data.get("demande", {})
         has_insta = bool(demande.get("instagram"))
         text = "👻 Indiquez à nouveau le nom d'utilisateur <b>Snapchat</b> de la cible" + (" (ou passez) :" if has_insta else " :")
@@ -658,7 +578,6 @@ class FormulaireManager:
     async def instagram(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.text:
             return self.INSTAGRAM
 
@@ -695,12 +614,8 @@ class FormulaireManager:
 
             is_duplicate, matched_value = self.db_manager.check_social_duplicate(instagram=val)
             if is_duplicate:
-                support_url = self._get_support_url()
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 CONTACTER LE SUPPORT 💬", url=support_url)],
-                    [InlineKeyboardButton("↩️ MODIFIER MA SAISIE ↩️", callback_data="form_retry_instagram")],
-                    [InlineKeyboardButton("❌ ANNULER LA DEMANDE ❌", callback_data="form_cancel")]
-                ])
+                support_url = ui.get_support_url(self.db_manager)
+                kb = ui.get_duplicate_social_keyboard(support_url, "form_retry_instagram")
                 await update.message.reply_text(
                     f"⚠️ <b>Dossier déjà existant !</b>\n\n"
                     f"Une demande active concerne déjà ce profil Instagram (<code>{html.escape(matched_value)}</code>).\n\n"
@@ -749,7 +664,6 @@ class FormulaireManager:
     async def snapchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.text:
             return self.SNAPCHAT
 
@@ -797,12 +711,8 @@ class FormulaireManager:
 
             is_duplicate, matched_value = self.db_manager.check_social_duplicate(snapchat=val)
             if is_duplicate:
-                support_url = self._get_support_url()
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 CONTACTER LE SUPPORT 💬", url=support_url)],
-                    [InlineKeyboardButton("↩️ MODIFIER MA SAISIE ↩️", callback_data="form_retry_snapchat")],
-                    [InlineKeyboardButton("❌ ANNULER LA DEMANDE ❌", callback_data="form_cancel")]
-                ])
+                support_url = ui.get_support_url(self.db_manager)
+                kb = ui.get_duplicate_social_keyboard(support_url, "form_retry_snapchat")
                 await update.message.reply_text(
                     f"⚠️ <b>Dossier déjà existant !</b>\n\n"
                     f"Une demande active concerne déjà ce profil Snapchat (<code>{html.escape(matched_value)}</code>).\n\n"
@@ -840,7 +750,6 @@ class FormulaireManager:
             return ConversationHandler.END
 
         demande = context.user_data.setdefault("demande", {})
-
         if not demande.get("instagram"):
             msg = (
                 "🚫 <b>Réseau social obligatoire</b>\n\n"
@@ -855,11 +764,7 @@ class FormulaireManager:
             return self.SNAPCHAT
 
         demande["snapchat"] = None
-        text = (
-            "⏭️ Snapchat ignoré.\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "📝 Avez-vous des détails ou remarques supplémentaires à ajouter ?"
-        )
+        text = "⏭️ Snapchat ignoré.\n━━━━━━━━━━━━━━━━━━━━━━\n\n📝 Avez-vous des détails ou remarques supplémentaires à ajouter ?"
         kb = self.navigation.create_navigation_keyboard(self.DETAILS, include_skip=True)
         await self._edit_or_send(update, context, text, reply_markup=kb)
         return self.DETAILS
@@ -867,7 +772,6 @@ class FormulaireManager:
     async def details(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.text:
             return self.DETAILS
 
@@ -881,15 +785,7 @@ class FormulaireManager:
                 context.user_data.setdefault("demande", {})["details"] = None
                 confirm_txt = "⏭️ Aucun détail supplémentaire noté.\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-            reply_markup = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("⭐ OUI - PRIORITAIRE", callback_data="priorite_oui"),
-                    InlineKeyboardButton("📝 NON - STANDARD", callback_data="priorite_non")
-                ],
-                [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data=f"form_back_{self.PRIORITAIRE}")],
-                [InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")]
-            ])
-
+            reply_markup = ui.get_priority_choice_keyboard(self.PRIORITAIRE)
             await update.message.reply_text(
                 f"{confirm_txt}💎 <b>Souhaitez-vous une demande prioritaire ?</b>\n\n"
                 "Les demandes prioritaires nécessitent un montant et sont examinées en priorité.",
@@ -910,14 +806,7 @@ class FormulaireManager:
             return ConversationHandler.END
 
         context.user_data.setdefault("demande", {})["details"] = None
-        reply_markup = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("⭐ OUI - PRIORITAIRE", callback_data="priorite_oui"),
-                InlineKeyboardButton("📝 NON - STANDARD", callback_data="priorite_non")
-            ],
-            [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data=f"form_back_{self.PRIORITAIRE}")],
-            [InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")]
-        ])
+        reply_markup = ui.get_priority_choice_keyboard(self.PRIORITAIRE)
         msg = (
             "⏭️ Détails ignorés.\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -949,13 +838,11 @@ class FormulaireManager:
         demande = context.user_data.setdefault("demande", {})
         demande["prioritaire"] = False
         demande["montant"] = 0
-
         return await self.prompt_admin_selection_or_save(update, context)
 
     async def montant(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
-
         if not update.message or not update.message.text:
             return self.MONTANT
 
@@ -965,7 +852,6 @@ class FormulaireManager:
             demande = context.user_data.setdefault("demande", {})
             demande["montant"] = val
             demande["prioritaire"] = True
-
             return await self.prompt_admin_selection_or_save(update, context)
         except ValidationError as err:
             await update.message.reply_text(
@@ -976,7 +862,6 @@ class FormulaireManager:
             return self.MONTANT
 
     async def prompt_admin_selection_or_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Gère le choix du piégeur VIP en tenant compte du réglage automatique ou affiche le choix initial."""
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
 
@@ -1005,12 +890,7 @@ class FormulaireManager:
                 "Souhaitez-vous confier cette demande à un membre précis de l'équipe, "
                 "ou la rendre immédiatement disponible pour l'ensemble des piégeurs ?"
             )
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎯 CHOISIR MON PIÉGEUR 🎯", callback_data="vip_opt_choose")],
-                [InlineKeyboardButton("🎲 NE PAS CHOISIR (TOUTE L'ÉQUIPE) 🎲", callback_data="vip_opt_none")],
-                [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data=f"form_back_{self.CHOIX_ADMIN}")],
-                [InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")]
-            ])
+            kb = ui.get_vip_assignment_choice_keyboard(self.CHOIX_ADMIN)
             await self._edit_or_send(update, context, text, reply_markup=kb)
             return self.CHOIX_ADMIN
 
@@ -1018,48 +898,20 @@ class FormulaireManager:
         return ConversationHandler.END
 
     async def _show_vip_staff_picker(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Affiche la liste des piégeurs disponibles pour sélection par le VIP."""
         user = update.effective_user
         equipe = self.db_manager.get_available_staff()
         demande = context.user_data.get("demande", {})
         target_ori = demande.get("orientation", "hetero")
-        kb_rows = []
 
-        for member in equipe:
-            if int(member["user_id"]) == int(user.id):
-                continue
-
-            alias = member.get("alias", f"Staff_{member['user_id']}")
-            perms = self.db_manager.get_staff_permissions(member["user_id"])
-            p_ori = perms.get("perm_orientation", "all")
-
-            is_compatible = (
-                p_ori in ("all", "bi")
-                or p_ori == target_ori
-                or (target_ori == "bi" and p_ori in ("hetero", "gay"))
-            )
-
-            if is_compatible:
-                kb_rows.append([
-                    InlineKeyboardButton(
-                        f"🦈 {alias.upper()} 🦈",
-                        callback_data=f"vip_assign_admin_{member['user_id']}"
-                    )
-                ])
-
-        kb_rows.append([InlineKeyboardButton("🎲 NE PAS CHOISIR (TOUTE L'ÉQUIPE) 🎲", callback_data="vip_assign_admin_0")])
-        kb_rows.append([InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data="vip_opt_back")])
-        kb_rows.append([InlineKeyboardButton("❌ ANNULER ❌", callback_data="form_cancel")])
-
+        reply_markup = ui.build_vip_staff_picker(equipe, user.id, target_ori, self.db_manager)
         msg = (
             "🎯 <b>Sélection de votre piégeur</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "Cliquez sur le membre de l'équipe à qui vous souhaitez soumettre ce dossier :"
         )
-        await self._edit_or_send(update, context, msg, reply_markup=InlineKeyboardMarkup(kb_rows))
+        await self._edit_or_send(update, context, msg, reply_markup=reply_markup)
 
     async def handle_vip_admin_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Intercepte le choix (Choisir vs Ne pas choisir, puis sélection de l'alias)."""
         if not await self._check_active_submission_allowed(update, context):
             return ConversationHandler.END
 
@@ -1090,7 +942,6 @@ class FormulaireManager:
             admin_selected_id = int(data.replace("vip_assign_admin_", ""))
             demande = context.user_data.setdefault("demande", {})
             demande["target_admin_id"] = admin_selected_id if admin_selected_id > 0 else None
-
             await self.save_demande(update, context)
             return ConversationHandler.END
 
@@ -1105,7 +956,6 @@ class FormulaireManager:
         return ConversationHandler.END
 
     async def save_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enregistre la demande en base et déclenche la diffusion asynchrone non-bloquante."""
         if not await self._check_active_submission_allowed(update, context):
             return
 
@@ -1118,12 +968,7 @@ class FormulaireManager:
 
         target_admin_id = demande.get("target_admin_id")
         is_vip = self.db_manager.is_user_vip(user_id)
-
-        if is_vip and target_admin_id:
-            statut_initial = "🎯 Assignée (VIP)"
-        else:
-            statut_initial = "📥 Reçue"
-
+        statut_initial = "🎯 Assignée (VIP)" if (is_vip and target_admin_id) else "📥 Reçue"
         orientation = demande.get("orientation", "hetero")
 
         try:
@@ -1192,170 +1037,18 @@ class FormulaireManager:
                 f"🎯 <b>Type :</b> {type_txt}{montant_txt}{referent_txt}\n\n"
                 "Tapez /demandes pour suivre son avancement."
             )
-
             await self._edit_or_send(update, context, recap)
 
             if target_admin_id and statut_initial == "🎯 Assignée (VIP)":
                 asyncio.create_task(
-                    self._send_vip_assignment_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
+                    ui.send_vip_assignment_alert(context, target_admin_id, demande_id, next_num, nom_complet_esc, demande)
                 )
             else:
                 asyncio.create_task(
-                    self._broadcast_new_demande_alert(context, demande_id, next_num, nom_complet_esc, demande, user_id, is_vip=is_vip)
+                    ui.broadcast_new_demande_alert(context, self.config, self.db_manager, demande_id, next_num, nom_complet_esc, demande, user_id, is_vip=is_vip)
                 )
 
         except Exception as exc:
             logger.error("Erreur lors de la sauvegarde de la demande : %s", exc, exc_info=True)
             err_msg = "❌ Erreur technique lors de la sauvegarde. Veuillez contacter un administrateur."
             await self._edit_or_send(update, context, err_msg)
-
-    async def _send_vip_assignment_alert(
-        self, context: ContextTypes.DEFAULT_TYPE, admin_id: int, demande_id: int, req_num: int, nom_complet: str, demande: dict
-    ):
-        """Envoie l'alerte au piégeur sélectionné par un VIP avec boutons d'acceptation ou de refus."""
-        prio_icon = "💎" if demande.get("prioritaire") else "📝"
-        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
-        loc_esc = html.escape(str(demande.get("localisation") or ""))
-
-        label_map = {"hetero": "👩‍❤️‍👨 Hétéro", "gay": "👨‍❤️‍👨 Gay", "bi": "🔄 Bi"}
-        ori_str = label_map.get(demande.get("orientation", "hetero"), "Hétéro")
-
-        alert_text = (
-            f"👑 <b>NOUVELLE DEMANDE VIP ASSIGNÉE (#{req_num})</b>\n\n"
-            f"Un client VIP vous a spécifiquement choisi comme référent pour traiter sa demande :\n\n"
-            f"🎯 <b>Cible :</b> {ori_str}\n"
-            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
-            f"📍 <b>Localisation :</b> {loc_esc}\n"
-            f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}\n\n"
-            "<i>Acceptez-vous cette prise en charge ?</i>"
-        )
-        alert_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ ACCEPTER LA MISSION 🎯", callback_data=f"vip_accept_{demande_id}")],
-            [InlineKeyboardButton("❌ DÉCLINER LA DEMANDE ❌", callback_data=f"vip_decline_{demande_id}")]
-        ])
-
-        try:
-            photo_id = demande.get("photo_id")
-            if photo_id:
-                await context.bot.send_photo(
-                    chat_id=admin_id,
-                    photo=photo_id,
-                    caption=alert_text,
-                    parse_mode="HTML",
-                    reply_markup=alert_kb
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=admin_id,
-                    text=alert_text,
-                    parse_mode="HTML",
-                    reply_markup=alert_kb
-                )
-        except Exception as err:
-            logger.warning("Impossible de notifier le piégeur assigné VIP %s : %s", admin_id, err)
-
-    async def _send_single_demande_alert(
-        self,
-        context: ContextTypes.DEFAULT_TYPE,
-        sid: int,
-        alert_text: str,
-        alert_kb: InlineKeyboardMarkup,
-        photo_id: Optional[str],
-        is_silent: bool
-    ):
-        """Envoie individuel sécurisé avec capture d'exception par destinataire."""
-        try:
-            if photo_id:
-                await context.bot.send_photo(
-                    chat_id=sid,
-                    photo=photo_id,
-                    caption=alert_text,
-                    parse_mode="HTML",
-                    reply_markup=alert_kb,
-                    disable_notification=is_silent
-                )
-            else:
-                await context.bot.send_message(
-                    chat_id=sid,
-                    text=alert_text,
-                    parse_mode="HTML",
-                    reply_markup=alert_kb,
-                    disable_notification=is_silent
-                )
-        except Exception as e:
-            logger.warning("Impossible d'envoyer l'alerte nouvelle demande à %s : %s", sid, e)
-
-    async def _broadcast_new_demande_alert(
-        self, context: ContextTypes.DEFAULT_TYPE, demande_id: int, req_num: int, nom_complet: str, demande: dict, creator_id: int, is_vip: bool = False
-    ):
-        """Diffuse les alertes de nouvelle demande à l'équipe Staff en parallèle (asyncio.gather)."""
-        prio_icon = "💎" if demande.get("prioritaire") else "📝"
-        type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-        montant_str = f" ({demande.get('montant', 0):.2f} €)" if demande.get("prioritaire") else ""
-        loc_esc = html.escape(str(demande.get("localisation") or ""))
-
-        label_map = {"hetero": "👩‍❤️‍👨 Hétéro", "gay": "👨‍❤️‍👨 Gay", "bi": "🔄 Bi"}
-        target_ori = demande.get("orientation", "hetero")
-        ori_str = label_map.get(target_ori, "Hétéro")
-
-        titre = f"🌟 <b>Nouvelle demande VIP disponible #{req_num}</b>" if is_vip else f"🔔 <b>Nouvelle demande disponible #{req_num}</b>"
-
-        alert_text = (
-            f"{titre}\n\n"
-            f"🎯 <b>Orientation cible :</b> {ori_str}\n"
-            f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age')} ans)\n"
-            f"📍 <b>Localisation :</b> {loc_esc}\n"
-            f"🎯 <b>Type :</b> {prio_icon} {type_str}{montant_str}"
-        )
-        alert_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚡ PRENDRE EN CHARGE ⚡", callback_data=f"suivre_demande_{demande_id}")],
-            [InlineKeyboardButton("📮 VOIR LES DISPONIBLES 📮", callback_data="demandes_disponibles")]
-        ])
-
-        staff_destinataires = self.config.get_all_staff() or self.config.get_all_admins()
-        tasks = []
-        photo_id = demande.get("photo_id")
-
-        for staff_id in staff_destinataires:
-            try:
-                sid = int(staff_id)
-                if sid == int(creator_id):
-                    continue
-
-                if self.db_manager.is_staff_paused(sid):
-                    continue
-
-                perms = self.db_manager.get_staff_permissions(sid)
-                p_ori = perms.get("perm_orientation", "all")
-
-                is_compatible = (
-                    p_ori in ("all", "bi")
-                    or p_ori == target_ori
-                    or (target_ori == "bi" and p_ori in ("hetero", "gay"))
-                )
-                if not is_compatible:
-                    continue
-
-                prefs = self.db_manager.get_admin_preferences(sid)
-                notif_mode = prefs.get("notif_new_mode", "sound")
-                if notif_mode == "off":
-                    continue
-
-                is_silent = (notif_mode == "silent")
-
-                tasks.append(
-                    self._send_single_demande_alert(
-                        context=context,
-                        sid=sid,
-                        alert_text=alert_text,
-                        alert_kb=alert_kb,
-                        photo_id=photo_id,
-                        is_silent=is_silent
-                    )
-                )
-            except Exception as e_prep:
-                logger.warning("Erreur préparation notification pour staff %s : %s", staff_id, e_prep)
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)

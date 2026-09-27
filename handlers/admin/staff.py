@@ -2,9 +2,9 @@
 
 import html
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
-from utils.validators import convert_utc_to_paris
+from . import staff_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -95,36 +95,9 @@ class StaffManager:
                 )
                 staff_members = cursor.fetchall()
 
-            if not staff_members:
-                msg = "📭 <b>Aucun opérateur dans l'équipe Staff pour le moment.</b>"
-                if update.message:
-                    await update.message.reply_text(msg, parse_mode="HTML")
-                return
-
-            lines = [f"👥 <b>Équipe Staff (Opérateurs)</b> ({len(staff_members)})\n"]
-            for st in staff_members:
-                raw_pseudo = f"@{st['username']}" if st.get("username") else (st.get("first_name") or "")
-                pseudo_esc = html.escape(str(raw_pseudo))
-                alias_esc = html.escape(str(st.get("alias") or f"Staff_{st['user_id']}"))
-
-                dt_added = st.get("date_added")
-                if dt_added:
-                    date_paris = convert_utc_to_paris(dt_added)
-                    date_str = date_paris.strftime("%d/%m/%Y à %H:%M")
-                else:
-                    date_str = "Inconnue"
-
-                par_qui = html.escape(str(st.get("nom_ajouteur") or "Direction"))
-                status_badge = "⏸️ (En pause)" if st.get("is_paused") else "🟢 (En service)"
-                trial_badge = " 🧪 <b>[À l'essai]</b>" if st.get("is_trial") else ""
-
-                lines.append(
-                    f"• <b>{alias_esc}</b> {status_badge}{trial_badge} ({pseudo_esc})\n"
-                    f"  ID : <code>{st['user_id']}</code> | Recruté le {date_str} par {par_qui}\n"
-                )
-
+            text = ui.format_staff_list_text(staff_members)
             if update.message:
-                await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+                await update.message.reply_text(text, parse_mode="HTML")
 
         except Exception as exc:
             logger.error("Erreur récupération liste staff : %s", exc, exc_info=True)
@@ -144,16 +117,7 @@ class StaffManager:
                 cursor.execute("SELECT COUNT(*) AS count FROM staff")
                 count = cursor.fetchone()["count"]
 
-            text = (
-                "👤 <b>Recrutement d'un Opérateur (Staff)</b>\n\n"
-                f"Équipe actuelle : <b>{count}</b> opérateur(s)\n\n"
-                "Envoyez l'<b>ID Telegram</b> ou le <b>@username</b> du compte à recruter :\n\n"
-                "<i>(L'utilisateur doit obligatoirement avoir démarré le bot au préalable avec /start)</i>"
-            )
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ Annuler", callback_data="cancel_staff_add")
-            ]])
-
+            text, keyboard = ui.get_staff_add_prompt_content(count)
             await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
             return self.WAITING_STAFF_ID
 
@@ -200,7 +164,6 @@ class StaffManager:
             base_alias = user_data.get("first_name") or user_data.get("username") or f"Staff{target_id}"
             alias = str(base_alias)[:20]
 
-            # Brouillon temporaire de configuration en session
             context.user_data["pending_staff_recruit"] = {
                 "target_id": target_id,
                 "alias": alias,
@@ -219,68 +182,10 @@ class StaffManager:
             await update.message.reply_text("❌ Erreur technique lors de la vérification.")
             return ConversationHandler.END
 
-    def _build_recruit_config_keyboard(self, cfg: dict) -> InlineKeyboardMarkup:
-        """Construit les boutons de pré-configuration interactive."""
-        res = cfg.get("reseaux", "all")
-        typ = cfg.get("type", "all")
-        ori = cfg.get("orientation", "all")
-        is_trial = bool(cfg.get("is_trial", True))
-
-        b_res_all = "✅ Tous réseaux" if res == "all" else "Tous réseaux"
-        b_res_insta = "✅ Insta" if res == "insta" else "Insta"
-        b_res_snap = "✅ Snap" if res == "snap" else "Snap"
-
-        b_typ_all = "✅ Tout type" if typ == "all" else "Tout type"
-        b_typ_prio = "✅ 💎 Payantes" if typ == "prio_only" else "💎 Payantes"
-        b_typ_std = "✅ 📝 Gratuites" if typ == "standard_only" else "📝 Gratuites"
-
-        b_ori_all = "✅ 🔄 Tous / Bi" if ori in ("all", "bi") else "🔄 Tous / Bi"
-        b_ori_h = "✅ Hétéro" if ori == "hetero" else "Hétéro"
-        b_ori_g = "✅ Gay" if ori == "gay" else "Gay"
-
-        trial_btn_label = "🧪 À l'essai : ✅ OUI" if is_trial else "🧪 À l'essai : ❌ NON"
-
-        return InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(b_res_all, callback_data="cfgadd_res_all"),
-                InlineKeyboardButton(b_res_insta, callback_data="cfgadd_res_insta"),
-                InlineKeyboardButton(b_res_snap, callback_data="cfgadd_res_snap"),
-            ],
-            [
-                InlineKeyboardButton(b_typ_all, callback_data="cfgadd_typ_all"),
-                InlineKeyboardButton(b_typ_prio, callback_data="cfgadd_typ_prio_only"),
-                InlineKeyboardButton(b_typ_std, callback_data="cfgadd_typ_standard_only"),
-            ],
-            [
-                InlineKeyboardButton(b_ori_h, callback_data="cfgadd_ori_hetero"),
-                InlineKeyboardButton(b_ori_g, callback_data="cfgadd_ori_gay"),
-                InlineKeyboardButton(b_ori_all, callback_data="cfgadd_ori_all"),
-            ],
-            [
-                InlineKeyboardButton(trial_btn_label, callback_data="cfgadd_trial_toggle")
-            ],
-            [
-                InlineKeyboardButton("🚀 Valider et recruter", callback_data="cfgadd_confirm_save")
-            ],
-            [
-                InlineKeyboardButton("❌ Annuler", callback_data="cancel_staff_add")
-            ]
-        ])
-
     async def _render_recruit_config_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche ou met à jour le panneau de pré-configuration."""
         cfg = context.user_data.get("pending_staff_recruit", {})
-        target_id = cfg.get("target_id")
-        alias_esc = html.escape(str(cfg.get("alias") or ""))
-        nom_esc = html.escape(str(cfg.get("first_name") or ""))
-
-        kb = self._build_recruit_config_keyboard(cfg)
-        text = (
-            f"⚙️ <b>Configuration initiale de l'opérateur</b>\n\n"
-            f"👤 <b>Cible :</b> {nom_esc} (ID: <code>{target_id}</code>)\n"
-            f"🏷️ <b>Alias provisoire :</b> <code>{alias_esc}</code>\n\n"
-            "Ajustez ses autorisations et son mode à l'essai avant d'enregistrer le recrutement :"
-        )
+        text, kb = ui.build_recruit_config_content(cfg)
 
         if update.callback_query:
             await update.callback_query.answer()
@@ -356,31 +261,8 @@ class StaffManager:
             logger.info("Opérateur Staff recruté : %s (%s) | Reseaux=%s, Type=%s, Ori=%s, Trial=%s",
                         target_id, alias, reseaux, typ, orientation, is_trial)
 
-            alias_esc = html.escape(alias)
-            trial_text = "🧪 <b>À l'essai</b> (Demande aléatoire imposée)" if is_trial else "🟢 <b>Confirmé</b> (Accès complet)"
-
-            # Notification personnalisée envoyée au nouveau membre
+            welcome_msg, welcome_kb = ui.build_recruit_welcome_message(alias, is_trial)
             try:
-                trial_notice = (
-                    "🧪 <b>Période probatoire (À l'essai) :</b>\n"
-                    "Vous devez mener à bien <b>une première demande test</b> attribuée au hasard pour débloquer l'accès complet à la plateforme.\n\n"
-                    if is_trial else
-                    "🟢 <b>Accès complet :</b>\n"
-                    "Vous avez accès dès maintenant à l'ensemble des demandes disponibles correspondant à vos autorisations.\n\n"
-                )
-
-                welcome_msg = (
-                    "🎉 <b>Bienvenue dans l'équipe opérationnelle (Staff) !</b>\n\n"
-                    f"🏷️ <b>Votre alias provisoire :</b> <code>{alias_esc}</code>\n\n"
-                    f"{trial_notice}"
-                    "⚠️ <b>Pseudonyme officiel :</b> Vous pouvez définir votre alias dès maintenant.\n"
-                    "<i>Attention : vous ne disposez que d'une seule modification autorisée.</i>\n\n"
-                    "Cliquez ci-dessous pour démarrer :"
-                )
-                welcome_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🏷️ DÉFINIR MON ALIAS", callback_data="modifier_alias")],
-                    [InlineKeyboardButton("🚀 Menu Principal", callback_data="start_menu")]
-                ])
                 await context.bot.send_message(
                     chat_id=target_id,
                     text=welcome_msg,
@@ -390,24 +272,7 @@ class StaffManager:
             except Exception as notif_err:
                 logger.warning("Impossible de notifier le membre %s : %s", target_id, notif_err)
 
-            kb_confirm = InlineKeyboardMarkup([
-                [InlineKeyboardButton("👥 Équipe Staff", callback_data="gerer_staff")],
-                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
-            ])
-
-            res_label = {"all": "Tous", "insta": "Instagram", "snap": "Snapchat"}.get(reseaux, reseaux)
-            typ_label = {"all": "Tous", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(typ, typ)
-            ori_label = {"all": "Tous / Bi", "bi": "Tous / Bi", "hetero": "Hétéro", "gay": "Gay"}.get(orientation, orientation)
-
-            msg_admin = (
-                f"✅ <b>Opérateur recruté et configuré avec succès !</b>\n\n"
-                f"👤 <b>Cible :</b> {html.escape(cfg['first_name'])} (ID: <code>{target_id}</code>)\n"
-                f"🏷️ <b>Alias :</b> <code>{alias_esc}</code>\n"
-                f"🌐 <b>Réseaux :</b> {res_label}\n"
-                f"🎯 <b>Type :</b> {typ_label}\n"
-                f"🧭 <b>Orientation :</b> {ori_label}\n"
-                f"🧪 <b>Statut :</b> {trial_text}"
-            )
+            msg_admin, kb_confirm = ui.build_recruit_admin_summary(cfg)
 
             if update.callback_query:
                 await self._safe_edit_or_send(update.callback_query, context, msg_admin, reply_markup=kb_confirm)
@@ -454,31 +319,13 @@ class StaffManager:
                 )
                 staff_members = cursor.fetchall()
 
+            text, keyboard = ui.build_staff_remove_list_content(staff_members)
             if not staff_members:
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Retour", callback_data="gerer_staff")]])
-                text = "👥 <b>Révocation d'un Opérateur</b>\n\nAucun opérateur révocable n'est configuré actuellement."
-                await self._safe_edit_or_send(query, context, text, reply_markup=kb)
+                await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
                 return ConversationHandler.END
 
-            lines = [
-                "👥 <b>Révocation d'un Opérateur (Staff)</b>\n",
-                f"Opérateurs enregistrés : <b>{len(staff_members)}</b>\n"
-            ]
-            for idx, st in enumerate(staff_members, 1):
-                raw_pseudo = f"@{st['username']}" if st.get("username") else (st.get("first_name") or "")
-                pseudo_esc = html.escape(str(raw_pseudo))
-                alias_esc = html.escape(str(st.get("alias") or f"Staff_{st['user_id']}"))
-                date_str = str(st.get("date_added", ""))[:10]
-                lines.append(f"{idx}. <b>{alias_esc}</b> ({pseudo_esc}) — ID: <code>{st['user_id']}</code> [{date_str}]")
-
-            lines.append("\nEnvoyez le <b>numéro</b> de l'opérateur à révoquer :")
-
             context.user_data["staff_remove_list"] = staff_members
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ Annuler", callback_data="cancel_staff_remove")
-            ]])
-
-            await self._safe_edit_or_send(query, context, "\n".join(lines), reply_markup=keyboard)
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
             return self.WAITING_STAFF_REMOVE
 
         except Exception as exc:
@@ -508,26 +355,8 @@ class StaffManager:
         selected = staff_list[idx]
         context.user_data["target_staff_to_remove"] = selected
 
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("⚠️ Confirmer la révocation", callback_data="confirm_staff_remove"),
-                InlineKeyboardButton("❌ Annuler", callback_data="cancel_staff_remove")
-            ]
-        ])
-
-        raw_pseudo = f"@{selected['username']}" if selected.get("username") else (selected.get("first_name") or "")
-        pseudo_esc = html.escape(str(raw_pseudo))
-        alias_esc = html.escape(str(selected.get("alias") or f"Staff_{selected['user_id']}"))
-
-        await update.message.reply_text(
-            f"⚠️ <b>Confirmation de révocation</b>\n\n"
-            f"Êtes-vous certain de vouloir retirer les accès opérationnels à :\n"
-            f"• <b>Alias :</b> {alias_esc}\n"
-            f"• <b>Profil :</b> {pseudo_esc}\n"
-            f"• <b>ID :</b> <code>{selected['user_id']}</code> ?",
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+        text, keyboard = ui.build_staff_remove_confirmation_content(selected)
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
         return self.WAITING_STAFF_CONFIRMATION
 
     async def confirmer_staff_suppression(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -553,13 +382,7 @@ class StaffManager:
             self.config.remove_staff(target_id)
             logger.info("Droits staff supprimés pour %s par %s", target_id, user.id)
 
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("👥 Équipe Staff", callback_data="gerer_staff")],
-                [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
-            ])
-
-            alias_esc = html.escape(str(selected.get("alias") or f"Staff_{target_id}"))
-            text = f"✅ <b>Droits staff retirés avec succès pour {alias_esc}.</b>"
+            text, keyboard = ui.get_staff_removed_success_content(selected.get("alias"), target_id)
             await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
             return ConversationHandler.END
 

@@ -3,6 +3,7 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+from . import bot_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -67,18 +68,8 @@ class BotManager:
             self.config.enable_demandes()
             logger.info("Bot activé par le propriétaire %s", user.id)
 
-            msg = (
-                "🟢 <b>Bot opérationnel</b>\n\n"
-                "✅ Les utilisateurs peuvent à nouveau créer des demandes et naviguer librement.\n"
-                "📊 Toutes les commandes sont actives."
-            )
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔴 Suspendre", callback_data="bot_off")],
-                [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
-            ])
-
-            await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
+            text, keyboard = ui.get_bot_on_content()
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur activation bot : %s", exc, exc_info=True)
@@ -100,18 +91,8 @@ class BotManager:
             self.config.disable_demandes()
             logger.info("Demandes suspendues par le propriétaire %s", user.id)
 
-            msg = (
-                "🔴 <b>Demandes suspendues</b>\n\n"
-                "⏸️ Le service de création de demandes est désormais désactivé.\n"
-                "🔒 L'équipe conserve ses accès pour traiter et clôturer les dossiers en cours."
-            )
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🟢 Réactiver", callback_data="bot_on")],
-                [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
-            ])
-
-            await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
+            text, keyboard = ui.get_bot_off_content()
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur désactivation bot : %s", exc, exc_info=True)
@@ -134,17 +115,8 @@ class BotManager:
             self.db_manager.set_config_value("maintenance_mode", "true")
             logger.info("Mode maintenance enclenché par le propriétaire %s", user.id)
 
-            msg = (
-                "🛠️ <b>Mode maintenance actif</b>\n\n"
-                "⚙️ Le bot est verrouillé pour des interventions techniques.\n"
-                "Seuls les comptes de direction sont habilités à exécuter des actions."
-            )
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🟢 Réactiver le service", callback_data="bot_on")],
-                [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
-            ])
-
-            await self._safe_edit_or_send(query, context, msg, reply_markup=keyboard)
+            text, keyboard = ui.get_bot_maintenance_content()
+            await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur passage en mode maintenance : %s", exc, exc_info=True)
@@ -161,30 +133,7 @@ class BotManager:
             is_active = self.config.are_demandes_enabled()
             is_maint = str(self.db_manager.get_config_value("maintenance_mode", "false")).lower() in ("true", "1")
 
-            if is_maint:
-                badge = "🛠️ <b>Maintenance</b>"
-                detail = "Accès restreint à la direction."
-            elif is_active:
-                badge = "🟢 <b>Actif</b>"
-                detail = "Toutes les fonctions sont opérationnelles pour les utilisateurs."
-            else:
-                badge = "🔴 <b>Suspendu</b>"
-                detail = "Les utilisateurs ne peuvent plus soumettre de formulaires."
-
-            text = (
-                "📊 <b>Statut Opérationnel du Service</b>\n\n"
-                f"• <b>État :</b> {badge}\n"
-                f"• <b>Détails :</b> {detail}"
-            )
-
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("🟢 Activer", callback_data="bot_on"),
-                    InlineKeyboardButton("🔴 Couper", callback_data="bot_off")
-                ],
-                [InlineKeyboardButton("🛠️ Maintenance", callback_data="maintenance")],
-                [InlineKeyboardButton("🔙 Gestion Service", callback_data="gerer_bot")]
-            ])
+            text, keyboard = ui.build_bot_status_content(is_active, is_maint)
 
             if update.callback_query:
                 await update.callback_query.answer()

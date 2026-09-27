@@ -24,8 +24,8 @@ def create_telegram_app():
     # Maintient un pool réduit pour respecter la limite MySQL
     db_manager = DatabaseManager(config, pool_size=2)
 
-    # Vérification et auto-migration automatique des tables et colonnes
-    db_manager.create_tables()
+    # Initialisation des tables et application des migrations DDL
+    db_manager.init_db()
 
     config.set_db_manager(db_manager)
 

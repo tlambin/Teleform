@@ -14,9 +14,12 @@ os.environ["TZ"] = "Europe/Paris"
 if hasattr(time, "tzset"):
     time.tzset()
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
+# Résolution des répertoires : SCRIPTS_DIR pour le script, PROJECT_ROOT pour la racine du bot
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPTS_DIR, ".."))
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 LOG_FILE = "/tmp/maintenance_task.log"
 
@@ -147,7 +150,7 @@ class UnifiedMaintenance:
                 subprocess.run(cmd, shell=True, capture_output=True)
 
             log_files = [
-                os.path.join(BASE_DIR, "logs", "bot.log"),
+                os.path.join(PROJECT_ROOT, "logs", "bot.log"),
                 "/tmp/bot.log",
                 "/tmp/bot_console.log",
                 "/tmp/bot_output.log",
@@ -197,7 +200,7 @@ class UnifiedMaintenance:
             os.path.join(home, ".cache"),
             os.path.join(home, ".local"),
             "/tmp",
-            BASE_DIR,
+            PROJECT_ROOT,
         ]
         valid_dirs = [d for d in inspect_dirs if os.path.exists(d)]
         du_res = subprocess.run(["du", "-sh"] + valid_dirs, capture_output=True, text=True)

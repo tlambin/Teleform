@@ -2,10 +2,9 @@
 
 import html
 import logging
-import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from utils.validators import convert_utc_to_paris
+from . import profils_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +16,6 @@ class ProfilsManager:
         self.db_manager = db_manager
         self.config = config
         logger.info("ProfilsManager initialisé avec supervision hiérarchique et contrôle des bannissements")
-
-    def _render_progress_bar(self, rate: float) -> str:
-        """Génère une jauge graphique sur 10 blocs."""
-        try:
-            val = float(rate or 0)
-        except (ValueError, TypeError):
-            val = 0.0
-        filled = int(round(val / 10))
-        filled = max(0, min(10, filled))
-        empty = 10 - filled
-        return f"{'🟩' * filled}{'⬜' * empty}"
 
     def _can_viewer_ban(self, viewer_id: int) -> bool:
         """Indique si l'utilisateur consultant la fiche a le droit d'exécuter un ban."""
@@ -78,12 +66,10 @@ class ProfilsManager:
         if not query or not update.effective_user:
             return
 
-        # 1. Menu choix des demandes d'un piégeur
         if data.startswith("staff_view_demandes_"):
             target_staff_id = int(data.replace("staff_view_demandes_", ""))
             await self.show_staff_demandes_menu(query, context, target_staff_id)
 
-        # 2. Listes de dossiers pour un piégeur (suivis vs créés / actifs vs archivés)
         elif data.startswith("staff_list_"):
             parts = data.split("_")
             target_staff_id = int(parts[2])
@@ -91,14 +77,12 @@ class ProfilsManager:
             page = int(parts[4]) if len(parts) > 4 else 0
             await self.show_staff_demandes_list(query, context, target_staff_id, category, page)
 
-        # 3. Menu choix des demandes d'un utilisateur
         elif data.startswith("user_view_demandes_"):
             parts = data.split("_")
             target_user_id = int(parts[3])
             origin_demande_id = int(parts[4]) if len(parts) > 4 else 0
             await self.show_user_demandes_menu(query, context, target_user_id, origin_demande_id)
 
-        # 4. Listes de demandes pour un client
         elif data.startswith("user_list_"):
             parts = data.split("_")
             target_user_id = int(parts[2])
@@ -107,7 +91,6 @@ class ProfilsManager:
             page = int(parts[5]) if len(parts) > 5 else 0
             await self.show_user_demandes_list(query, context, target_user_id, origin_demande_id, category, page)
 
-        # 5. Consultation d'une archive
         elif data.startswith("archive_view_"):
             payload = data.replace("archive_view_", "")
             if "_back_" in payload:
@@ -136,76 +119,21 @@ class ProfilsManager:
             return
 
         stats = self.db_manager.get_admin_stats(admin_id)
-        alias_esc = html.escape(str(stats.get("alias") or f"Membre_{admin_id}"))
-
         is_target_banned = self.db_manager.is_user_banned(admin_id)
+        is_owner_target = self.config.is_owner(admin_id)
 
-        if self.config.is_owner(admin_id):
-            date_str = "Direction / Propriétaire"
-        else:
-            dt_added = stats.get("date_added")
-            date_str = dt_added.strftime("%d/%m/%Y") if dt_added and hasattr(dt_added, "strftime") else "Inconnue"
-
-        taux = stats.get("taux_reussite", 0)
-        bar = self._render_progress_bar(taux)
-
-        res_label = {"all": "Insta & Snap", "insta": "Insta seul", "snap": "Snap seul"}.get(
-            stats.get("perm_reseaux"), str(stats.get("perm_reseaux", "all"))
-        )
-        typ_label = {"all": "Tous types", "prio_only": "Payantes", "standard_only": "Gratuites"}.get(
-            stats.get("perm_type"), str(stats.get("perm_type", "all"))
+        text = ui.format_admin_profile_text(admin_id, stats, is_target_banned, is_owner_target)
+        keyboard = ui.build_admin_profile_keyboard(
+            admin_id=admin_id,
+            viewer_id=viewer_id,
+            is_target_banned=is_target_banned,
+            can_ban=self._can_viewer_ban(viewer_id),
+            is_owner=is_owner,
+            is_admin=is_admin,
+            is_owner_target=is_owner_target
         )
 
-        montant_total = float(stats.get("montant_total") or 0.0)
-
-        lines = [
-            f"🦈 <b>Fiche Piégeur : {alias_esc}</b>",
-            f"🆔 ID Telegram : <code>{admin_id}</code>",
-            f"📅 Dans l'équipe : <b>{html.escape(date_str)}</b>",
-            f"🛡️ Permissions : <i>{html.escape(str(res_label))} | {html.escape(str(typ_label))}</i>\n",
-        ]
-
-        if is_target_banned:
-            lines.insert(1, "🚫 <b>STATUT : COMPTE ACTUELLEMENT BANNI</b>\n")
-
-        lines.extend([
-            "━━━━━━━━━━━━━━━━━━━━━━",
-            "📊 <b>PERFORMANCE OPÉRATIONNELLE</b>\n",
-            f"⏳ <b>En cours de traitement :</b> <code>{stats.get('en_cours', 0)}</code>",
-            f"✅ <b>Demandes réussies :</b> <code>{stats.get('reussies', 0)}</code>",
-            f"❌ <b>Demandes abandonnées :</b> <code>{stats.get('abandonnees', 0)}</code>",
-            f"📦 <b>Total demandes clôturées :</b> <code>{stats.get('total_traitees', 0)}</code>\n",
-            f"📈 <b>Taux de succès :</b> <b>{taux}%</b>",
-            f"{bar}\n",
-            "💎 <b>DOSSIERS PRIORITAIRES</b>",
-            f"• Demandes prioritaires traitées : <b>{stats.get('prioritaires_traitees', 0)}</b>",
-            f"• Volume financier traité : <b>{montant_total:.2f} €</b>"
-        ])
-
-        text = "\n".join(lines)
-        buttons = [
-            [InlineKeyboardButton("📂 VOIR SES DEMANDES", callback_data=f"staff_view_demandes_{admin_id}")]
-        ]
-
-        # Bouton BANNIR / DÉBANNIR pour le staff
-        if self._can_viewer_ban(viewer_id) and viewer_id != admin_id and not self.config.is_owner(admin_id):
-            if is_target_banned:
-                buttons.append([InlineKeyboardButton("🟢 DÉBANNIR CE PIÉGEUR", callback_data=f"unban_staff_{admin_id}")])
-            else:
-                buttons.append([InlineKeyboardButton("🚫 BANNIR CE PIÉGEUR", callback_data=f"ban_prompt_staff_{admin_id}")])
-
-        if is_owner and viewer_id != admin_id:
-            buttons.append([
-                InlineKeyboardButton("🛡️ MODIFIER SES DROITS", callback_data=f"perm_staff_{admin_id}"),
-                InlineKeyboardButton("🏷️ RENOMMER", callback_data=f"owner_edit_alias_{admin_id}")
-            ])
-            buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_staff")])
-        elif (is_admin or is_owner) and viewer_id != admin_id:
-            buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_staff")])
-        else:
-            buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
-
-        await self._render_clean_view(query, context, text, InlineKeyboardMarkup(buttons))
+        await self._render_clean_view(query, context, text, keyboard)
 
     # ==================== SOUS-MENUS ET LISTES DEMANDES PIÉGEUR ====================
 
@@ -365,7 +293,6 @@ class ProfilsManager:
                         InlineKeyboardButton(f"👁️ VOIR #{dossier_id} - {prenom}", callback_data=f"archive_view_{item['id']}_back_{current_list_callback}")
                     ])
 
-        # Pagination
         nav_buttons = []
         if page > 0:
             nav_buttons.append(InlineKeyboardButton("⬅️ PRÉCÉDENT", callback_data=f"staff_list_{staff_id}_{category}_{page - 1}"))
@@ -423,32 +350,8 @@ class ProfilsManager:
         is_viewer_admin = self.config.is_admin(viewer_id) or self.config.is_owner(viewer_id)
         stats = self.db_manager.get_user_stats(target_user_id)
 
-        # 1. Nom et pseudo
-        raw_prenom = (
-            (demande_data.get("user_first_name") if demande_data else None)
-            or stats.get("prenom")
-            or (demande_data.get("user_username") if demande_data else None)
-            or f"Utilisateur {target_user_id}"
-        )
-        nom_affiche = html.escape(str(raw_prenom)).upper()
-
-        pseudo_val = (demande_data.get("user_username") if demande_data else None) or stats.get("username")
-        pseudo_str = f"@{html.escape(str(pseudo_val))}" if pseudo_val else "Aucun"
-
-        # 2. Dates d'inscription et dernière activité
-        dt_insc = (demande_data.get("date_inscription") if demande_data else None) or stats.get("date_inscription")
-        date_insc = dt_insc.strftime("%d/%m/%Y") if dt_insc and hasattr(dt_insc, "strftime") else "Inconnue"
-
-        dt_act = (demande_data.get("derniere_activite") if demande_data else None) or stats.get("derniere_activite")
-        if dt_act and hasattr(dt_act, "strftime"):
-            date_act = dt_act.strftime("%d-%m-%Y %H:%M")
-        else:
-            date_act = str(dt_act)[:16] if dt_act else "Inconnue"
-
-        # 3. Récupération des rôles et statuts
         is_target_banned = self.db_manager.is_user_banned(target_user_id)
         is_target_vip = self.db_manager.is_user_vip(target_user_id)
-
         is_target_owner = self.config.is_owner(target_user_id)
         is_target_admin = self.db_manager.is_admin(target_user_id)
         is_target_staff = self.db_manager.is_staff(target_user_id)
@@ -466,76 +369,29 @@ class ProfilsManager:
                 if row_st and row_st.get("date_added"):
                     date_role_str = row_st["date_added"].strftime("%d/%m/%Y")
 
-        lines = [
-            f"👤 <b>FICHE UTILISATEUR : {nom_affiche}</b>",
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-        ]
+        text = ui.format_user_profile_text(
+            target_user_id=target_user_id,
+            stats=stats,
+            demande_data=demande_data,
+            is_target_banned=is_target_banned,
+            is_target_vip=is_target_vip,
+            is_target_owner=is_target_owner,
+            is_target_admin=is_target_admin,
+            is_target_staff=is_target_staff,
+            date_role_str=date_role_str,
+            is_viewer_admin=is_viewer_admin
+        )
 
-        if is_target_banned:
-            lines.append("🚫 <b>STATUT : COMPTE BANNI</b>\n")
+        keyboard = ui.build_user_profile_keyboard(
+            target_user_id=target_user_id,
+            origin_demande_id=origin_demande_id,
+            viewer_id=viewer_id,
+            is_target_banned=is_target_banned,
+            can_ban=self._can_viewer_ban(viewer_id),
+            is_owner_target=is_target_owner
+        )
 
-        lines.append(f"🏷️ <b>Pseudo :</b> {pseudo_str}")
-        lines.append(f"🆔 <b>ID :</b> <code>{target_user_id}</code>\n")
-
-        # Mention de rôle pour Staff / Admin (visible par la direction)
-        if is_viewer_admin and (is_target_admin or is_target_staff or is_target_owner):
-            vip_suffix = " (VIP)" if is_target_vip else ""
-            dt_badge = f" depuis le <u>{date_role_str}</u>" if date_role_str else ""
-            if is_target_owner:
-                lines.append(f"👑 <b>Propriétaire{vip_suffix}</b>\n")
-            elif is_target_admin:
-                lines.append(f"🧠 <b>Admin{vip_suffix}</b><i>{dt_badge}</i>\n")
-            elif is_target_staff:
-                lines.append(f"🎣 <b>Piégeur{vip_suffix}</b><i>{dt_badge}</i>\n")
-
-        lines.append(f"📅 <b>Inscrit le :</b> <u>{html.escape(date_insc)}</u>")
-        lines.append(f"⏱️ <b>Dernière activité :</b> <u>{html.escape(date_act)}</u>\n")
-
-        # Bloc VIP (affiché uniquement si le compte est actuellement VIP)
-        if is_target_vip:
-            vip_until = stats.get("vip_until")
-            if vip_until and hasattr(vip_until, "timestamp"):
-                nb_jours = max(1, int((vip_until.timestamp() - time.time()) // 86400))
-                nb_mois = max(1, round(nb_jours / 30))
-                duree_txt = f"{nb_mois} mois"
-            else:
-                duree_txt = "À vie"
-
-            lines.append(f"⭐ <b>VIP :</b> {duree_txt}")
-            lines.append(f"<i>depuis le <u>{html.escape(date_insc)}</u></i>\n")
-
-        # 4. Statistiques des dossiers
-        montant_investi = float(stats.get("montant_total_investi") or 0.0)
-
-        lines.extend([
-            "━━━━ INFORMATIONS ━━━━\n",
-            f"🗳️ <b>Demandes totales : {stats.get('total_demandes', 0)}</b>\n",
-            f"• 📨 En attente : <b>{stats.get('en_attente', 0)}</b>\n",
-            f"• ⏳ En cours : <b>{stats.get('en_cours', 0)}</b>\n",
-            f"• ✅ Terminées : <b>{stats.get('reussies', 0)}</b>\n",
-            f"• ❌ Échouées : <b>{stats.get('abandonnees', 0)}</b>\n\n",
-            f"💎 <b>Demandes payantes : {stats.get('total_prio', 0)}</b>\n",
-            f"• 💰 Investi : <b>{montant_investi:.2f} €</b>"
-        ])
-
-        text = "\n".join(lines)
-        buttons = [
-            [InlineKeyboardButton("📋 VOIR SES DEMANDES", callback_data=f"user_view_demandes_{target_user_id}_{origin_demande_id}")]
-        ]
-
-        # Bouton BANNIR / DÉBANNIR
-        if self._can_viewer_ban(viewer_id) and viewer_id != target_user_id and not self.config.is_owner(target_user_id):
-            if is_target_banned:
-                buttons.append([InlineKeyboardButton("🟢 DÉBANNIR L'UTILISATEUR", callback_data=f"unban_user_{target_user_id}_{origin_demande_id}")])
-            else:
-                buttons.append([InlineKeyboardButton("🚫 BANNIR L'UTILISATEUR", callback_data=f"ban_prompt_user_{target_user_id}_{origin_demande_id}")])
-
-        if origin_demande_id:
-            buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{origin_demande_id}")])
-        else:
-            buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_demandes")])
-
-        await self._render_clean_view(query, context, text, InlineKeyboardMarkup(buttons))
+        await self._render_clean_view(query, context, text, keyboard)
 
     # ==================== SOUS-MENUS ET LISTES DEMANDES CLIENT ====================
 
@@ -546,7 +402,6 @@ class ProfilsManager:
         privs = self.db_manager.get_admin_privileges(viewer_id) if is_admin else {}
         can_view_archives = is_owner or bool(privs.get("can_view_archives"))
 
-        # Récupération de l'identité du client pour le sous-titre
         with self.db_manager.get_cursor() as cursor:
             cursor.execute("SELECT first_name, username FROM users WHERE user_id = %s", (target_user_id,))
             u_info = cursor.fetchone()
@@ -557,7 +412,6 @@ class ProfilsManager:
         keyboard = []
 
         with self.db_manager.get_cursor() as cursor:
-            # 1. MES SUIVIES (dossiers pris en charge par ce membre)
             cursor.execute(
                 """
                 SELECT COUNT(*) as cnt FROM demandes d
@@ -572,7 +426,6 @@ class ProfilsManager:
                 InlineKeyboardButton(f"💌 MES SUIVIES ({cnt_mine})", callback_data=f"user_list_{target_user_id}_{origin_demande_id}_mine_0")
             ])
 
-            # 2. SES DÉPÔTS (demandes disponibles + VIP assignées visibles)
             if is_admin:
                 cursor.execute(
                     """
@@ -596,7 +449,6 @@ class ProfilsManager:
                 InlineKeyboardButton(f"📮 SES DÉPÔTS ({cnt_depots})", callback_data=f"user_list_{target_user_id}_{origin_demande_id}_depots_0")
             ])
 
-            # 3. SES TRAITÉES (demandes en cours de traitement et réussies non encore archivées - Admin & Owner)
             if is_admin:
                 cursor.execute(
                     """
@@ -612,7 +464,6 @@ class ProfilsManager:
                     InlineKeyboardButton(f"🔄 SES TRAITÉES ({cnt_traitees})", callback_data=f"user_list_{target_user_id}_{origin_demande_id}_traitees_0")
                 ])
 
-            # 4. SES ARCHIVES (dossiers archivés - Admin autorisé & Owner)
             if can_view_archives:
                 cursor.execute("SELECT COUNT(*) as cnt FROM archives WHERE user_id = %s", (target_user_id,))
                 cnt_archives = cursor.fetchone()["cnt"]
@@ -743,7 +594,7 @@ class ProfilsManager:
                 cursor.execute(
                     """
                     SELECT id, prenom, nom, statut, prioritaire, is_difficile, reussie_substatus, admin_en_charge
-                    FROM demandes
+                    FROM demandes 
                     WHERE user_id = %s 
                       AND statut IN ('⏳ En attente', '🔄 En cours', '🎯 Assignée (VIP)', '✅ Réussie')
                     ORDER BY date_modification DESC
@@ -768,14 +619,12 @@ class ProfilsManager:
                 )
                 items = cursor.fetchall()
 
-        # En-têtes et sous-titres selon la catégorie
         section_headers = {
             "depots": (f"📮 <b>SES DÉPÔTS ({total})</b>", "Ses demandes disponibles"),
             "mine": (f"💌 <b>MES SUIVIES ({total})</b>", "Ses demandes dont je m'occupe"),
             "traitees": (f"🔄 <b>SES TRAITÉES ({total})</b>", "Ses demandes en cours de traitement"),
             "archives": (f"📦 <b>SES ARCHIVES ({total})</b>", "Ses demandes clôturés"),
         }
-
         titre_section, sous_titre = section_headers.get(category, (f"📁 <b>DOSSIERS ({total})</b>", "Dossiers"))
 
         text_lines = [
@@ -798,10 +647,7 @@ class ProfilsManager:
                 reussie_sub = item.get("reussie_substatus")
 
                 if category == "depots":
-                    if statut_brut == "🎯 Assignée (VIP)":
-                        statut_fmt = "Assignée (VIP)"
-                    else:
-                        statut_fmt = "Reçue"
+                    statut_fmt = "Assignée (VIP)" if statut_brut == "🎯 Assignée (VIP)" else "Reçue"
                 elif category == "archives":
                     if "abandon" in statut_brut.lower():
                         statut_fmt = "❌ Abandonnée"
@@ -832,7 +678,6 @@ class ProfilsManager:
                         InlineKeyboardButton(f"👁️ VOIR #{dossier_id} - {prenom}", callback_data=f"archive_view_{item['id']}_back_{current_list_callback}")
                     ])
 
-        # Pagination
         nav_buttons = []
         if page > 0:
             nav_buttons.append(InlineKeyboardButton("⬅️ PRÉCÉDENT", callback_data=f"user_list_{target_user_id}_{origin_demande_id}_{category}_{page - 1}"))
@@ -855,41 +700,10 @@ class ProfilsManager:
             await query.answer("❌ Archive introuvable.", show_alert=True)
             return
 
-        req_num = html.escape(str(archive.get("original_id") or archive["id"]))
-        prenom = html.escape(str(archive.get("prenom") or "Non précisé"))
-        nom = html.escape(str(archive.get("nom") or ""))
-        age = html.escape(str(archive.get("age") or "Non précisé"))
-        loc = html.escape(str(archive.get("localisation") or "Non précisée"))
-        insta = f"@{html.escape(archive['instagram'].lstrip('@'))}" if archive.get("instagram") else "Aucun"
-        snap = html.escape(str(archive.get("snapchat") or "Aucun"))
-        details = html.escape(str(archive.get("details") or "Aucun détail complémentaire"))
-
-        dt_arch = archive.get("date_archivage")
-        date_arch_str = convert_utc_to_paris(dt_arch).strftime("%d/%m/%Y à %H:%M") if dt_arch else "Inconnue"
-
         admin_id = archive.get("admin_en_charge")
         admin_alias = self.db_manager.get_staff_alias(admin_id) if admin_id else "Aucun"
 
-        statut_display = html.escape(str(self.db_manager.format_statut_display(
-            archive.get("statut", ""),
-            archive.get("is_difficile", False),
-            archive.get("reussie_substatus")
-        )))
-        type_str = "💎 Prioritaire (Payante)" if archive.get("prioritaire") else "Standard (Gratuite)"
-
-        text = (
-            f"📦 <b>Archive Dossier #{req_num}</b>\n\n"
-            f"• <b>Cible :</b> {prenom} {nom} ({age} ans)\n"
-            f"• <b>Localisation :</b> {loc}\n"
-            f"• <b>Instagram :</b> {insta}\n"
-            f"• <b>Snapchat :</b> {snap}\n"
-            f"• <b>Type de demande :</b> {html.escape(type_str)}\n"
-            f"• <b>Statut final :</b> <code>{statut_display}</code>\n"
-            f"• <b>Référent en charge :</b> {html.escape(str(admin_alias))}\n"
-            f"• <b>Archivé le :</b> {html.escape(date_arch_str)}\n\n"
-            f"📝 <b>Détails / Notes :</b>\n« {details} »"
-        )
-
+        text = ui.format_archive_detail_text(archive, admin_alias, self.db_manager)
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton("⬅️ RETOUR", callback_data=back_callback)
         ]])

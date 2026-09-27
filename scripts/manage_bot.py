@@ -7,9 +7,15 @@ import os
 import subprocess
 import sys
 import urllib.request
+
+# Ajout de la racine du projet au PYTHONPATH pour importer config.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from config import Config
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WSGI_FILE = "/var/www/paraworld_eu_pythonanywhere_com_wsgi.py"
 ERROR_LOG = "/var/log/paraworld.eu.pythonanywhere.com.error.log"
 SERVER_LOG = "/var/log/paraworld.eu.pythonanywhere.com.server.log"

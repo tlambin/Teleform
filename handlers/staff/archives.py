@@ -4,7 +4,7 @@ import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
-from utils.validators import convert_utc_to_paris
+from . import archives_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,6 @@ class ArchivesManager:
 
         user_id = user.id
 
-        # Contrôle des droits
         if is_global:
             privs = self.db_manager.get_admin_privileges(user_id)
             if not (self.db_manager.is_owner(user_id) or privs.get("can_view_archives", False)):
@@ -117,8 +116,18 @@ class ArchivesManager:
         if not demande:
             return
 
-        caption = self._format_archive_card(demande, page, total, is_global=is_global)
-        kb = self._build_archive_keyboard(demande, page, total, user_id=user_id, is_global=is_global)
+        staff_alias = None
+        if is_global and demande.get("admin_en_charge"):
+            staff_alias = self.db_manager.get_staff_alias(demande["admin_en_charge"])
+
+        caption = ui.format_archive_card(demande, page, total, is_global=is_global, staff_alias=staff_alias)
+
+        admin_charge = demande.get("admin_en_charge")
+        is_admin_or_owner = self.config.is_admin(user_id) or self.config.is_owner(user_id)
+        is_referent = (admin_charge is not None and int(admin_charge) == int(user_id))
+        can_manage = is_admin_or_owner or is_referent
+
+        kb = ui.build_archive_keyboard(demande, page, total, can_manage=can_manage, is_global=is_global)
         photo_id = demande.get("photo_id")
 
         if query:
@@ -132,108 +141,6 @@ class ArchivesManager:
             else:
                 await update.message.reply_text(caption, parse_mode="HTML", reply_markup=kb)
 
-    def _format_archive_card(self, item: dict, page: int, total: int, is_global: bool = False) -> str:
-        """Formate la fiche d'une demande archivée avec liens sociaux cliquables."""
-        prenom = html.escape(str(item.get("prenom") or ""))
-        nom = html.escape(str(item.get("nom") or ""))
-        complet = f"{prenom} {nom}".strip() or "Non renseigné"
-        loc = html.escape(str(item.get("localisation") or "Non précisée"))
-        statut = html.escape(str(item.get("statut") or "Archivée"))
-        orig_id = item.get("original_id") or item.get("id") or "?"
-        age = item.get("age") or "?"
-
-        type_badge = "💎 Prioritaire" if item.get("prioritaire") else "📝 Standard"
-        montant_str = f" ({item.get('montant', 0):.2f} €)" if item.get("prioritaire") else ""
-
-        dt_crea = item.get("date_creation")
-        crea_str = convert_utc_to_paris(dt_crea).strftime("%d/%m/%Y à %H:%M") if dt_crea else "?"
-
-        dt_arch = item.get("date_archivage")
-        arch_str = convert_utc_to_paris(dt_arch).strftime("%d/%m/%Y à %H:%M") if dt_arch else "?"
-
-        titre = "📦 <b>Archives Générales</b>" if is_global else "📦 <b>Mon Archive Dossier</b>"
-        lines = [
-            f"{titre} #{orig_id} ({page + 1}/{total})\n",
-            f"👤 <b>Cible :</b> {complet} ({age} ans)",
-            f"📍 <b>Localisation :</b> {loc}",
-            f"🎯 <b>Type :</b> {type_badge}{montant_str}",
-            f"📊 <b>Statut de clôture :</b> <code>{statut}</code>",
-        ]
-
-        if is_global:
-            admin_charge = item.get("admin_en_charge")
-            if admin_charge:
-                alias = self.db_manager.get_staff_alias(admin_charge)
-                lines.append(f"👨‍💼 <b>Traité par :</b> {html.escape(alias or str(admin_charge))}")
-            else:
-                lines.append("👨‍💼 <b>Traité par :</b> <i>Non spécifié</i>")
-
-        # Liens sociaux interactifs
-        reseaux = []
-        if item.get("instagram"):
-            raw_ig = str(item["instagram"]).strip().lstrip("@")
-            ig_esc = html.escape(raw_ig)
-            reseaux.append(f'📷 <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
-        if item.get("snapchat"):
-            raw_snap = str(item["snapchat"]).strip().lstrip("@")
-            snap_esc = html.escape(raw_snap)
-            reseaux.append(f'👻 <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
-
-        if reseaux:
-            lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
-
-        if item.get("details"):
-            det = html.escape(str(item["details"]))
-            lines.append(f"💬 <b>Remarques :</b> <i>{det[:200]}</i>")
-
-        lines.append(f"\n📅 <i>Créée le {crea_str}</i>")
-        lines.append(f"🗄️ <i>Archivée le {arch_str}</i>")
-
-        return "\n".join(lines)
-
-    def _build_archive_keyboard(self, item: dict, page: int, total: int, user_id: int, is_global: bool = False) -> InlineKeyboardMarkup:
-        """Génère la barre d'actions et de navigation dans les archives avec vérification stricte des permissions."""
-        prefix = "global_arch_page_" if is_global else "archive_page_"
-        back_cb = "parametres" if is_global else "gerer_demandes"
-
-        buttons = []
-        archive_id = item["id"]
-        admin_charge = item.get("admin_en_charge")
-        statut_raw = str(item.get("statut") or "")
-
-        # Contrôle des droits : référent qui a traité le dossier ou administrateur/propriétaire
-        is_admin_or_owner = self.config.is_admin(user_id) or self.config.is_owner(user_id)
-        is_referent = (admin_charge is not None and int(admin_charge) == int(user_id))
-        can_manage = is_admin_or_owner or is_referent
-
-        if can_manage:
-            action_row = []
-            # 1. Contacter le client
-            action_row.append(InlineKeyboardButton("💬 Contacter le client", callback_data=f"contacter_archive_{archive_id}"))
-
-            # 2. Boutons d'annulation d'archivage conditionnels
-            if "Réussie" in statut_raw:
-                action_row.append(InlineKeyboardButton("🔄 Réussie Active", callback_data=f"unarchive_reussie_{archive_id}_{page}_{int(is_global)}"))
-            elif "Abandon" in statut_raw or "Annul" in statut_raw:
-                action_row.append(InlineKeyboardButton("🔄 Reprendre le dossier", callback_data=f"unarchive_abandon_{archive_id}_{page}_{int(is_global)}"))
-
-            if action_row:
-                buttons.append(action_row)
-
-        nav = []
-        if page > 0:
-            nav.append(InlineKeyboardButton("⬅️ Précédente", callback_data=f"{prefix}{page - 1}"))
-        if page < total - 1:
-            nav.append(InlineKeyboardButton("Suivante ➡️", callback_data=f"{prefix}{page + 1}"))
-
-        if nav:
-            buttons.append(nav)
-
-        buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data=back_cb)])
-        return InlineKeyboardMarkup(buttons)
-
-    # ==================== ROUTEUR DES ACTIONS SUR ARCHIVES ====================
-
     async def handle_archives_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Traite les actions de contact et d'annulation d'archivage."""
         query = update.callback_query
@@ -243,7 +150,6 @@ class ArchivesManager:
         user_id = update.effective_user.id
         data = query.data
 
-        # 1. Contacter le client depuis une archive
         if data.startswith("contacter_archive_"):
             archive_id = int(data.replace("contacter_archive_", ""))
             archive = self.db_manager.get_archive_by_id(archive_id)
@@ -257,7 +163,6 @@ class ArchivesManager:
                 await query.answer("🔒 Action réservée à l'opérateur en charge ou à un administrateur.", show_alert=True)
                 return
 
-            # Configuration de la session de contact vers le client
             context.user_data["contact_session"] = {
                 "target_user_id": archive["user_id"],
                 "origin_type": "archive",
@@ -274,7 +179,6 @@ class ArchivesManager:
             await self._safe_edit_text_or_send(query, context, msg, cancel_kb)
             return
 
-        # 2. Annuler l'archivage d'une demande Réussie -> Passer en Réussie Active
         elif data.startswith("unarchive_reussie_"):
             parts = data.split("_")
             archive_id = int(parts[2])
@@ -302,7 +206,6 @@ class ArchivesManager:
                 await query.answer("❌ Échec lors de la restauration du dossier.", show_alert=True)
             return
 
-        # 3. Annuler l'archivage d'une demande Abandonnée/Annulée avec verrou anti-collision
         elif data.startswith("unarchive_abandon_"):
             parts = data.split("_")
             archive_id = int(parts[2])
@@ -325,6 +228,5 @@ class ArchivesManager:
                 await query.answer(f"✅ {alert_msg}", show_alert=True)
                 await self.show_archives(update, context, page=max(0, page - 1), is_global=is_global)
             else:
-                # Alerte explicite si un autre membre est déjà dessus
                 await query.answer(f"🚫 {alert_msg}", show_alert=True)
             return

@@ -2,8 +2,9 @@
 
 import html
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import ContextTypes
+from . import compte_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,11 @@ class CompteManager:
             await query.answer()
 
         current_pref = self.db_manager.get_user_vip_auto_assign(user.id)
-        text, kb = self._build_vip_settings_content(user.id, current_pref)
+        target_staff_alias = None
+        if current_pref not in ("prompt", "none") and current_pref.isdigit():
+            target_staff_alias = self.db_manager.get_staff_alias(int(current_pref))
+
+        text, kb = ui.build_vip_settings_content(current_pref, target_staff_alias)
 
         if query:
             if query.message and query.message.photo:
@@ -130,40 +135,6 @@ class CompteManager:
                     await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
         elif update.message:
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
-
-    def _build_vip_settings_content(self, user_id: int, current_pref: str):
-        is_prompt = (current_pref == "prompt")
-        is_none = (current_pref == "none")
-        is_specific = (not is_prompt and not is_none and current_pref.isdigit())
-
-        btn_prompt = "✅ 📌 Demander à chaque création" if is_prompt else "📌 Demander à chaque création"
-        btn_none = "✅ 🎲 Ne jamais choisir (Toute l'équipe)" if is_none else "🎲 Ne jamais choisir (Toute l'équipe)"
-
-        specific_label = "🎯 Toujours assigner à un piégeur..."
-        if is_specific:
-            alias = self.db_manager.get_staff_alias(int(current_pref))
-            specific_label = f"✅ 🎯 Toujours assigner à : {alias}"
-
-        keyboard = [
-            [InlineKeyboardButton(btn_prompt, callback_data="vip_set_assign_prompt")],
-            [InlineKeyboardButton(btn_none, callback_data="vip_set_assign_none")],
-            [InlineKeyboardButton(specific_label, callback_data="vip_pick_auto_staff")],
-            [InlineKeyboardButton("🔙 Menu Principal", callback_data="start_menu")]
-        ]
-
-        desc_mode = "📌 <b>Demander à chaque demande</b> (par défaut)"
-        if is_none:
-            desc_mode = "🎲 <b>Automatique (Sans piégeur attitré)</b> — Vos dossiers sont directement ouverts à toute l'équipe."
-        elif is_specific:
-            alias = self.db_manager.get_staff_alias(int(current_pref))
-            desc_mode = f"🎯 <b>Attribution directe :</b> {html.escape(str(alias))} recevra directement chacune de vos créations."
-
-        text = (
-            "⚙️ <b>Préférences VIP : Attribution des demandes</b>\n\n"
-            f"• <b>Mode actuel :</b> {desc_mode}\n\n"
-            "<i>Choisissez comment vous souhaitez orienter vos nouvelles demandes :</i>"
-        )
-        return text, InlineKeyboardMarkup(keyboard)
 
     async def handle_callback_routing(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Aiguille les modifications de préférences d'assignation VIP."""
@@ -204,31 +175,12 @@ class CompteManager:
     async def _show_vip_staff_auto_picker(self, query, context: ContextTypes.DEFAULT_TYPE, user_id: int):
         """Affiche les piégeurs disponibles pour définir un référent attitré."""
         equipe = self.db_manager.get_available_staff()
-        kb_rows = []
-
-        for member in equipe:
-            if int(member["user_id"]) == int(user_id):
-                continue
-            alias = member.get("alias", f"Staff_{member['user_id']}")
-            kb_rows.append([
-                InlineKeyboardButton(
-                    f"🦈 {alias}",
-                    callback_data=f"vip_set_assign_staff_{member['user_id']}"
-                )
-            ])
-
-        kb_rows.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_vip_settings")])
-
-        text = (
-            "🎯 <b>Définir un piégeur par défaut</b>\n\n"
-            "Chaque nouvelle demande que vous créerez lui sera automatiquement assignée en priorité :\n"
-            "<i>(Vous pourrez changer ce choix ou repasser en mode manuel à tout moment)</i>"
-        )
+        text, kb = ui.build_vip_staff_picker_content(equipe, user_id)
 
         try:
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb_rows))
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
-            await query.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb_rows))
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
     async def handle_text_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Répond aux messages texte non reconnus hors navigation et édition."""
@@ -236,9 +188,7 @@ class CompteManager:
             return
 
         await self.update_user_activity(update.effective_user.id)
-
         await update.message.reply_text(
-            "🤖 Je n'ai pas compris votre message.\n"
-            "Utilisez la commande /start ou les boutons de navigation pour interagir.",
+            ui.get_unrecognized_text_message(),
             parse_mode="HTML",
         )

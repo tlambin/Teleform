@@ -3,8 +3,9 @@
 import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import Forbidden, BadRequest
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes, ConversationHandler
+from . import contact_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -67,18 +68,10 @@ class ContactManager:
 
         await query.answer()
 
-        owner_alias = html.escape(str(self.db_manager.get_owner_alias() or "Direction"))
-        staff_alias = html.escape(str(self.db_manager.get_staff_alias(user_id) or f"Membre_{user_id}"))
+        owner_alias = self.db_manager.get_owner_alias()
+        staff_alias = self.db_manager.get_staff_alias(user_id)
 
-        text = (
-            f"👑 <b>Contacter la Direction ({owner_alias})</b>\n\n"
-            f"Votre message sera transmis avec votre alias officiel <b>{staff_alias}</b>.\n\n"
-            "Envoyez votre message ci-dessous (texte, photo ou document) :"
-        )
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Annuler", callback_data="cancel_contact_owner")
-        ]])
-
+        text, keyboard = ui.get_start_contact_content(owner_alias, staff_alias)
         await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
         return self.WAITING_ADMIN_MSG
 
@@ -90,7 +83,6 @@ class ContactManager:
 
         staff_id = update.effective_user.id
         raw_staff_alias = self.db_manager.get_staff_alias(staff_id) or f"Staff_{staff_id}"
-        staff_alias_esc = html.escape(str(raw_staff_alias))
 
         owners_list = set()
         if hasattr(self.config, "owner_ids") and self.config.owner_ids:
@@ -106,15 +98,8 @@ class ContactManager:
             await msg.reply_text("❌ Aucun propriétaire n'est configuré sur le bot.")
             return ConversationHandler.END
 
-        header = (
-            f"📨 <b>Message interne du membre : {staff_alias_esc}</b>\n"
-            f"🆔 ID : <code>{staff_id}</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-        )
-
-        owner_keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"💬 Répondre à {raw_staff_alias}", callback_data=f"owner_reply_to_{staff_id}")
-        ]])
+        header = ui.build_owner_forward_header(raw_staff_alias, staff_id)
+        owner_keyboard = ui.build_owner_reply_keyboard(raw_staff_alias, staff_id)
 
         sent_count = 0
         for owner_id in owners_list:
@@ -156,13 +141,14 @@ class ContactManager:
                 logger.warning("Échec envoi vers l'owner %s : %s", owner_id, send_err)
 
         if sent_count > 0:
-            await msg.reply_text(
+            success_text = (
                 "✅ <b>Votre message a été transmis directement à la direction !</b>\n"
-                "Vous recevrez une réponse ici dès consultation.",
+                "Vous recevrez une réponse ici dès consultation."
+            )
+            await msg.reply_text(
+                success_text,
                 parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔙 Menu Paramètres", callback_data="parametres")
-                ]])
+                reply_markup=ui.get_sent_success_keyboard()
             )
         else:
             await msg.reply_text("❌ Impossible de remettre le message à la direction (service indisponible ou bot bloqué).")
@@ -195,16 +181,9 @@ class ContactManager:
             return ConversationHandler.END
 
         context.user_data["target_admin_reply_id"] = target_staff_id
-        staff_alias_esc = html.escape(str(self.db_manager.get_staff_alias(target_staff_id) or f"Membre_{target_staff_id}"))
+        staff_alias = self.db_manager.get_staff_alias(target_staff_id)
 
-        text = (
-            f"💬 <b>Répondre au membre {staff_alias_esc}</b> (ID : <code>{target_staff_id}</code>)\n\n"
-            "Tapez votre réponse au clavier (votre alias officiel de direction sera utilisé) :"
-        )
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Annuler", callback_data="cancel_owner_reply")
-        ]])
-
+        text, keyboard = ui.get_owner_reply_prompt_content(staff_alias, target_staff_id)
         await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
         return self.WAITING_OWNER_REPLY
 
@@ -219,17 +198,8 @@ class ContactManager:
             await msg.reply_text("❌ Erreur : destinataire introuvable.")
             return ConversationHandler.END
 
-        owner_alias_esc = html.escape(str(self.db_manager.get_owner_alias() or "Direction"))
-        texte_reponse = html.escape(msg.text.strip())
-
-        notification_text = (
-            f"👑 <b>Réponse de la Direction ({owner_alias_esc})</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"« {texte_reponse} »"
-        )
-        staff_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("💬 Répondre à la direction", callback_data="contacter_owner")
-        ]])
+        owner_alias = self.db_manager.get_owner_alias()
+        notification_text, staff_kb = ui.build_staff_response_notification(owner_alias, msg.text)
 
         try:
             await context.bot.send_message(

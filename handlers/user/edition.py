@@ -5,6 +5,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from utils.validators import ValidationError, Validators
+from . import edition_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,6 @@ class EditionManager:
         "montant": "Tarif de la prestation",
     }
 
-    # Requêtes SQL entièrement statiques et précompilées (aucune interpolation de variable pour la colonne)
     _UPDATE_QUERIES = {
         "prenom": "UPDATE demandes SET `prenom` = %s, date_modification = NOW() WHERE id = %s",
         "nom": "UPDATE demandes SET `nom` = %s, date_modification = NOW() WHERE id = %s",
@@ -65,12 +65,8 @@ class EditionManager:
         statut = demande.get("statut", "")
         is_prio = bool(demande.get("prioritaire"))
 
-        # Si la demande est en cours mais NON prioritaire, elle ne peut pas être modifiée
         if statut not in ("📥 Reçue", "📨 Reçue", "🎯 Assignée (VIP)"):
-            if statut in ("⏳ En attente", "🔄 En cours") and is_prio:
-                # Seul le tarif peut encore être réévalué à la hausse
-                pass
-            else:
+            if not (statut in ("⏳ En attente", "🔄 En cours") and is_prio):
                 kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("📋 Retour à mes demandes", callback_data="voir_demandes")
                 ]])
@@ -81,7 +77,8 @@ class EditionManager:
                 )
                 return
 
-        await self._show_modify_menu(query, demande)
+        text, keyboard = ui.build_modify_menu_content(demande)
+        await self._update_view(query, text, reply_markup=keyboard)
 
     async def handle_edit_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Enclenche le mode écoute pour la modification d'un champ précis."""
@@ -111,7 +108,6 @@ class EditionManager:
             await self._update_view(query, "❌ Demande introuvable.")
             return
 
-        # Contrôle du verrouillage en cours de traitement pour les champs hors montant
         if demande.get("statut") in ("⏳ En attente", "🔄 En cours") and field_name != "montant":
             await query.answer("🔒 Seul le tarif peut être rehaussé sur une demande en cours.", show_alert=True)
             return
@@ -122,7 +118,8 @@ class EditionManager:
             "current_montant": float(demande.get("montant") or 0.0),
         }
 
-        await self._show_edit_prompt(query, field_name, demande_id, demande)
+        text, keyboard = ui.build_edit_prompt_content(field_name, demande_id, demande, self.ALLOWED_FIELDS)
+        await self._update_view(query, text, reply_markup=keyboard)
 
     async def handle_delete_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
         """Demande confirmation avant suppression définitive."""
@@ -158,7 +155,8 @@ class EditionManager:
             )
             return
 
-        await self._show_delete_confirmation(query, demande)
+        text, keyboard = ui.build_delete_confirmation_content(demande)
+        await self._update_view(query, text, reply_markup=keyboard)
 
     async def handle_cancel_edit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Annule l'édition en cours et nettoie l'état."""
@@ -172,7 +170,8 @@ class EditionManager:
         if editing_data and editing_data.get("demande_id"):
             demande = self._get_request_details(editing_data["demande_id"])
             if demande:
-                await self._show_modify_menu(query, demande)
+                text, keyboard = ui.build_modify_menu_content(demande)
+                await self._update_view(query, text, reply_markup=keyboard)
                 return
 
         kb = InlineKeyboardMarkup([[
@@ -181,7 +180,7 @@ class EditionManager:
         await self._update_view(query, "❌ <b>Édition annulée.</b>", reply_markup=kb)
 
     async def handle_edit_text_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Intercepte la saisie texte transmise par UserHandlers lorsque 'editing' est présent."""
+        """Intercepte la saisie texte transmise lorsque 'editing' est présent."""
         if not update.message or not update.message.text:
             return
 
@@ -194,7 +193,6 @@ class EditionManager:
         raw_text = update.message.text.strip()
         user_input = Validators.clean_input(raw_text)
 
-        # Cas spécifique : Rehausse ou ajustement du tarif
         if field_name == "montant":
             try:
                 nouveau_prix = float(user_input.replace(",", ".").replace("€", "").strip())
@@ -217,7 +215,6 @@ class EditionManager:
 
             context.user_data.pop("editing", None)
 
-            # Notification au piégeur si le dossier est déjà en cours
             demande = self._get_request_details(demande_id)
             if demande and demande.get("admin_en_charge"):
                 try:
@@ -250,7 +247,6 @@ class EditionManager:
             )
             return
 
-        # Cas général : validation des autres champs texte
         try:
             validated_value = self._validate_field_input(field_name, user_input)
             success = self._update_field_in_database(demande_id, field_name, validated_value)
@@ -296,7 +292,6 @@ class EditionManager:
             await self._update_view(query, "❌ Action non autorisée.")
             return
 
-        # Archivage dédié avec statut '🗑️ Supprimée'
         demande = self.db_manager.archiver_demande_supprimee(
             demande_id=demande_id,
             raison="Supprimée par le demandeur"
@@ -390,123 +385,3 @@ class EditionManager:
                 parse_mode="HTML",
                 reply_markup=reply_markup
             )
-
-    async def _show_modify_menu(self, query, demande: dict):
-        """Génère l'interface des champs modifiables selon le statut du dossier."""
-        prenom_esc = html.escape(demande.get("prenom") or "")
-        nom_esc = html.escape(demande.get("nom") or "")
-        nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        loc_esc = html.escape(str(demande.get("localisation") or ""))
-        req_num = html.escape(str(demande.get("request_number", demande["id"])))
-        statut = demande.get("statut", "")
-        is_prio = bool(demande.get("prioritaire"))
-        montant = float(demande.get("montant") or 0.0)
-        d_id = demande["id"]
-
-        is_en_cours = statut in ("⏳ En attente", "🔄 En cours")
-
-        keyboard = []
-
-        if is_en_cours:
-            text = (
-                f"✏️ <b>Revalorisation du dossier n°{req_num}</b>\n\n"
-                f"👤 <b>Cible :</b> {nom_complet} ({demande.get('age', '?')} ans)\n"
-                f"💎 <b>Tarif actuel :</b> <b>{montant:.2f} €</b>\n"
-                f"📊 <b>Statut :</b> <code>{statut}</code>\n\n"
-                "Le dossier est déjà en cours de traitement. Vous pouvez uniquement <b>augmenter</b> "
-                "le montant proposé à votre piégeur pour motiver ou accélérer le résultat :"
-            )
-            keyboard.append([InlineKeyboardButton(f"💰 Rehausser le tarif (Actuel: {montant:.2f} €)", callback_data=f"edit_montant_{d_id}")])
-            keyboard.append([InlineKeyboardButton("🔙 Retour aux demandes", callback_data="voir_demandes")])
-        else:
-            text = (
-                f"✏️ <b>Modifier la demande n°{req_num}</b>\n\n"
-                f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)\n"
-                f"📍 <b>Localisation :</b> {loc_esc}\n"
-            )
-            if is_prio:
-                text += f"💎 <b>Gratification :</b> <b>{montant:.2f} €</b>\n"
-
-            text += "\nSélectionnez la donnée à modifier :"
-
-            keyboard.extend([
-                [
-                    InlineKeyboardButton("👤 Prénom", callback_data=f"edit_prenom_{d_id}"),
-                    InlineKeyboardButton("📝 Nom", callback_data=f"edit_nom_{d_id}")
-                ],
-                [
-                    InlineKeyboardButton("🎂 Âge", callback_data=f"edit_age_{d_id}"),
-                    InlineKeyboardButton("📍 Ville", callback_data=f"edit_localisation_{d_id}")
-                ],
-                [
-                    InlineKeyboardButton("📷 Instagram", callback_data=f"edit_instagram_{d_id}"),
-                    InlineKeyboardButton("👻 Snapchat", callback_data=f"edit_snapchat_{d_id}")
-                ],
-                [InlineKeyboardButton("💬 Remarques / Détails", callback_data=f"edit_details_{d_id}")],
-            ])
-
-            if is_prio:
-                keyboard.append([InlineKeyboardButton(f"💰 Modifier le tarif ({montant:.2f} €)", callback_data=f"edit_montant_{d_id}")])
-
-            keyboard.extend([
-                [InlineKeyboardButton("🗑️ Supprimer la demande", callback_data=f"delete_{d_id}")],
-                [InlineKeyboardButton("🔙 Retour aux demandes", callback_data="voir_demandes")]
-            ])
-
-        await self._update_view(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-    async def _show_edit_prompt(self, query, field_name: str, demande_id: int, demande: dict):
-        """Affiche les instructions de saisie pour le champ sélectionné."""
-        field_label = self.ALLOWED_FIELDS.get(field_name, field_name)
-
-        if field_name == "montant":
-            montant_actuel = float(demande.get("montant") or 0.0)
-            statut = demande.get("statut", "")
-            is_en_cours = statut in ("⏳ En attente", "🔄 En cours")
-
-            if is_en_cours:
-                consigne = (
-                    f"• Montant minimum actuel : <b>{montant_actuel:.2f} €</b>\n\n"
-                    "<i>Ce dossier étant déjà pris en charge, le montant ne peut qu'être augmenté.</i>"
-                )
-            else:
-                consigne = (
-                    f"• Montant actuel : <b>{montant_actuel:.2f} €</b>\n\n"
-                    "<i>Vous pouvez ajuster librement le tarif proposé (à la hausse ou à la baisse, supérieur à 0).</i>"
-                )
-
-            text = (
-                f"💰 <b>Modifier le tarif de la demande #{demande_id}</b>\n\n"
-                f"{consigne}\n\n"
-                "Tapez votre nouveau tarif (en euros) par message texte :"
-            )
-        else:
-            help_text = Validators.get_validation_help(field_name)
-            text = (
-                f"✏️ <b>Modification : {html.escape(field_label)}</b>\n\n"
-                f"{help_text}\n\n"
-                "Envoyez votre nouvelle valeur par message texte :"
-            )
-
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Annuler", callback_data="cancel_edit")
-        ]])
-        await self._update_view(query, text, reply_markup=keyboard)
-
-    async def _show_delete_confirmation(self, query, demande: dict):
-        """Affiche l'écran d'avertissement avant suppression."""
-        prenom_esc = html.escape(demande.get("prenom") or "")
-        nom_esc = html.escape(demande.get("nom") or "")
-        nom_complet = f"{prenom_esc} {nom_esc}".strip()
-        req_num = html.escape(str(demande.get("request_number", demande["id"])))
-
-        text = (
-            f"⚠️ <b>Confirmation de suppression</b>\n\n"
-            f"Demande n°<b>{req_num}</b> ({nom_complet})\n\n"
-            "Cette action est irréversible. Confirmez-vous la suppression ?"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗑️ Confirmer la suppression", callback_data=f"confirm_delete_{demande['id']}")],
-            [InlineKeyboardButton("❌ Annuler", callback_data=f"modify_{demande['id']}")]
-        ])
-        await self._update_view(query, text, reply_markup=keyboard)

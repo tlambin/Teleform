@@ -1,10 +1,8 @@
 """Module de gestion, filtrage dynamique et recherche des demandes disponibles avec support de la période d'essai."""
 
-from datetime import datetime
 import html
 import logging
 import random
-import re
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -12,66 +10,10 @@ from telegram import (
     Update,
 )
 from telegram.ext import ContextTypes
-from utils.validators import convert_utc_to_paris
 from .notifs import NotifsManager
+from . import dispo_ui as ui
 
 logger = logging.getLogger(__name__)
-
-
-def format_date_fr(val) -> str:
-    """Convertit une date ou un timestamp au format strict JJ/MM/AAAA."""
-    if not val:
-        return "?"
-    if hasattr(val, "strftime"):
-        return convert_utc_to_paris(val).strftime("%d/%m/%Y")
-    try:
-        dt = datetime.strptime(str(val)[:19], "%Y-%m-%d %H:%M:%S")
-        return convert_utc_to_paris(dt).strftime("%d/%m/%Y")
-    except Exception:
-        pass
-    try:
-        parts = str(val)[:10].split("-")
-        if len(parts) == 3:
-            return f"{parts[2]}/{parts[1]}/{parts[0]}"
-    except Exception:
-        pass
-    return str(val)[:10]
-
-
-def format_datetime_fr(val) -> str:
-    """Convertit une date ou un timestamp au format strict JJ/MM/AAAA HH:MM."""
-    if not val:
-        return "?"
-    if hasattr(val, "strftime"):
-        return convert_utc_to_paris(val).strftime("%d/%m/%Y %H:%M")
-    try:
-        dt = datetime.strptime(str(val)[:19], "%Y-%m-%d %H:%M:%S")
-        return convert_utc_to_paris(dt).strftime("%d/%m/%Y %H:%M")
-    except Exception:
-        pass
-    try:
-        parts = str(val)[:10].split("-")
-        time_part = str(val)[11:16] if len(str(val)) >= 16 else "00:00"
-        if len(parts) == 3:
-            return f"{parts[2]}/{parts[1]}/{parts[0]} {time_part}"
-    except Exception:
-        pass
-    return str(val)[:16]
-
-
-def clean_reason_text(raw_reason: str) -> str:
-    """Nettoie les balises HTML, puces et préfixes de nom déjà enregistrés dans le motif."""
-    if not raw_reason:
-        return "Non précisée"
-    clean = str(raw_reason).strip()
-    clean = re.sub(r"<[^>]+>", "", clean)
-    clean = re.sub(r"^[•\-\*]\s*", "", clean)
-    if ":" in clean:
-        parts = clean.split(":", 1)
-        if len(parts[0].strip().split()) <= 3:
-            clean = parts[1].strip()
-    clean = clean.strip(" «»\"'")
-    return html.escape(clean) if clean else "Non précisée"
 
 
 class DispoManager:
@@ -110,18 +52,15 @@ class DispoManager:
         is_admin = self.db_manager.is_admin(user_id)
         is_trial = self.db_manager.is_staff_trial(user_id)
 
-        # 0. Information proposition de rémunération déjà en attente
         if data == "dispo_remun_pending_info":
             await query.answer("⏳ Une demande de rémunération a déjà été transmise au client. En attente de sa réponse.", show_alert=True)
             return
 
-        # 1. Prise en charge d'une demande
         if data.startswith("suivre_demande_"):
             demande_id = int(data.replace("suivre_demande_", ""))
             await self.assign_demande_to_admin(update, context, demande_id)
             return
 
-        # 2. Suppression administrative (Admin / Owner)
         elif data.startswith("admin_del_dispo_"):
             if not is_admin:
                 await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
@@ -142,7 +81,6 @@ class DispoManager:
             await self._render_clean_text(query, context, msg, kb)
             return
 
-        # 3. Rémunération : Demande Standard (Admin/Owner -> Solliciter rémunération au client)
         elif data.startswith("dispo_ask_remun_std_"):
             if not is_admin:
                 await query.answer("❌ Action réservée aux administrateurs.", show_alert=True)
@@ -196,7 +134,6 @@ class DispoManager:
                 await query.answer("❌ Erreur lors de l'envoi au demandeur.", show_alert=True)
             return
 
-        # 4. Rémunération : Demande Prioritaire (Staff habilité -> Proposer une plus grosse somme)
         elif data.startswith("dispo_ask_remun_prio_"):
             perms = self.db_manager.get_staff_permissions(user_id)
             can_prio = (perms.get("perm_type") in ("all", "prio_only") or is_admin)
@@ -237,7 +174,6 @@ class DispoManager:
             await self._render_clean_text(query, context, msg, kb)
             return
 
-        # 5. Signaler une demande (Staff standard non-admin)
         elif data.startswith("staff_report_dispo_"):
             demande_id = int(data.replace("staff_report_dispo_", ""))
             context.user_data["waiting_staff_report_reason"] = demande_id
@@ -258,40 +194,30 @@ class DispoManager:
             await query.answer("🔒 Période d'essai : vous devez traiter la demande assignée au hasard.", show_alert=True)
             return
 
-        # 6. Menu filtres
         elif data == "dispo_filters_menu":
             await self.show_filters_menu(update, context)
             return
 
-        # 7. Bascule Filtre Orientation
         elif data.startswith("dispo_filter_ori_"):
-            val = data.replace("dispo_filter_ori_", "")
-            filters["orientation"] = val
+            filters["orientation"] = data.replace("dispo_filter_ori_", "")
             await self.show_filters_menu(update, context)
             return
 
-        # 8. Bascule Filtre Réseaux
         elif data.startswith("dispo_filter_net_"):
-            val = data.replace("dispo_filter_net_", "")
-            filters["reseau"] = val
+            filters["reseau"] = data.replace("dispo_filter_net_", "")
             await self.show_filters_menu(update, context)
             return
 
-        # 9. Bascule Filtre Âge
         elif data.startswith("dispo_filter_age_"):
-            val = data.replace("dispo_filter_age_", "")
-            filters["age_range"] = val
+            filters["age_range"] = data.replace("dispo_filter_age_", "")
             await self.show_filters_menu(update, context)
             return
 
-        # 10. Bascule Filtre Priorité
         elif data.startswith("dispo_filter_type_"):
-            val = data.replace("dispo_filter_type_", "")
-            filters["type_demande"] = val
+            filters["type_demande"] = data.replace("dispo_filter_type_", "")
             await self.show_filters_menu(update, context)
             return
 
-        # 11. Reset Filtres
         elif data == "dispo_filter_reset":
             context.user_data["dispo_filters"] = {
                 "orientation": "all",
@@ -303,7 +229,6 @@ class DispoManager:
             await self.show_filters_menu(update, context)
             return
 
-        # 12. Recherche textuelle
         elif data == "dispo_search_prompt":
             context.user_data["waiting_dispo_search"] = True
             msg = (
@@ -327,12 +252,10 @@ class DispoManager:
             await self.show_demandes_disponibles_page(update, context, page=0)
             return
 
-        # 13. Pioche aléatoire
         elif data == "dispo_random":
             await self.show_random_demande(update, context)
             return
 
-        # 14. Pagination standard
         elif data.startswith("dispo_prev_") or data.startswith("dispo_next_"):
             parts = data.split("_")
             curr = int(parts[2])
@@ -520,8 +443,9 @@ class DispoManager:
 
         total = len(demandes)
         demande = demandes[0]
-        text_card = self._format_demande_card(demande, 0, total, context)
-        keyboard = self._build_navigation_keyboard(demande, 0, total, user_id)
+        filters = self._get_active_filters(context)
+        text_card = ui.format_demande_card(demande, 0, total, filters, self.db_manager)
+        keyboard = ui.build_navigation_keyboard(demande, 0, total, user_id, self.db_manager)
         photo_id = demande.get("photo_id")
 
         if photo_id:
@@ -708,7 +632,6 @@ class DispoManager:
         user_id = update.effective_user.id
         is_trial = self.db_manager.is_staff_trial(user_id)
 
-        # ==================== RESTRICTION PÉRIODE D'ESSAI ====================
         if is_trial:
             active_demandes = self.db_manager.get_staff_active_demandes(user_id)
             if active_demandes:
@@ -742,7 +665,7 @@ class DispoManager:
                 await self._render_clean_text(query, context, msg, kb)
                 return
 
-            text_card = self._format_trial_demande_card(demande)
+            text_card = ui.format_trial_demande_card(demande, self.db_manager)
             demande_id = demande["id"]
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🎯 PRENDRE EN CHARGE", callback_data=f"suivre_demande_{demande_id}")],
@@ -755,7 +678,6 @@ class DispoManager:
                 await self._render_clean_text(query, context, text_card, keyboard)
             return
 
-        # ==================== ACCÈS STANDARD ====================
         demandes = self._fetch_filtered_demandes(user_id, context)
 
         if not demandes:
@@ -777,8 +699,9 @@ class DispoManager:
         page = max(0, min(page, total - 1))
         demande = demandes[page]
 
-        text_card = self._format_demande_card(demande, page, total, context)
-        keyboard = self._build_navigation_keyboard(demande, page, total, user_id)
+        filters = self._get_active_filters(context)
+        text_card = ui.format_demande_card(demande, page, total, filters, self.db_manager)
+        keyboard = ui.build_navigation_keyboard(demande, page, total, user_id, self.db_manager)
         photo_id = demande.get("photo_id")
 
         if photo_id:
@@ -867,247 +790,6 @@ class DispoManager:
                         disable_web_page_preview=True
                     )
 
-    def _format_trial_demande_card(self, demande: dict) -> str:
-        """Formate la fiche d'une demande pour un membre à l'essai avec liens sociaux cliquables."""
-        label_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
-        ori_label = label_map.get(demande.get("orientation", "hetero"), "Hétéro")
-
-        prenom_esc = html.escape(str(demande.get("prenom") or ""))
-        nom_esc = html.escape(str(demande.get("nom") or ""))
-        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
-        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
-        loc_esc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
-        real_id = demande["id"]
-
-        is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{real_id}</b>" if is_prio else f"📝  <b>Demande Standard #{real_id}</b>"
-
-        lines = [
-            titre,
-            "━━━━━━━━━━━━━━━━━━━━━━",
-            f"👤  <b>{nom_complet}{age_str}</b>",
-            f"📍  {ori_label} de {loc_esc}"
-        ]
-
-        if demande.get("details"):
-            det = html.escape(str(demande["details"]).strip())
-            lines.append(f"💬  <i>{det}</i>")
-
-        if is_prio:
-            montant_val = float(demande.get("montant") or 0.0)
-            lines.append(f"💰  <b>{montant_val:.2f} €</b>")
-
-        # Réseaux sociaux avec liens cliquables
-        reseaux = []
-        if demande.get("instagram"):
-            raw_ig = str(demande["instagram"]).strip().lstrip("@")
-            ig_esc = html.escape(raw_ig)
-            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
-        if demande.get("snapchat"):
-            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
-            snap_esc = html.escape(raw_snap)
-            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
-
-        if reseaux:
-            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
-            lines.extend(reseaux)
-
-        statut_label = self.db_manager.format_statut_display(
-            demande.get("statut", "📥 Reçue"),
-            demande.get("is_difficile", False),
-            demande.get("reussie_substatus")
-        )
-
-        lines.append("\n───────  <b>STATUT</b>  ──────")
-        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
-        dt_mod = demande.get("date_modification")
-        if dt_mod:
-            lines.append(f" <i>{format_datetime_fr(dt_mod)}</i>")
-
-        lines.append("\n───────  <b>INFOS</b>  ───────")
-        dt_crea = demande.get("date_creation")
-        lines.append(f"<b>Déposé le :</b>  {format_datetime_fr(dt_crea)}")
-
-        # Historique d'abandon
-        ancien_alias = demande.get("ancien_admin_alias")
-        raw_reason = demande.get("raison_abandon")
-        if ancien_alias or raw_reason:
-            alias_str = html.escape(str(ancien_alias or "Opérateur"))
-            reason_str = clean_reason_text(raw_reason)
-            dt_abandon = demande.get("date_modification")
-            date_abandon_str = format_datetime_fr(dt_abandon) if dt_abandon else "Date inconnue"
-
-            lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
-            lines.append("❌ Abandonné")
-            lines.append(f"{alias_str} le {date_abandon_str}")
-            lines.append(f"<b>Raison :</b> {reason_str}")
-
-        return "\n".join(lines)
-
-    def _format_demande_card(self, demande: dict, page: int, total: int, context: ContextTypes.DEFAULT_TYPE) -> str:
-        """Formate la fiche d'une demande disponible pour le staff avec liens sociaux cliquables."""
-        real_id = demande["id"]
-        is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{real_id} ({page + 1}/{total})</b>" if is_prio else f"📝  <b>Demande Standard #{real_id} ({page + 1}/{total})</b>"
-
-        prenom_esc = html.escape(str(demande.get("prenom") or ""))
-        nom_esc = html.escape(str(demande.get("nom") or ""))
-        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
-        age_str = f"  •  {demande['age']} ans" if demande.get("age") is not None else ""
-
-        ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
-        ori_label = ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée")
-        loc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
-
-        lines = [
-            titre,
-            "━━━━━━━━━━━━━━━━━━━━━━",
-            f"👤  <b>{nom_complet}{age_str}</b>",
-            f"📍  {ori_label} de {loc}"
-        ]
-
-        if demande.get("details"):
-            det = html.escape(str(demande["details"]).strip())
-            lines.append(f"💬  <i>{det}</i>")
-
-        if is_prio:
-            montant_val = float(demande.get("montant") or 0.0)
-            lines.append(f"💰  <b>{montant_val:.2f} €</b>")
-
-        # Réseaux sociaux avec liens cliquables
-        reseaux = []
-        if demande.get("instagram"):
-            raw_ig = str(demande["instagram"]).strip().lstrip("@")
-            ig_esc = html.escape(raw_ig)
-            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
-        if demande.get("snapchat"):
-            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
-            snap_esc = html.escape(raw_snap)
-            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
-
-        if reseaux:
-            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
-            lines.extend(reseaux)
-
-        # Statut opérationnel
-        statut_label = self.db_manager.format_statut_display(
-            demande.get("statut", "📥 Reçue"),
-            demande.get("is_difficile", False),
-            demande.get("reussie_substatus")
-        )
-
-        lines.append("\n───────  <b>STATUT</b>  ──────")
-        lines.append(f" • <b>{html.escape(statut_label)}</b> • ")
-        dt_mod = demande.get("date_modification")
-        if dt_mod:
-            lines.append(f" <i>{format_datetime_fr(dt_mod)}</i>")
-
-        # Mention de rémunération sollicitée
-        remun_asked_at = demande.get("remun_asked_at")
-        if remun_asked_at:
-            lines.append(f" ⏳ <i>Rémunération sollicitée le {format_date_fr(remun_asked_at)}</i>")
-
-        # Infos dossier & Demandeur
-        lines.append("\n───────  <b>INFOS</b>  ───────")
-        dt_crea = demande.get("date_creation")
-        lines.append(f"<b>Déposé le :</b>  {format_datetime_fr(dt_crea)}")
-
-        demandeur = f"@{html.escape(demande['username'])}" if demande.get("username") else (
-            html.escape(str(demande.get("user_first_name") or f"User {demande['user_id']}"))
-        )
-        lines.append(f"<b>Par :</b>  {demandeur} (<code>{demande['user_id']}</code>)")
-
-        # Bloc HISTORIQUE
-        ancien_alias = demande.get("ancien_admin_alias")
-        raw_reason = demande.get("raison_abandon")
-        if ancien_alias or raw_reason:
-            alias_str = html.escape(str(ancien_alias or "Opérateur"))
-            reason_str = clean_reason_text(raw_reason)
-            dt_abandon = demande.get("date_modification")
-            date_abandon_str = format_datetime_fr(dt_abandon) if dt_abandon else "Date inconnue"
-
-            lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
-            lines.append("❌ Abandonné")
-            lines.append(f"{alias_str} le {date_abandon_str}")
-            lines.append(f"<b>Raison :</b> {reason_str}")
-
-        # Filtres actifs
-        f = self._get_active_filters(context)
-        active_tags = []
-        if f.get("orientation") and f["orientation"] != "all":
-            active_tags.append(f"🎯 {f['orientation']}")
-        if f.get("reseau") and f["reseau"] != "all":
-            active_tags.append(f"🌐 {f['reseau']}")
-        if f.get("age_range") and f["age_range"] != "all":
-            active_tags.append(f"🎂 {f['age_range']}")
-        if f.get("search"):
-            active_tags.append(f"🔎 «{f['search']}»")
-
-        if active_tags:
-            lines.append(f"\n🏷️ <i>Filtres : {' • '.join(active_tags)}</i>")
-
-        return "\n".join(lines)
-
-    def _build_navigation_keyboard(self, demande: dict, page: int, total: int, user_id: int) -> InlineKeyboardMarkup:
-        """Construit le clavier des demandes disponibles selon la maquette exacte avec bouton RÉMUNÉRATION dynamique."""
-        demande_id = demande["id"]
-        is_admin = self.db_manager.is_admin(user_id)
-        is_prio = bool(demande.get("prioritaire"))
-        is_remun_asked = bool(demande.get("remun_asked_at"))
-
-        buttons = [
-            # 1. 🎯 PRENDRE EN CHARGE
-            [InlineKeyboardButton("🎯 PRENDRE EN CHARGE", callback_data=f"suivre_demande_{demande_id}")]
-        ]
-
-        # 2. 👤 PROFIL | 🗑️ SUPPRIMER (Admin) OU 👤 PROFIL | ⚠️ SIGNALER (Staff)
-        row_profil = [InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}")]
-        if is_admin:
-            row_profil.append(InlineKeyboardButton("🗑️ SUPPRIMER", callback_data=f"admin_del_dispo_{demande_id}"))
-        else:
-            row_profil.append(InlineKeyboardButton("⚠️ SIGNALER", callback_data=f"staff_report_dispo_{demande_id}"))
-        buttons.append(row_profil)
-
-        # 3. 💰 RÉMUNÉRATION ou ⏳ RÉMUNÉRATION DEMANDÉE
-        perms = self.db_manager.get_staff_permissions(user_id)
-        can_handle_prio = (perms.get("perm_type") in ("all", "prio_only") or is_admin)
-
-        if is_remun_asked:
-            buttons.append([
-                InlineKeyboardButton("⏳ RÉMUNÉRATION DEMANDÉE", callback_data="dispo_remun_pending_info")
-            ])
-        else:
-            if not is_prio and is_admin:
-                buttons.append([
-                    InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_std_{demande_id}")
-                ])
-            elif is_prio and can_handle_prio:
-                buttons.append([
-                    InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_prio_{demande_id}")
-                ])
-
-        # 4. ⬅️ PRÉCÉDENTE | SUIVANTE ➡️
-        nav_row = []
-        if page > 0:
-            nav_row.append(InlineKeyboardButton("⬅️ PRÉCÉDENTE", callback_data=f"dispo_prev_{page}"))
-        if page < total - 1:
-            nav_row.append(InlineKeyboardButton("SUIVANTE ➡️", callback_data=f"dispo_next_{page}"))
-        if nav_row:
-            buttons.append(nav_row)
-
-        # 5. 🔍 TRIER | 🎲 AU HASARD
-        buttons.append([
-            InlineKeyboardButton("🔍 TRIER", callback_data="dispo_filters_menu"),
-            InlineKeyboardButton("🎲 AU HASARD", callback_data="dispo_random")
-        ])
-
-        # 6. ⬅️ RETOUR
-        buttons.append([
-            InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")
-        ])
-
-        return InlineKeyboardMarkup(buttons)
-
     async def show_single_dispo(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int, back_callback: str = "demandes_disponibles"):
         """Affiche la fiche officielle complète d'une demande disponible unitaire (avec photo et boutons dispo)."""
         viewer_id = query.from_user.id
@@ -1130,44 +812,9 @@ class DispoManager:
             await query.answer("❌ Demande introuvable.", show_alert=True)
             return
 
-        text_card = self._format_demande_card(demande, 0, 1, context)
-
-        is_vip = (demande.get("statut") == "🎯 Assignée (VIP)")
-        buttons = []
-
-        if is_vip and demande.get("admin_en_charge") == viewer_id:
-            buttons.append([
-                InlineKeyboardButton("✅ ACCEPTER LA MISSION", callback_data=f"vip_accept_{demande_id}"),
-                InlineKeyboardButton("❌ DÉCLINER", callback_data=f"vip_decline_{demande_id}")
-            ])
-        else:
-            buttons.append([
-                InlineKeyboardButton("🎯 PRENDRE EN CHARGE", callback_data=f"suivre_demande_{demande_id}")
-            ])
-
-        row_actions = [InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}")]
-        if is_admin:
-            row_actions.append(InlineKeyboardButton("🗑️ SUPPRIMER", callback_data=f"admin_del_dispo_{demande_id}"))
-        else:
-            row_actions.append(InlineKeyboardButton("⚠️ SIGNALER", callback_data=f"staff_report_dispo_{demande_id}"))
-        buttons.append(row_actions)
-
-        # Optionnel : bouton de rémunération unitaire
-        is_prio = bool(demande.get("prioritaire"))
-        is_remun_asked = bool(demande.get("remun_asked_at"))
-        perms = self.db_manager.get_staff_permissions(viewer_id)
-        can_handle_prio = (perms.get("perm_type") in ("all", "prio_only") or is_admin)
-
-        if is_remun_asked:
-            buttons.append([InlineKeyboardButton("⏳ RÉMUNÉRATION DEMANDÉE", callback_data="dispo_remun_pending_info")])
-        else:
-            if not is_prio and is_admin:
-                buttons.append([InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_std_{demande_id}")])
-            elif is_prio and can_handle_prio:
-                buttons.append([InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_prio_{demande_id}")])
-
-        buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data=back_callback)])
-        keyboard = InlineKeyboardMarkup(buttons)
+        filters = self._get_active_filters(context)
+        text_card = ui.format_demande_card(demande, 0, 1, filters, self.db_manager)
+        keyboard = ui.build_single_dispo_keyboard(demande, viewer_id, is_admin, back_callback, self.db_manager)
 
         photo_id = demande.get("photo_id")
         if photo_id:

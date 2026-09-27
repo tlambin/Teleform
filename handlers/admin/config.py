@@ -1,9 +1,9 @@
 """Module de gestion des paramètres de configuration dynamique du bot."""
 
-import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+from . import config_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,8 @@ class ConfigManager:
             await query.answer()
 
         from utils.interface_manager import InterfaceManager
-        ui = InterfaceManager(self.config, self.db_manager)
-        text, keyboard = ui.get_parametres_menu(update.effective_user.id)
+        ui_mgr = InterfaceManager(self.config, self.db_manager)
+        text, keyboard = ui_mgr.get_parametres_menu(update.effective_user.id)
 
         if query:
             await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
@@ -102,8 +102,8 @@ class ConfigManager:
             await query.answer()
 
         from utils.interface_manager import InterfaceManager
-        ui = InterfaceManager(self.config, self.db_manager)
-        text, keyboard = ui.get_gerer_bot_menu()
+        ui_mgr = InterfaceManager(self.config, self.db_manager)
+        text, keyboard = ui_mgr.get_gerer_bot_menu()
 
         if query:
             await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
@@ -197,8 +197,8 @@ class ConfigManager:
         await query.answer()
 
         from utils.interface_manager import InterfaceManager
-        ui = InterfaceManager(self.config, self.db_manager)
-        text, keyboard = ui.get_channels_menu()
+        ui_mgr = InterfaceManager(self.config, self.db_manager)
+        text, keyboard = ui_mgr.get_channels_menu()
         await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def toggle_channel_setting(self, update: Update, context: ContextTypes.DEFAULT_TYPE, key_name: str):
@@ -222,8 +222,8 @@ class ConfigManager:
             await query.answer()
 
         from utils.interface_manager import InterfaceManager
-        ui = InterfaceManager(self.config, self.db_manager)
-        text, keyboard = ui.get_limits_menu()
+        ui_mgr = InterfaceManager(self.config, self.db_manager)
+        text, keyboard = ui_mgr.get_limits_menu()
 
         if query:
             await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
@@ -244,28 +244,8 @@ class ConfigManager:
         pay_days = self.db_manager.get_payment_reminder_days()
         remun_days = self.db_manager.get_remun_expiration_days()
 
-        text = (
-            "⏳ <b>CONFIGURATION DES DÉLAIS DU SYSTÈME</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• 📦 <b>Auto-archivage post-livraison :</b> <code>{hours}h</code>\n"
-            f"• 🚚 <b>Rappel livraison (Staff) :</b> <code>{days} jours</code>\n"
-            f"• 💰 <b>Rappel impayé (Demandeur) :</b> <code>{pay_days} jours</code>\n"
-            f"• ⏳ <b>Délai réponse rémunération :</b> <code>{remun_days} jours</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "<i>Cliquez sur une option pour modifier sa valeur :</i>"
-        )
-        keyboard = [
-            [
-                InlineKeyboardButton(f"📦 Auto-archivage ({hours}h)", callback_data="cfg_sub_archive_hours"),
-                InlineKeyboardButton(f"🚚 Rappel Livraison ({days}j)", callback_data="cfg_sub_reminder_days")
-            ],
-            [
-                InlineKeyboardButton(f"💰 Rappel Impayé Client ({pay_days}j)", callback_data="cfg_sub_payrem_days"),
-                InlineKeyboardButton(f"⏳ Délai Rémunération ({remun_days}j)", callback_data="cfg_sub_remun_days")
-            ],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")]
-        ]
-        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        text, keyboard = ui.get_delais_menu_content(hours, days, pay_days, remun_days)
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def show_archive_hours_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Sous-menu pour choisir l'intervalle d'auto-archivage."""
@@ -275,26 +255,8 @@ class ConfigManager:
         await query.answer()
 
         current = self.db_manager.get_auto_archive_hours()
-
-        def b_lbl(name: str, val: int) -> str:
-            return f"✅ {name}" if current == val else name
-
-        keyboard = [
-            [
-                InlineKeyboardButton(b_lbl("24h (1j)", 24), callback_data="set_arch_hours_24"),
-                InlineKeyboardButton(b_lbl("48h (2j)", 48), callback_data="set_arch_hours_48"),
-            ],
-            [
-                InlineKeyboardButton(b_lbl("72h (3j)", 72), callback_data="set_arch_hours_72"),
-                InlineKeyboardButton(b_lbl("168h (7j)", 168), callback_data="set_arch_hours_168"),
-            ],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_delais")]
-        ]
-        text = (
-            "📦 <b>Délai d'auto-archivage</b>\n\n"
-            f"Actuel : <b>{current} heures</b> post-livraison avant archivage automatique."
-        )
-        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        text, keyboard = ui.get_archive_hours_content(current)
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def show_reminder_days_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Sous-menu pour choisir le délai de relance de livraison pour le staff."""
@@ -304,26 +266,8 @@ class ConfigManager:
         await query.answer()
 
         current = self.db_manager.get_delivery_reminder_days()
-
-        def b_lbl(name: str, val: int) -> str:
-            return f"✅ {name}" if current == val else name
-
-        keyboard = [
-            [
-                InlineKeyboardButton(b_lbl("3 jours", 3), callback_data="set_rem_days_3"),
-                InlineKeyboardButton(b_lbl("5 jours", 5), callback_data="set_rem_days_5"),
-            ],
-            [
-                InlineKeyboardButton(b_lbl("7 jours", 7), callback_data="set_rem_days_7"),
-                InlineKeyboardButton(b_lbl("14 jours", 14), callback_data="set_rem_days_14"),
-            ],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_delais")]
-        ]
-        text = (
-            "🚚 <b>Délai de relance pour contenu non livré (Staff)</b>\n\n"
-            f"Actuel : <b>{current} jours</b>."
-        )
-        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        text, keyboard = ui.get_reminder_days_content(current)
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def show_payment_reminder_days_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Sous-menu pour choisir la fréquence de rappel d'impayé envoyée au demandeur."""
@@ -333,26 +277,8 @@ class ConfigManager:
         await query.answer()
 
         current = self.db_manager.get_payment_reminder_days()
-
-        def b_lbl(name: str, val: int) -> str:
-            return f"✅ {name}" if current == val else name
-
-        keyboard = [
-            [
-                InlineKeyboardButton(b_lbl("3 jours", 3), callback_data="set_payrem_days_3"),
-                InlineKeyboardButton(b_lbl("5 jours", 5), callback_data="set_payrem_days_5"),
-            ],
-            [
-                InlineKeyboardButton(b_lbl("7 jours", 7), callback_data="set_payrem_days_7"),
-                InlineKeyboardButton(b_lbl("14 jours", 14), callback_data="set_payrem_days_14"),
-            ],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_delais")]
-        ]
-        text = (
-            "💰 <b>Fréquence du rappel d'impayé (Demandeur)</b>\n\n"
-            f"Actuelle : Tous les <b>{current} jours</b>."
-        )
-        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        text, keyboard = ui.get_payment_reminder_days_content(current)
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def show_remun_expiration_days_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Sous-menu pour choisir le délai de réponse accordé au demandeur avant abandon automatique."""
@@ -362,27 +288,8 @@ class ConfigManager:
         await query.answer()
 
         current = self.db_manager.get_remun_expiration_days()
-
-        def b_lbl(name: str, val: int) -> str:
-            return f"✅ {name}" if current == val else name
-
-        keyboard = [
-            [
-                InlineKeyboardButton(b_lbl("3 jours", 3), callback_data="set_remun_days_3"),
-                InlineKeyboardButton(b_lbl("5 jours", 5), callback_data="set_remun_days_5"),
-            ],
-            [
-                InlineKeyboardButton(b_lbl("7 jours", 7), callback_data="set_remun_days_7"),
-                InlineKeyboardButton(b_lbl("14 jours", 14), callback_data="set_remun_days_14"),
-            ],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_delais")]
-        ]
-        text = (
-            "⏳ <b>Délai avant abandon pour non-réponse à la rémunération</b>\n\n"
-            f"Actuel : <b>{current} jours</b>.\n\n"
-            "<i>Passé ce délai sans réponse du demandeur, la demande sera classée sous « ❌ Abandonnée » avec explication.</i>"
-        )
-        await self._safe_edit_or_send(query, context, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        text, keyboard = ui.get_remun_expiration_days_content(current)
+        await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     # ==================== ACCESSEURS DE CONFIGURATION ====================
 

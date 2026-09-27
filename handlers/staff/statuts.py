@@ -2,11 +2,10 @@
 
 import html
 import logging
-import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from utils.validators import convert_utc_to_paris
 from .notifs import NotifsManager
+from . import statuts_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -52,47 +51,7 @@ class StatutsManager:
             statut_display_esc = html.escape(str(statut_display))
             is_photo_message = bool(query.message and query.message.photo)
 
-            keyboard = []
-
-            # ==================== RÈGLES DE TRANSITION STRICTES ====================
-            # 1. Dossier réussi : aucune régression possible vers En attente ou En cours
-            if current_status == "✅ Réussie":
-                keyboard.append([
-                    InlineKeyboardButton("✅ MODIFIER SOUS-STATUT RÉUSSIE", callback_data=f"status_sub_reussie_{demande_id}")
-                ])
-                keyboard.append([
-                    InlineKeyboardButton("❌ ABANDONNER", callback_data=f"status_prompt_abandon_{demande_id}")
-                ])
-
-            # 2. Dossier en cours : peut aller vers Réussie ou Abandonner, mais NE PEUT PLUS revenir en En attente
-            elif current_status == "🔄 En cours":
-                keyboard.append([
-                    InlineKeyboardButton("✅ RÉUSSIE", callback_data=f"status_sub_reussie_{demande_id}"),
-                    InlineKeyboardButton("❌ ABANDONNER", callback_data=f"status_prompt_abandon_{demande_id}")
-                ])
-                diff_label = "⚠️ DIFFICILE : OUI" if is_diff else "⚠️ DIFFICILE : NON"
-                keyboard.append([
-                    InlineKeyboardButton(diff_label, callback_data=f"status_toggle_diff_{demande_id}")
-                ])
-
-            # 3. Dossier en attente (ou Assignée VIP) : peut passer En cours, Réussie ou Abandonner
-            else:
-                keyboard.append([
-                    InlineKeyboardButton("🔄 EN COURS", callback_data=f"status_apply_{demande_id}_encours")
-                ])
-                diff_label = "⚠️ DIFFICILE : OUI" if is_diff else "⚠️ DIFFICILE : NON"
-                keyboard.append([
-                    InlineKeyboardButton(diff_label, callback_data=f"status_toggle_diff_{demande_id}")
-                ])
-                keyboard.append([
-                    InlineKeyboardButton("✅ RÉUSSIE", callback_data=f"status_sub_reussie_{demande_id}"),
-                    InlineKeyboardButton("❌ ABANDONNER", callback_data=f"status_prompt_abandon_{demande_id}")
-                ])
-
-            keyboard.append([
-                InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
-            ])
-
+            keyboard = ui.build_status_change_keyboard(demande_id, current_status, is_diff)
             text = (
                 "📌 <b>CHANGER LE STATUT</b> 📌\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -101,17 +60,9 @@ class StatutsManager:
             )
 
             if is_photo_message:
-                await query.edit_message_caption(
-                    caption=text,
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
+                await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=keyboard)
             else:
-                await query.edit_message_text(
-                    text=text,
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
+                await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=keyboard)
 
         except Exception as exc:
             logger.error("Erreur affichage menu changement statut : %s", exc, exc_info=True)
@@ -123,7 +74,6 @@ class StatutsManager:
             return
 
         is_photo = bool(query.message and query.message.photo)
-
         text = (
             "✅ <b>DEMANDE RÉUSSIE</b> ✅\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -131,19 +81,12 @@ class StatutsManager:
             "• <b>Terminée :</b> La demande est réussie et définitivement clôturée.\n\n"
             "<i>Sélectionnez le statut actuel :</i>"
         )
-
-        keyboard = [
-            [
-                InlineKeyboardButton("🟢 ACTIVE 🟢", callback_data=f"status_apply_reussie_{demande_id}_active"),
-                InlineKeyboardButton("❎ TERMINÉE ❎", callback_data=f"status_apply_reussie_{demande_id}_terminee")
-            ],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data=f"change_status_{demande_id}")]
-        ]
+        keyboard = ui.build_reussie_suboptions_keyboard(demande_id)
 
         if is_photo:
-            await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=keyboard)
         else:
-            await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=keyboard)
 
     async def handle_status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Routeur central des actions liées aux statuts."""
@@ -158,19 +101,16 @@ class StatutsManager:
 
         data = query.data
         try:
-            # 1. Demande d'abandon
             if data.startswith("status_prompt_abandon_"):
                 demande_id = int(data.replace("status_prompt_abandon_", ""))
                 await self._initiate_abandon_flow(query, context, demande_id, staff_id)
                 return
 
-            # 2. Sous-options Réussie
             if data.startswith("status_sub_reussie_"):
                 demande_id = int(data.replace("status_sub_reussie_", ""))
                 await self.show_reussie_suboptions(update, context, demande_id)
                 return
 
-            # 3. Application Réussie (Active ou Terminée)
             if data.startswith("status_apply_reussie_"):
                 parts = data.split("_")
                 demande_id = int(parts[3])
@@ -178,13 +118,11 @@ class StatutsManager:
                 await self._apply_status_change(query, context, demande_id, "✅ Réussie", reussie_substatus=sub_type)
                 return
 
-            # 4. Archivage immédiat validé par le staff
             if data.startswith("status_archive_now_"):
                 demande_id = int(data.replace("status_archive_now_", ""))
                 await self._archive_demande_now(query, context, demande_id)
                 return
 
-            # 5. Interrupteur Difficile
             if data.startswith("status_toggle_diff_"):
                 demande_id = int(data.replace("status_toggle_diff_", ""))
                 new_diff_state = self.db_manager.toggle_demande_difficile(demande_id)
@@ -217,7 +155,6 @@ class StatutsManager:
                 await self.show_status_change_menu(update, context, demande_id)
                 return
 
-            # 6. Application En attente / En cours
             if data.startswith("status_apply_"):
                 parts = data.split("_")
                 demande_id = int(parts[2])
@@ -265,7 +202,7 @@ class StatutsManager:
 
         old_status = demande["statut"]
 
-        # ==================== GARDE-FOUS SERVEUR ANTI-RÉGRESSION ====================
+        # Garde-fous serveur anti-régression
         if old_status == "✅ Réussie" and nouveau_statut in ("⏳ En attente", "🔄 En cours"):
             await query.answer("🚫 Un dossier réussi ne peut plus repasser en attente ou en cours.", show_alert=True)
             return
@@ -279,10 +216,8 @@ class StatutsManager:
         old_sub = demande.get("reussie_substatus")
         old_label = self.db_manager.format_statut_display(old_status, old_diff, old_sub)
 
-        # Enregistrement en base
         self.db_manager.update_demande_statut(demande_id, nouveau_statut, reussie_substatus=reussie_substatus)
 
-        # Maintien dans demandes_suivi sans gap locks
         with self.db_manager.transaction() as cursor:
             if nouveau_statut in ("⏳ En attente", "🔄 En cours", "✅ Réussie"):
                 cursor.execute(
@@ -302,7 +237,7 @@ class StatutsManager:
                         (demande_id, staff_id)
                     )
 
-        # ==================== DÉNOUEMENT PÉRIODE D'ESSAI (SUCCÈS) ====================
+        # Dénouement période d'essai (Succès)
         if nouveau_statut == "✅ Réussie" and self.db_manager.is_staff_trial(staff_id):
             self.db_manager.set_staff_trial(staff_id, False)
             logger.info("🎉 Période d'essai validée avec succès pour l'opérateur %s", staff_id)
@@ -312,15 +247,10 @@ class StatutsManager:
                     f"Votre prise en charge de la demande <b>#{real_id}</b> est un succès.\n"
                     "Votre statut probatoire est désormais levé : vous avez un <b>accès complet</b> à l'ensemble des demandes disponibles !"
                 )
-                await context.bot.send_message(
-                    chat_id=staff_id,
-                    text=congrats_msg,
-                    parse_mode="HTML"
-                )
+                await context.bot.send_message(chat_id=staff_id, text=congrats_msg, parse_mode="HTML")
             except Exception as notif_trial_err:
                 logger.warning("Impossible d'envoyer les félicitations de fin d'essai à %s : %s", staff_id, notif_trial_err)
 
-        # Notification au demandeur
         new_diff = old_diff if nouveau_statut in ("⏳ En attente", "🔄 En cours") else False
         await self.notifs_manager.send_status_update_notification(
             context=context,
@@ -339,7 +269,7 @@ class StatutsManager:
             cursor.execute("SELECT * FROM demandes WHERE id = %s", (demande_id,))
             demande_fresh = cursor.fetchone()
 
-        # ==================== ALERTE SURVEILLANCE STAFF (ADMINS) ====================
+        # Alerte surveillance staff (Admins)
         try:
             action_tag = "reussite" if nouveau_statut == "✅ Réussie" else "changement_statut"
             monitors = self.db_manager.get_monitoring_admins(action=action_tag)
@@ -378,10 +308,13 @@ class StatutsManager:
             logger.warning("Erreur notification surveillance staff changement statut : %s", mon_err)
 
         await query.answer("✅ Statut mis à jour !")
+        card_text = ui.format_demande_suivi_text(demande_fresh, self.db_manager)
+        card_kb = ui.build_demande_card_keyboard(demande_fresh)
+
         if query.message and query.message.photo:
-            await self._update_photo_caption(query, demande_fresh)
+            await query.edit_message_caption(caption=card_text, parse_mode="HTML", reply_markup=card_kb)
         else:
-            await self._update_existing_text_message(query, demande_fresh)
+            await query.edit_message_text(text=card_text, parse_mode="HTML", reply_markup=card_kb, disable_web_page_preview=True)
 
         req_num = html.escape(str(demande_fresh.get("request_number") or demande_fresh.get("id")))
         prenom_esc = html.escape(str(demande_fresh.get("prenom") or "la cible"))
@@ -390,62 +323,19 @@ class StatutsManager:
         montant = float(demande_fresh.get("montant") or 0.0)
         p_statut = demande_fresh.get("paiement_statut", "non_requis")
 
-        # Cas 1 : Réussie Active
         if nouveau_statut == "✅ Réussie" and reussie_substatus == "active":
-            remind_text = (
-                f"💡 <b>Rappel de suivi (Demande #{req_num})</b>\n\n"
-                f"Le statut a été passé en <b>Réussie (Active)</b>.\n"
-                f"D'autres contenus peuvent être obtenus sur <b>{prenom_esc}</b>."
-            )
-            remind_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💬 Contacter le demandeur", callback_data=f"contacter_{demande_id}")],
-                [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
-            ])
+            remind_text, remind_kb = ui.build_reussie_active_notice(req_num, prenom_esc, demande_id)
             await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
 
-        # Cas 2 : Réussie Terminée
         elif nouveau_statut == "✅ Réussie" and reussie_substatus == "terminee":
             if is_prio and montant > 0 and p_statut == "en_attente":
-                prio_wait_text = (
-                    f"💎 <b>Demande prioritaire #{req_num} réussie !</b>\n\n"
-                    f"Montant alloué : <b>{montant:.2f} €</b>\n\n"
-                    "⏳ <b>En attente du règlement du client :</b>\n"
-                    "Le demandeur a reçu les options de paiement (Stars Telegram ou contact direct).\n\n"
-                    "• Si le client règle par Stars, vous serez notifié instantanément.\n"
-                    "• S'il vous contacte pour un autre moyen de paiement (PayPal, virement, etc.), "
-                    "vous pourrez valider la réception des fonds via le bouton <b>« 💰 VALIDER LE PAIEMENT 💰 »</b> sur votre fiche de suivi.\n\n"
-                    "<i>Conservez vos fichiers : vous pourrez les envoyer dès que le paiement sera validé.</i>"
-                )
-                prio_wait_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Échanger avec le client", callback_data=f"contacter_{demande_id}")],
-                    [InlineKeyboardButton("📄 Ouvrir la fiche du dossier", callback_data=f"retour_texte_{demande_id}")],
-                    [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
-                ])
+                prio_wait_text, prio_wait_kb = ui.build_prio_wait_payment_notice(req_num, montant, demande_id)
                 await context.bot.send_message(chat_id=staff_id, text=prio_wait_text, parse_mode="HTML", reply_markup=prio_wait_kb)
-
             elif not has_delivered:
-                remind_text = (
-                    f"⚠️ <b>Action requise (Demande #{req_num})</b>\n\n"
-                    f"La demande a été déclarée <b>Réussie (Terminée)</b>.\n\n"
-                    f"👉 Vous devez <b>obligatoirement envoyer le contenu obtenu</b> à l'utilisateur.\n"
-                    "<i>Le bouton d'archivage sera débloqué dès votre premier envoi (et la demande s'auto-archivera sous le délai configuré).</i>"
-                )
-                remind_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💬 Transmettre le contenu maintenant", callback_data=f"contacter_{demande_id}")],
-                    [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
-                ])
+                remind_text, remind_kb = ui.build_delivery_required_notice(req_num, demande_id)
                 await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
-
             else:
-                remind_text = (
-                    f"📦 <b>Dossier #{req_num} prêt pour l'archivage</b>\n\n"
-                    "Le contenu a bien été livré. Vous pouvez archiver ce dossier immédiatement pour clore la fiche, "
-                    "ou le laisser s'archiver automatiquement."
-                )
-                remind_kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📦 ARCHIVER LE DOSSIER 📦", callback_data=f"status_archive_now_{demande_id}")],
-                    [InlineKeyboardButton("💌 Mes suivis", callback_data="demandes_suivies")]
-                ])
+                remind_text, remind_kb = ui.build_ready_to_archive_notice(req_num, demande_id)
                 await context.bot.send_message(chat_id=staff_id, text=remind_text, parse_mode="HTML", reply_markup=remind_kb)
 
     async def _archive_demande_now(self, query, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
@@ -635,248 +525,3 @@ class StatutsManager:
         except Exception as exc:
             logger.error("Erreur traitement motif abandon demande %s : %s", demande_id, exc, exc_info=True)
             await update.message.reply_text("❌ Une erreur est survenue lors de l'enregistrement de l'abandon.")
-
-    def _build_demande_keyboard(self, demande: dict) -> InlineKeyboardMarkup:
-        """Construit le clavier d'actions de la vue de suivi selon les règles de gestion."""
-        demande_id = demande["id"]
-        is_reussie = (demande.get("statut") == "✅ Réussie")
-        has_delivered = bool(demande.get("has_delivered_content", False))
-        is_prio = bool(demande.get("prioritaire"))
-        paiement_statut = demande.get("paiement_statut", "non_requis")
-
-        buttons = [
-            [InlineKeyboardButton("📌 CHANGER LE STATUT 📌", callback_data=f"change_status_{demande_id}")],
-            [
-                InlineKeyboardButton("👤 PROFIL", callback_data=f"profil_demande_{demande_id}"),
-                InlineKeyboardButton("💬 CONTACT", callback_data=f"contacter_{demande_id}")
-            ]
-        ]
-
-        if is_prio and is_reussie and paiement_statut == "en_attente":
-            buttons.append([
-                InlineKeyboardButton("💰 VALIDER LE PAIEMENT 💰", callback_data=f"confirm_payment_prio_{demande_id}")
-            ])
-
-        if is_reussie:
-            if not is_prio or paiement_statut == "paye":
-                if has_delivered:
-                    buttons.append([
-                        InlineKeyboardButton("📦 ARCHIVER LE DOSSIER 📦", callback_data=f"status_archive_now_{demande_id}")
-                    ])
-                else:
-                    buttons.append([
-                        InlineKeyboardButton("📤 ENVOYER LE CONTENU 📤", callback_data=f"contacter_{demande_id}")
-                    ])
-
-        buttons.append([
-            InlineKeyboardButton("🔍 TRIER", callback_data="suivi_sort_menu"),
-            InlineKeyboardButton("📮 DISPO", callback_data="demandes_disponibles")
-        ])
-        buttons.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")])
-
-        return InlineKeyboardMarkup(buttons)
-
-    async def _update_existing_text_message(self, query, demande: dict):
-        """Actualise le corps du message texte après transition d'état avec liens sociaux cliquables."""
-        real_id = html.escape(str(demande.get("request_number") or demande["id"]))
-        is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{real_id}</b>" if is_prio else f"📝  <b>Demande Standard #{real_id}</b>"
-
-        prenom_esc = html.escape(str(demande.get("prenom") or ""))
-        nom_esc = html.escape(str(demande.get("nom") or ""))
-        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
-        age_str = f"  •  {html.escape(str(demande['age']))} ans" if demande.get("age") is not None else ""
-
-        ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
-        ori_label = html.escape(ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée"))
-        loc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
-
-        lines = [
-            titre,
-            "━━━━━━━━━━━━━━━━━━━━━━",
-            f"👤  <b>{nom_complet}{age_str}</b>",
-            f"📍  {ori_label} de {loc}"
-        ]
-
-        if demande.get("details"):
-            det = html.escape(str(demande["details"]).strip())
-            lines.append(f"💬  <i>{det}</i>")
-
-        if is_prio:
-            montant_val = float(demande.get("montant") or 0.0)
-            lines.append(f"💰  <b>{montant_val:.2f} €</b>")
-
-        # Réseaux sociaux cliquables
-        reseaux = []
-        if demande.get("instagram"):
-            raw_ig = str(demande["instagram"]).strip().lstrip("@")
-            ig_esc = html.escape(raw_ig)
-            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
-        if demande.get("snapchat"):
-            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
-            snap_esc = html.escape(raw_snap)
-            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
-
-        if reseaux:
-            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
-            lines.extend(reseaux)
-
-        statut_label = self.db_manager.format_statut_display(
-            demande.get("statut", "⏳ En attente"),
-            demande.get("is_difficile", False),
-            demande.get("reussie_substatus")
-        )
-        lines.append("\n───────  <b>STATUT</b>  ──────")
-        lines.append(f" • <b>{html.escape(str(statut_label))}</b> • ")
-
-        def fmt_dt(val):
-            if not val:
-                return ""
-            try:
-                return convert_utc_to_paris(val).strftime("%d/%m/%Y %H:%M")
-            except Exception:
-                return str(val)[:16]
-
-        dt_mod = demande.get("date_modification")
-        if dt_mod:
-            lines.append(f" <i>{html.escape(fmt_dt(dt_mod))}</i>")
-
-        if is_prio:
-            p_statut = demande.get("paiement_statut", "non_requis")
-            if p_statut == "paye":
-                lines.append("\n🟢 <b>Réglé et validé</b>")
-            elif p_statut == "en_attente":
-                lines.append("\n🟡 <b>En attente de règlement</b>")
-
-        admin_id = demande.get("admin_en_charge")
-        if admin_id:
-            alias = html.escape(str(self.db_manager.get_staff_alias(admin_id) or f"Staff_{admin_id}"))
-            lines.append(f"\n<b>Géré par :</b> <b>{alias}</b>")
-
-        lines.append("\n───────  <b>INFOS</b>  ───────")
-        dt_crea = demande.get("date_creation")
-        lines.append(f"<b>Déposé le :</b>  {html.escape(fmt_dt(dt_crea))}")
-
-        demandeur = f"@{html.escape(demande['username'])}" if demande.get("username") else (
-            html.escape(str(demande.get("user_first_name") or f"User {demande['user_id']}"))
-        )
-        lines.append(f"<b>Par :</b>  {demandeur} (<code>{demande['user_id']}</code>)")
-
-        ancien_alias = demande.get("ancien_admin_alias")
-        raw_reason = demande.get("raison_abandon")
-        if ancien_alias or raw_reason:
-            alias_str = html.escape(str(ancien_alias or "Opérateur"))
-            clean_r = re.sub(r"<[^>]+>", "", str(raw_reason or "Non précisée")).strip()
-            lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
-            lines.append("❌ Abandonné")
-            lines.append(f"{alias_str} le {html.escape(fmt_dt(demande.get('date_modification')))}")
-            lines.append(f"<b>Raison :</b> {html.escape(clean_r)}")
-
-        await query.edit_message_text(
-            text="\n".join(lines),
-            parse_mode="HTML",
-            reply_markup=self._build_demande_keyboard(demande),
-            disable_web_page_preview=True,
-        )
-
-    async def _update_photo_caption(self, query, demande: dict):
-        """Actualise la légende de l'image après transition d'état avec liens sociaux cliquables."""
-        real_id = html.escape(str(demande.get("request_number") or demande["id"]))
-        is_prio = bool(demande.get("prioritaire"))
-        titre = f"💎  <b>Demande Prioritaire #{real_id}</b>" if is_prio else f"📝  <b>Demande Standard #{real_id}</b>"
-
-        prenom_esc = html.escape(str(demande.get("prenom") or ""))
-        nom_esc = html.escape(str(demande.get("nom") or ""))
-        nom_complet = f"{prenom_esc} {nom_esc}".strip() or "Identité non précisée"
-        age_str = f"  •  {html.escape(str(demande['age']))} ans" if demande.get("age") is not None else ""
-
-        ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi"}
-        ori_label = html.escape(ori_map.get(str(demande.get("orientation") or "").lower(), "Non précisée"))
-        loc = html.escape(str(demande.get("localisation") or "Lieu non précisé"))
-
-        lines = [
-            titre,
-            "━━━━━━━━━━━━━━━━━━━━━━",
-            f"👤  <b>{nom_complet}{age_str}</b>",
-            f"📍  {ori_label} de {loc}"
-        ]
-
-        if demande.get("details"):
-            det = html.escape(str(demande["details"]).strip())
-            lines.append(f"💬  <i>{det}</i>")
-
-        if is_prio:
-            montant_val = float(demande.get("montant") or 0.0)
-            lines.append(f"💰  <b>{montant_val:.2f} €</b>")
-
-        # Réseaux sociaux cliquables
-        reseaux = []
-        if demande.get("instagram"):
-            raw_ig = str(demande["instagram"]).strip().lstrip("@")
-            ig_esc = html.escape(raw_ig)
-            reseaux.append(f'• <b>Instagram :</b> <a href="https://instagram.com/{ig_esc}">@{ig_esc}</a>')
-        if demande.get("snapchat"):
-            raw_snap = str(demande["snapchat"]).strip().lstrip("@")
-            snap_esc = html.escape(raw_snap)
-            reseaux.append(f'• <b>Snapchat :</b> <a href="https://snapchat.com/add/{snap_esc}">{snap_esc}</a>')
-
-        if reseaux:
-            lines.append("\n🌐  <b>SES RÉSEAUX</b>")
-            lines.extend(reseaux)
-
-        statut_label = self.db_manager.format_statut_display(
-            demande.get("statut", "⏳ En attente"),
-            demande.get("is_difficile", False),
-            demande.get("reussie_substatus")
-        )
-        lines.append("\n───────  <b>STATUT</b>  ──────")
-        lines.append(f" • <b>{html.escape(str(statut_label))}</b> • ")
-
-        def fmt_dt(val):
-            if not val:
-                return ""
-            try:
-                return convert_utc_to_paris(val).strftime("%d/%m/%Y %H:%M")
-            except Exception:
-                return str(val)[:16]
-
-        dt_mod = demande.get("date_modification")
-        if dt_mod:
-            lines.append(f" <i>{html.escape(fmt_dt(dt_mod))}</i>")
-
-        if is_prio:
-            p_statut = demande.get("paiement_statut", "non_requis")
-            if p_statut == "paye":
-                lines.append("\n🟢 <b>Réglé et validé</b>")
-            elif p_statut == "en_attente":
-                lines.append("\n🟡 <b>En attente de règlement</b>")
-
-        admin_id = demande.get("admin_en_charge")
-        if admin_id:
-            alias = html.escape(str(self.db_manager.get_staff_alias(admin_id) or f"Staff_{admin_id}"))
-            lines.append(f"\n<b>Géré par :</b> <b>{alias}</b>")
-
-        lines.append("\n───────  <b>INFOS</b>  ───────")
-        dt_crea = demande.get("date_creation")
-        lines.append(f"<b>Déposé le :</b>  {html.escape(fmt_dt(dt_crea))}")
-
-        demandeur = f"@{html.escape(demande['username'])}" if demande.get("username") else (
-            html.escape(str(demande.get("user_first_name") or f"User {demande['user_id']}"))
-        )
-        lines.append(f"<b>Par :</b>  {demandeur} (<code>{demande['user_id']}</code>)")
-
-        ancien_alias = demande.get("ancien_admin_alias")
-        raw_reason = demande.get("raison_abandon")
-        if ancien_alias or raw_reason:
-            alias_str = html.escape(str(ancien_alias or "Opérateur"))
-            clean_r = re.sub(r"<[^>]+>", "", str(raw_reason or "Non précisée")).strip()
-            lines.append("\n─────  <b>HISTORIQUE</b>  ─────")
-            lines.append("❌ Abandonné")
-            lines.append(f"{alias_str} le {html.escape(fmt_dt(demande.get('date_modification')))}")
-            lines.append(f"<b>Raison :</b> {html.escape(clean_r)}")
-
-        await query.edit_message_caption(
-            caption="\n".join(lines),
-            parse_mode="HTML",
-            reply_markup=self._build_demande_keyboard(demande),
-        )

@@ -23,6 +23,7 @@ from .staff.photos import PhotosManager
 from .staff.profils import ProfilsManager
 from .staff.statuts import StatutsManager
 from .staff.suivi import SuiviManager
+from . import staff_handlers_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +76,11 @@ class StaffHandlers:
 
         statut = dem.get("statut", "")
 
-        # 1. Dossier disponible -> Interface DispoManager
         if statut in ("📥 Reçue", "🎯 Assignée (VIP)") and not dem.get("admin_en_charge"):
             if hasattr(self.dispo, "show_single_dispo"):
                 await self.dispo.show_single_dispo(query, context, demande_id, back_callback=back_callback)
             else:
                 await self.suivi.show_single_demande(query, context, demande_id, back_callback=back_callback)
-
-        # 2. Dossier pris en charge / suivi -> Interface SuiviManager
         else:
             await self.suivi.show_single_demande(query, context, demande_id, back_callback=back_callback)
 
@@ -117,7 +115,7 @@ class StaffHandlers:
             return
 
         try:
-            # 0. Décision sur mission assignée VIP (Accepter / Décliner)
+            # 0. Décision sur mission assignée VIP
             if data.startswith("vip_accept_"):
                 demande_id = int(data.replace("vip_accept_", ""))
                 await self._handle_vip_accept(query, context, demande_id, user_id)
@@ -128,7 +126,7 @@ class StaffHandlers:
                 await self._handle_vip_decline(query, context, demande_id, user_id)
                 return
 
-            # 1. Demandes disponibles, filtres, suppression, proposition de prix et signalement
+            # 1. Demandes disponibles
             elif data == "demandes_disponibles":
                 await self.dispo.show_demandes_disponibles(update, context)
 
@@ -140,19 +138,19 @@ class StaffHandlers:
             ):
                 await self.dispo.handle_callback_routing(update, context, data)
 
-            # 2. Prise en charge d'une demande disponible
+            # 2. Prise en charge
             elif data.startswith("suivre_demande_"):
                 demande_id = int(data.replace("suivre_demande_", ""))
                 await self.dispo.assign_demande_to_admin(update, context, demande_id)
 
-            # 3. Demandes suivies et confirmation de paiement
+            # 3. Demandes suivies
             elif data == "demandes_suivies":
                 await self.suivi.show_demandes_suivies(update, context)
 
             elif data.startswith("suivi_") or data.startswith("confirm_payment_prio_"):
                 await self.suivi.handle_callback_routing(update, context, data)
 
-            # 4. Préférences de notifications et rappels
+            # 4. Préférences de notifications
             elif data == "menu_notifs":
                 await self.notifs.show_notifs_menu(update, context)
 
@@ -171,7 +169,7 @@ class StaffHandlers:
                     back_cb = data.split("_back_")[1]
                 await self.show_demande_detail_unified(query, context, demande_id, back_callback=back_cb)
 
-            # 6. Gestion dynamique des statuts et archivage
+            # 6. Gestion dynamique des statuts
             elif data.startswith("change_status_") or data.startswith("mark_treated_menu_"):
                 demande_id = int(data.split("_")[-1])
                 await self.statuts.show_status_change_menu(update, context, demande_id)
@@ -187,7 +185,7 @@ class StaffHandlers:
                 page = int(data.replace("archive_page_", ""))
                 await self.archives.show_archives(update, context, page=page)
 
-            # 8. Profils et sous-menus de visualisation des dossiers associés
+            # 8. Profils
             elif data.startswith("profil_admin_"):
                 target_admin_id = int(data.replace("profil_admin_", ""))
                 await self.profils.show_admin_profile(update, context, target_admin_id)
@@ -209,7 +207,7 @@ class StaffHandlers:
             elif data in ("admin_pause_prompt", "admin_pause_keep", "admin_pause_release", "admin_resume"):
                 await self._handle_admin_pause(update, context, data)
 
-            # 10. Contact superviseur (Admin/Owner) vers Piégeur
+            # 10. Contact superviseur vers Piégeur
             elif data.startswith("admin_contact_staff_"):
                 parts = data.split("_")
                 demande_id = int(parts[3])
@@ -268,25 +266,19 @@ class StaffHandlers:
             return
 
         alias = self.db_manager.get_staff_alias(user_id) or f"Membre_{user_id}"
-        alias_esc = html.escape(str(alias))
-
         details_demission = []
 
         try:
             with self.db_manager.transaction() as cursor:
-                # 1. Révocation du rôle Piégeur (Staff)
                 if scope in ("staff", "all"):
-                    # Libérer et notifier tous les dossiers en cours pris en charge
                     abandoned = self.db_manager.abandon_staff_demandes_for_pause(user_id)
                     cursor.execute("DELETE FROM staff WHERE user_id = %s", (int(user_id),))
                     details_demission.append(f"Piégeur ({len(abandoned)} dossier(s) libéré(s))")
 
-                # 2. Révocation du rôle Administrateur
                 if scope in ("admin", "all"):
                     cursor.execute("DELETE FROM admins WHERE user_id = %s AND is_owner = FALSE", (int(user_id),))
                     details_demission.append("Administrateur")
 
-            # Nettoyage des caches et rafraîchissement des rôles
             self.db_manager.clear_cache(f"is_staff_{user_id}")
             self.db_manager.clear_cache(f"is_admin_{user_id}")
             self.db_manager.clear_cache(f"alias_{user_id}")
@@ -296,16 +288,9 @@ class StaffHandlers:
             resume_roles = " et ".join(details_demission)
             logger.info("🚪 Démission enregistrée pour %s (%s) : %s", alias, user_id, resume_roles)
 
-            # Notification au propriétaire principal
             if primary_owner_id and int(primary_owner_id) != int(user_id):
                 try:
-                    notif_owner = (
-                        "🚪 <b>DÉMISSION D'UN MEMBRE DE L'ÉQUIPE</b>\n"
-                        "━━━━━━━━━━━━━━━━━━━━\n"
-                        f"• <b>Membre :</b> {alias_esc} (<code>{user_id}</code>)\n"
-                        f"• <b>Fonction(s) quittée(s) :</b> {html.escape(resume_roles)}\n\n"
-                        "<i>Les autorisations ont été révoquées et les dossiers actifs ont été replacés dans les disponibles.</i>"
-                    )
+                    notif_owner = ui.format_demission_owner_notification(alias, user_id, resume_roles)
                     await context.bot.send_message(
                         chat_id=primary_owner_id,
                         text=notif_owner,
@@ -314,15 +299,7 @@ class StaffHandlers:
                 except Exception as err_notif:
                     logger.warning("Échec notification démission à l'Owner : %s", err_notif)
 
-            # Confirmation à l'utilisateur
-            msg_confirm = (
-                "✅ <b>Démission prise en compte</b>\n\n"
-                f"Vous avez démissionné avec succès de vos fonctions : <b>{html.escape(resume_roles)}</b>.\n\n"
-                "Merci pour votre contribution au service !"
-            )
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🏠 RETOUR À L'ACCUEIL", callback_data="start_menu")
-            ]])
+            msg_confirm, kb = ui.format_demission_user_confirmation(resume_roles)
             await self._safe_edit_or_reply(query, msg_confirm, reply_markup=kb)
 
         except Exception as exc:
@@ -355,15 +332,7 @@ class StaffHandlers:
             "text_notes": [],
         }
 
-        text = (
-            f"🛡️ <b>Message Direction ➔ Piégeur ({html.escape(str(alias_staff))})</b>\n"
-            f"Dossier concerné : <b>#{req_num}</b>\n\n"
-            "Tapez votre message ou envoyez vos fichiers ci-dessous :\n"
-            "<i>Le message lui sera délivré sous votre alias officiel.</i>"
-        )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
-        ]])
+        text, kb = ui.get_admin_contact_staff_prompt(alias_staff, req_num, demande_id)
         await self._safe_edit_or_reply(query, text, reply_markup=kb)
 
     # ==================== GESTION DE L'ACCEPTATION / REFUS VIP ====================
@@ -392,32 +361,17 @@ class StaffHandlers:
 
             await query.answer(f"✅ Demande #{req_num} acceptée !", show_alert=False)
 
-            confirm_msg = (
-                f"✅ <b>Mission VIP acceptée (Dossier #{req_num})</b>\n\n"
-                f"Vous avez pris en charge le dossier de <b>{html.escape(str(prenom_cible))}</b>.\n"
-                "Le dossier est désormais actif sous le statut <b>⏳ En attente</b>."
-            )
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("👁️ VOIR LA DEMANDE", callback_data=f"retour_texte_{demande_id}")],
-                [InlineKeyboardButton("💌 MES SUIVIS", callback_data="demandes_suivies")]
-            ])
+            confirm_msg, kb = ui.build_vip_accept_content(req_num, prenom_cible, demande_id)
             await self._safe_edit_or_reply(query, confirm_msg, reply_markup=kb)
 
             try:
                 vip_user_id = dem["user_id"]
-                notif_vip = (
-                    f"🌟 <b>Votre demande #{req_num} a été acceptée !</b>\n\n"
-                    f"Votre référent <b>{html.escape(str(alias))}</b> a validé la prise en charge de votre dossier "
-                    f"pour <b>{html.escape(str(prenom_cible))}</b>.\n\n"
-                    "Le statut passe en <b>⏳ En attente</b> (premier contact en cours)."
-                )
+                notif_vip, notif_kb = ui.format_vip_accept_client_notification(req_num, alias, prenom_cible)
                 await context.bot.send_message(
                     chat_id=vip_user_id,
                     text=notif_vip,
                     parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("📋 SUIVRE MA DEMANDE", callback_data="voir_demandes")
-                    ]])
+                    reply_markup=notif_kb
                 )
             except Exception as e_notif:
                 logger.warning("Impossible de notifier le client VIP %s : %s", dem.get("user_id"), e_notif)
@@ -448,31 +402,17 @@ class StaffHandlers:
 
             await query.answer("Demande déclinée.", show_alert=False)
 
-            decline_msg = (
-                f"ℹ️ <b>Demande #{req_num} déclinée</b>\n\n"
-                "Le dossier a été replacé dans les <b>demandes disponibles</b> pour le reste de l'équipe."
-            )
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📮 DEMANDES DISPONIBLES", callback_data="demandes_disponibles")],
-                [InlineKeyboardButton("💌 MES SUIVIS", callback_data="demandes_suivies")]
-            ])
+            decline_msg, kb = ui.build_vip_decline_content(req_num)
             await self._safe_edit_or_reply(query, decline_msg, reply_markup=kb)
 
             try:
                 vip_user_id = dem["user_id"]
-                notif_vip = (
-                    f"ℹ️ <b>Mise à jour de votre demande VIP #{req_num}</b>\n\n"
-                    f"Votre référent sollicité ({html.escape(str(alias))}) n'est malheureusement pas disponible actuellement "
-                    f"pour prendre en charge le dossier de <b>{html.escape(str(prenom_cible))}</b>.\n\n"
-                    "Votre demande a été immédiatement transmise à l'ensemble de l'équipe avec priorité absolue !"
-                )
+                notif_vip, notif_kb = ui.format_vip_decline_client_notification(req_num, alias, prenom_cible)
                 await context.bot.send_message(
                     chat_id=vip_user_id,
                     text=notif_vip,
                     parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("📋 SUIVRE MA DEMANDE", callback_data="voir_demandes")
-                    ]])
+                    reply_markup=notif_kb
                 )
             except Exception as e_notif:
                 logger.warning("Impossible de notifier le client VIP %s du refus : %s", dem.get("user_id"), e_notif)
@@ -507,45 +447,18 @@ class StaffHandlers:
 
             if nb == 0:
                 self.db_manager.set_staff_pause_status(admin_id, paused=True)
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")
-                ]])
-                await self._safe_edit_or_reply(
-                    query,
-                    "⏸️ <b>Mode pause activé</b>\n\n"
-                    "• Vous ne recevrez plus aucune notification de nouvelle demande.\n"
-                    "• Vous n'apparaissez plus dans la liste de sélection VIP.\n"
-                    "• Vous n'avez aucun dossier actif en attente.",
-                    reply_markup=kb
-                )
+                text, kb = ui.get_pause_empty_content()
+                await self._safe_edit_or_reply(query, text, reply_markup=kb)
                 return
 
-            text = (
-                f"⏸️ <b>Passage en mode pause</b>\n\n"
-                f"Vous avez actuellement <b>{nb}</b> demande(s) en cours de traitement.\n"
-                "Que souhaitez-vous faire de vos dossiers ?"
-            )
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📁 CONSERVER MES DOSSIERS EN COURS", callback_data="admin_pause_keep")],
-                [InlineKeyboardButton("❌ LIBÉRER ET ABANDONNER MES DOSSIERS", callback_data="admin_pause_release")],
-                [InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]
-            ])
+            text, kb = ui.get_pause_prompt_content(nb)
             await self._safe_edit_or_reply(query, text, reply_markup=kb)
             return
 
         elif data == "admin_pause_keep":
             self.db_manager.set_staff_pause_status(admin_id, paused=True)
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")
-            ]])
-            await self._safe_edit_or_reply(
-                query,
-                "⏸️ <b>Mode pause activé (dossiers conservés)</b>\n\n"
-                "• Vos demandes en cours restent assignées à votre compte.\n"
-                "• Aucune nouvelle demande ne vous sera attribuée ni notifiée.\n"
-                "• Vous pouvez continuer à traiter vos suivis à votre rythme.",
-                reply_markup=kb
-            )
+            text, kb = ui.get_pause_kept_content()
+            await self._safe_edit_or_reply(query, text, reply_markup=kb)
             return
 
         elif data == "admin_pause_release":
@@ -558,44 +471,19 @@ class StaffHandlers:
                 try:
                     c_id = dem["user_id"]
                     req_num = dem["id"]
-                    msg_client = (
-                        f"⚠️ <b>Demande #{req_num} — Référent indisponible</b>\n\n"
-                        f"Votre référent (<b>{alias_esc}</b>) est actuellement en pause.\n"
-                        "Sa prise en charge sur votre dossier a donc été interrompue.\n\n"
-                        "Vous pouvez remettre votre demande dans la file d'attente ou la classer sans suite :"
-                    )
-                    kb_client = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 REPRENDRE MA DEMANDE", callback_data=f"reprendre_demande_{dem['id']}")],
-                        [InlineKeyboardButton("🗑️ ARCHIVER LA DEMANDE", callback_data=f"archiver_demande_{dem['id']}")]
-                    ])
+                    msg_client, kb_client = ui.format_pause_abandon_client_notification(req_num, alias_esc, dem["id"])
                     await context.bot.send_message(chat_id=c_id, text=msg_client, parse_mode="HTML", reply_markup=kb_client)
                 except Exception as err:
                     logger.warning("Notification abandon pause impossible pour user %s : %s", dem.get("user_id"), err)
 
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")
-            ]])
-            await self._safe_edit_or_reply(
-                query,
-                f"⏸️ <b>Mode pause activé</b>\n\n"
-                f"• {len(abandoned)} dossier(s) libéré(s) et notifiés aux demandeurs.\n"
-                "• Vous êtes désormais retiré du service jusqu'à votre reprise.",
-                reply_markup=kb
-            )
+            text, kb = ui.get_pause_released_content(len(abandoned))
+            await self._safe_edit_or_reply(query, text, reply_markup=kb)
             return
 
         elif data == "admin_resume":
             self.db_manager.set_staff_pause_status(admin_id, paused=False)
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")
-            ]])
-            await self._safe_edit_or_reply(
-                query,
-                "🟢 <b>Bon retour ! Vous êtes à nouveau en service.</b>\n\n"
-                "• Vous recevrez à nouveau les alertes et notifications.\n"
-                "• Vous êtes à nouveau sélectionnable par les clients VIP.",
-                reply_markup=kb
-            )
+            text, kb = ui.get_resume_service_content()
+            await self._safe_edit_or_reply(query, text, reply_markup=kb)
             return
 
     # ==================== CONTACT DEMANDEUR ET MODE CONVERSATION ====================
@@ -630,54 +518,18 @@ class StaffHandlers:
         cible_str = f" - {prenom_esc}" if prenom_esc else ""
 
         is_bundle = context.user_data.get(f"contact_with_content_{demande_id}", False)
-        badge_bundle = "✅ OUI" if is_bundle else "❌ NON"
         conv_active = self._is_conv_open(context, demande_id)
 
-        text = (
-            "💬 <b>CONTACTER LE CLIENT</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Demande #{req_num}{cible_str}\n\n"
-            "<i>Choisissez le type d'échange :</i>\n\n"
-            "• <i>Simple : Le client a droit à une seule réponse.</i>\n\n"
-            "• <i>Notification : Sans réponse possible.</i>\n\n"
-            "• <i>Conversation : Discussion fluide ouverte à plusieurs messages.</i>\n\n"
-            "<i>Option Contenu :</i>\n\n"
-            "<i>Activez-la si vous souhaitez envoyer du contenu (photos/vidéos)</i>"
-        )
-
-        buttons = [
-            [
-                InlineKeyboardButton("💬 SIMPLE", callback_data=f"contact_mode_{demande_id}_yes"),
-                InlineKeyboardButton("🔒 NOTIFICATION", callback_data=f"contact_mode_{demande_id}_no")
-            ]
-        ]
-
-        if conv_active:
-            buttons.append([
-                InlineKeyboardButton("🔒 CLÔTURER LA CONVERSATION", callback_data=f"contact_close_conv_{demande_id}")
-            ])
-        else:
-            buttons.append([
-                InlineKeyboardButton("💬 CONVERSATION", callback_data=f"contact_mode_{demande_id}_conv")
-            ])
-
-        buttons.append([
-            InlineKeyboardButton(f"📦 AVEC DU CONTENU : {badge_bundle}", callback_data=f"toggle_contact_content_{demande_id}")
-        ])
-
-        buttons.append([
-            InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
-        ])
+        text, keyboard = ui.build_contact_user_menu(req_num, cible_str, conv_active, is_bundle, demande_id)
 
         try:
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
         except Exception:
-            await self._safe_edit_or_reply(query, text, reply_markup=InlineKeyboardMarkup(buttons))
+            await self._safe_edit_or_reply(query, text, reply_markup=keyboard)
 
     async def _close_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE, demande_id: int):
         query = update.callback_query
         active_convs = context.bot_data.setdefault("active_conversations", {})
-
         active_convs.pop(demande_id, None)
 
         with self.db_manager.get_cursor() as cursor:
@@ -687,14 +539,7 @@ class StaffHandlers:
         if dem:
             req_num = dem["id"]
             try:
-                msg_client = (
-                    f"ℹ️ <b>Conversation clôturée (Demande #{req_num})</b>\n\n"
-                    "Votre référent a clôturé la discussion en cours pour ce dossier.\n"
-                    "Si besoin, vous pouvez consulter vos demandes ci-dessous :"
-                )
-                kb_client = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🗂️ MES DEMANDES", callback_data="voir_demandes")
-                ]])
+                msg_client, kb_client = ui.format_close_conv_client_notification(req_num)
                 await context.bot.send_message(chat_id=dem["user_id"], text=msg_client, parse_mode="HTML", reply_markup=kb_client)
             except Exception as e_notif:
                 logger.warning("Notification fermeture conversation impossible pour user %s : %s", dem.get("user_id"), e_notif)
@@ -733,27 +578,7 @@ class StaffHandlers:
             "text_notes": [],
         }
 
-        if is_content_bundle:
-            text = (
-                "📤 <b>ENVOI DU CONTENU GROUPÉ</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"Demande #{req_num} - {prenom_esc}\n\n"
-                "<i>Envoyez vos textes, photos, vidéos ou documents. Un panier se mettra à jour sous chaque envoi.</i>\n\n"
-                "<i>Cliquez sur ENVOYER quand vous aurez tout déposé.</i>"
-            )
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🚀 ENVOYER (0 ÉLÉMENT)", callback_data=f"send_batch_{demande_id}")],
-                [InlineKeyboardButton("⬅️ RETOUR", callback_data=f"cancel_contact_{demande_id}")]
-            ])
-        else:
-            text = (
-                f"💬 <b>Envoi direct (Dossier #{req_num} - {prenom_esc})</b>\n\n"
-                "Tapez votre message ou envoyez votre média : il sera <b>transmis instantanément</b> au client."
-            )
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ RETOUR", callback_data=f"cancel_contact_{demande_id}")
-            ]])
-
+        text, keyboard = ui.get_contact_input_prompt(req_num, prenom_esc, is_content_bundle, demande_id)
         await self._safe_edit_or_reply(query, text, reply_markup=keyboard)
 
     async def handle_collect_admin_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -787,12 +612,8 @@ class StaffHandlers:
                     "user_id": target_user_id,
                 }
 
-            header_text = f"💬 <b>Message de l'équipe (Demande #{req_num})</b>\nDe : <b>{alias_esc}</b>\n\n"
-            client_kb = None
-            if allow_reply:
-                client_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("💬 RÉPONDRE", callback_data=f"reply_to_admin_{demande_id}_{admin_id}")
-                ]])
+            header_text = ui.build_direct_message_header(req_num, alias_esc)
+            client_kb = ui.get_client_reply_keyboard(demande_id, admin_id) if allow_reply else None
 
             try:
                 if msg.photo or msg.video or msg.document:
@@ -817,16 +638,8 @@ class StaffHandlers:
                 self.db_manager.mark_content_delivered(demande_id)
 
                 if mode == "conv":
-                    staff_confirm_kb = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔒 CLÔTURER LA CONVERSATION", callback_data=f"contact_close_conv_{demande_id}")],
-                        [InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")]
-                    ])
-                    await msg.reply_text(
-                        "🚀 <b>Message transmis au demandeur !</b>\n"
-                        "<i>La conversation reste ouverte. Vous pouvez continuer à écrire ou envoyer des fichiers directement.</i>",
-                        parse_mode="HTML",
-                        reply_markup=staff_confirm_kb
-                    )
+                    staff_confirm_text, staff_confirm_kb = ui.get_staff_conv_open_confirmation(demande_id)
+                    await msg.reply_text(staff_confirm_text, parse_mode="HTML", reply_markup=staff_confirm_kb)
                 else:
                     kb_done = InlineKeyboardMarkup([[
                         InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
@@ -868,18 +681,7 @@ class StaffHandlers:
         status_msg_ids.clear()
 
         total = len(session["visual_media"]) + len(session["doc_media"]) + len(session["text_notes"])
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"🚀 ENVOYER ({total})", callback_data=f"send_batch_{demande_id}")],
-            [InlineKeyboardButton("⬅️ RETOUR", callback_data=f"cancel_contact_{demande_id}")]
-        ])
-
-        status_text = (
-            f"📥 <b>PANIER D'ENVOI : {total} élément{'s' if total > 1 else ''}</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Demande #{req_num}\n\n"
-            "<i>Déposez la suite de vos fichiers ou cliquez ci-dessous pour expédier l'ensemble :</i>"
-        )
+        status_text, keyboard = ui.build_basket_status_content(req_num, total, demande_id)
 
         new_status_msg = await msg.reply_text(status_text, parse_mode="HTML", reply_markup=keyboard)
         status_msg_ids.append(new_status_msg.message_id)
@@ -920,21 +722,8 @@ class StaffHandlers:
 
         combined_text = "\n".join([html.escape(t) for t in texts])
         corps = f"\n\n« {combined_text} »" if combined_text else ""
-
-        footer = "\n\n<i>💬 Une conversation directe est ouverte avec votre référent.</i>" if mode == "conv" else ("\n\n<i>Vous pouvez répondre une seule fois ci-dessous.</i>" if allow_reply else "")
-
-        header_text = (
-            f"💬 <b>Message de l'équipe (Demande #{req_num})</b>\n"
-            f"De : <b>{alias_esc}</b>"
-            f"{corps}"
-            f"{footer}"
-        )
-
-        user_keyboard = None
-        if allow_reply:
-            user_keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("💬 RÉPONDRE", callback_data=f"reply_to_admin_{demande_id}_{admin_id}")
-            ]])
+        header_text = ui.build_batch_message_header(req_num, alias_esc, corps, mode, allow_reply)
+        user_keyboard = ui.get_client_reply_keyboard(demande_id, admin_id) if allow_reply else None
 
         try:
             if visuals:
@@ -983,13 +772,7 @@ class StaffHandlers:
             self.db_manager.mark_content_delivered(demande_id)
 
             total_items = len(visuals) + len(docs) + len(texts)
-            done_text = (
-                f"✅ <b>Lot de {total_items} élément{'s' if total_items > 1 else ''} envoyé avec succès !</b>\n"
-                f"Transmis sous votre alias : <code>{alias_esc}</code>"
-            )
-            back_keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
-            ]])
+            done_text, back_keyboard = ui.get_batch_sent_success_content(total_items, alias_esc, demande_id)
 
             if query and query.message:
                 await query.message.reply_text(done_text, parse_mode="HTML", reply_markup=back_keyboard)
@@ -1003,13 +786,7 @@ class StaffHandlers:
 
     async def _handle_callback_error(self, query):
         try:
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_demandes")
-            ]])
-            await self._safe_edit_or_reply(
-                query,
-                "❌ <b>Erreur technique</b> lors du traitement de l'action opérateur.",
-                reply_markup=kb
-            )
+            text, kb = ui.get_staff_callback_error_content()
+            await self._safe_edit_or_reply(query, text, reply_markup=kb)
         except Exception as fallback_exc:
             logger.error("Échec notification erreur staff : %s", fallback_exc)

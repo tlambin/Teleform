@@ -1,9 +1,8 @@
 """Gestionnaire de navigation pour le formulaire de demande."""
 
-import html
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ConversationHandler
+from . import navigation_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -13,98 +12,30 @@ class NavigationManager:
 
     def __init__(self, formulaire_manager):
         self.form = formulaire_manager
-        self.navigation_config = {
-            "back_text": "⬅️ Retour",
-            "skip_text": "⏭️ Passer",
-            "cancel_text": "❌ Annuler",
-        }
         logger.info("NavigationManager initialisé avec support Orientation & Staff")
 
     def create_navigation_keyboard(self, current_state, include_skip=False):
-        """Construit le clavier dynamique adapté à l'étape courante."""
-        keyboard = []
-        action_row = []
-
-        # Bouton Retour
-        if current_state in self.form.state_history:
-            action_row.append(
-                InlineKeyboardButton(
-                    self.navigation_config["back_text"],
-                    callback_data=f"form_back_{current_state}",
-                )
-            )
-
-        # Bouton Passer
-        if include_skip and current_state in self.form.skippable_fields:
-            action_row.append(
-                InlineKeyboardButton(
-                    self.navigation_config["skip_text"],
-                    callback_data=f"form_skip_{current_state}",
-                )
-            )
-
-        if action_row:
-            keyboard.append(action_row)
-
-        # Bouton Annuler systématique
-        keyboard.append([
-            InlineKeyboardButton(
-                self.navigation_config["cancel_text"],
-                callback_data="form_cancel",
-            )
-        ])
-
-        return InlineKeyboardMarkup(keyboard)
+        """Délègue la construction du clavier de navigation standard."""
+        return ui.create_navigation_keyboard(
+            current_state,
+            self.form.state_history,
+            self.form.skippable_fields,
+            include_skip=include_skip
+        )
 
     def create_priority_keyboard(self, include_navigation=True):
-        """Clavier pour le choix Standard vs Prioritaire."""
-        keyboard = [
-            [InlineKeyboardButton("⭐ Oui - Prioritaire", callback_data="priorite_oui")],
-            [InlineKeyboardButton("📝 Non - Standard", callback_data="priorite_non")],
-        ]
-        if include_navigation:
-            keyboard.append([
-                InlineKeyboardButton(
-                    self.navigation_config["back_text"],
-                    callback_data=f"form_back_{self.form.PRIORITAIRE}",
-                ),
-                InlineKeyboardButton(
-                    self.navigation_config["cancel_text"],
-                    callback_data="form_cancel",
-                ),
-            ])
-        return InlineKeyboardMarkup(keyboard)
+        """Délègue la construction du clavier de choix de priorité."""
+        return ui.create_priority_keyboard(self.form.PRIORITAIRE, include_navigation=include_navigation)
 
     def create_vip_admin_choice_keyboard(self, target_ori: str = "hetero"):
-        """Génère la liste dynamique des référents Staff compatibles pour le membre VIP."""
+        """Délègue la génération de la liste dynamique des référents Staff pour VIP."""
         equipe = self.form.db_manager.get_available_staff()
-        kb_rows = []
-
-        for member in equipe:
-            raw_alias = member.get("alias") or f"Staff_{member['user_id']}"
-            perms = self.form.db_manager.get_staff_permissions(member["user_id"])
-            p_ori = perms.get("perm_orientation", "all")
-
-            is_compatible = (
-                p_ori in ("all", "bi")
-                or p_ori == target_ori
-                or (target_ori == "bi" and p_ori in ("hetero", "gay"))
-            )
-
-            if is_compatible:
-                kb_rows.append([
-                    InlineKeyboardButton(
-                        f"🦈 {raw_alias}",
-                        callback_data=f"vip_assign_admin_{member['user_id']}"
-                    )
-                ])
-
-        kb_rows.append([InlineKeyboardButton("🎲 Premier disponible (Aléatoire)", callback_data="vip_assign_admin_0")])
-        kb_rows.append([
-            InlineKeyboardButton(self.navigation_config["back_text"], callback_data=f"form_back_{self.form.CHOIX_ADMIN}"),
-            InlineKeyboardButton(self.navigation_config["cancel_text"], callback_data="form_cancel")
-        ])
-        return InlineKeyboardMarkup(kb_rows)
+        return ui.create_vip_admin_choice_keyboard(
+            equipe,
+            target_ori,
+            self.form.CHOIX_ADMIN,
+            self.form.db_manager
+        )
 
     async def _safe_edit_or_send(self, query, context, text: str, reply_markup=None):
         """Édite le message ou supprime la photo existante pour réémettre du texte."""
@@ -185,70 +116,7 @@ class NavigationManager:
             await query.answer("❌ Début du formulaire atteint", show_alert=True)
             return current_state
 
-        back_screens = {
-            self.form.ORIENTATION: {
-                "text": (
-                    "🎯 <b>Retour — Orientation de la cible</b>\n\n"
-                    "Quelle est l'<b>orientation de la cible</b> ou le type de piège souhaité ?"
-                ),
-                "keyboard": self.form._get_orientation_keyboard(),
-            },
-            self.form.PRENOM: {
-                "text": "📝 <b>Retour — Prénom</b>\n\nQuel est son <b>prénom</b> ?",
-                "keyboard": self.create_navigation_keyboard(self.form.PRENOM),
-            },
-            self.form.NOM: {
-                "text": "📝 <b>Retour — Nom</b>\n\nSon nom de famille :",
-                "keyboard": self.create_navigation_keyboard(self.form.NOM, include_skip=True),
-            },
-            self.form.AGE: {
-                "text": "📝 <b>Retour — Âge</b>\n\nSon âge (18-40 ans) :",
-                "keyboard": self.create_navigation_keyboard(self.form.AGE),
-            },
-            self.form.LOCALISATION: {
-                "text": "📝 <b>Retour — Localisation</b>\n\nSa localisation (ville, région ou pays) :",
-                "keyboard": self.create_navigation_keyboard(self.form.LOCALISATION),
-            },
-            self.form.PHOTO: {
-                "text": "📝 <b>Retour — Photo</b>\n\n📸 Envoyez une photo :",
-                "keyboard": self.create_navigation_keyboard(self.form.PHOTO),
-            },
-            self.form.INSTAGRAM: {
-                "text": "📝 <b>Retour — Instagram</b>\n\nSon profil Instagram :",
-                "keyboard": self.create_navigation_keyboard(self.form.INSTAGRAM, include_skip=True),
-            },
-            self.form.SNAPCHAT: {
-                "text": (
-                    "📝 <b>Retour — Snapchat</b>\n\n"
-                    + ("Son compte Snapchat (ou passez) :" if has_insta else "⚠️ <b>Au moins un réseau est requis.</b>\nSon compte Snapchat :")
-                ),
-                "keyboard": self.create_navigation_keyboard(self.form.SNAPCHAT, include_skip=has_insta),
-            },
-            self.form.DETAILS: {
-                "text": "📝 <b>Retour — Détails</b>\n\nDes précisions ou remarques à apporter ?",
-                "keyboard": self.create_navigation_keyboard(self.form.DETAILS, include_skip=True),
-            },
-            self.form.PRIORITAIRE: {
-                "text": (
-                    "📝 <b>Retour — Priorité</b>\n\n"
-                    "💎 <b>Demande prioritaire ?</b>\n\n"
-                    "Les demandes prioritaires nécessitent un montant et sont traitées en premier."
-                ),
-                "keyboard": self.create_priority_keyboard(),
-            },
-            self.form.MONTANT: {
-                "text": "💰 <b>Retour — Montant</b>\n\nIndiquez le montant (en euros) :",
-                "keyboard": self.create_navigation_keyboard(self.form.MONTANT),
-            },
-            self.form.CHOIX_ADMIN: {
-                "text": (
-                    "⭐ <b>Avantage Membre VIP : Choix du Référent</b>\n\n"
-                    "Sélectionnez le membre de l'équipe qui prendra personnellement en charge votre demande :"
-                ),
-                "keyboard": self.create_vip_admin_choice_keyboard(target_ori=target_ori),
-            },
-        }
-
+        back_screens = ui.get_back_screens_dict(self.form, has_insta, target_ori)
         screen = back_screens.get(previous_state)
         if screen:
             await self._safe_edit_or_send(
@@ -308,10 +176,7 @@ class NavigationManager:
                 "Vous devez obligatoirement fournir au moins un compte (<b>Instagram</b> ou <b>Snapchat</b>).\n\n"
                 "Saisissez son identifiant Snapchat ou revenez à l'étape précédente pour renseigner Instagram :"
             )
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Retourner à Instagram", callback_data=f"form_back_{self.form.SNAPCHAT}")],
-                [InlineKeyboardButton("❌ Annuler la demande", callback_data="form_cancel")]
-            ])
+            kb = ui.get_mandatory_network_keyboard(self.form.SNAPCHAT)
             await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
             return self.form.SNAPCHAT
 

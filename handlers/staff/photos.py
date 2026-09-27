@@ -1,9 +1,9 @@
 """Module de gestion de l'affichage des photos et fiches textuelles jointes aux demandes."""
 
-import html
 import logging
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
+from telegram import InputMediaPhoto, Update
 from telegram.ext import ContextTypes
+from . import photos_ui as ui
 
 logger = logging.getLogger(__name__)
 
@@ -15,49 +15,6 @@ class PhotosManager:
         self.db_manager = db_manager
         self.config = config
         logger.info("PhotosManager initialisé avec supervision hiérarchique")
-
-    def _build_keyboard_for_viewer(self, demande: dict, viewer_id: int, custom_back: str = None) -> InlineKeyboardMarkup:
-        """Construit le clavier contextuel : opérationnel, supervision admin ou lecture seule."""
-        demande_id = demande["id"]
-        admin_en_charge = demande.get("admin_en_charge")
-        is_assigned_operator = (viewer_id == admin_en_charge)
-        is_creator = (viewer_id == demande.get("user_id"))
-        is_admin_or_owner = self.config.is_admin(viewer_id) or self.config.is_owner(viewer_id)
-
-        # Cas 1 : Consultation depuis une liste de profil pour un dossier tiers
-        if custom_back and not (is_assigned_operator or is_creator):
-            keyboard = []
-            if is_admin_or_owner:
-                contact_row = []
-                if admin_en_charge and int(admin_en_charge) != viewer_id:
-                    contact_row.append(
-                        InlineKeyboardButton("🦈 Contacter le piégeur", callback_data=f"admin_contact_staff_{demande_id}_{admin_en_charge}")
-                    )
-                contact_row.append(
-                    InlineKeyboardButton("👤 Contacter le client", callback_data=f"contacter_{demande_id}")
-                )
-                keyboard.append(contact_row)
-
-            keyboard.append([InlineKeyboardButton("↩️ Retour à la liste", callback_data=custom_back)])
-            return InlineKeyboardMarkup(keyboard)
-
-        # Cas 2 : Vue opérationnelle complète (dossier dont on s'occupe ou consultation standard)
-        keyboard = [
-            [
-                InlineKeyboardButton("🔄 Statut", callback_data=f"change_status_{demande_id}"),
-                InlineKeyboardButton("💬 Contacter", callback_data=f"contacter_{demande_id}")
-            ],
-            [
-                InlineKeyboardButton("👤 Profil Demandeur", callback_data=f"profil_demande_{demande_id}")
-            ]
-        ]
-
-        if custom_back:
-            keyboard.append([InlineKeyboardButton("↩️ Retour à la liste", callback_data=custom_back)])
-        else:
-            keyboard.append([InlineKeyboardButton("🔙 Mes Suivis", callback_data="demandes_suivies")])
-
-        return InlineKeyboardMarkup(keyboard)
 
     async def voir_photo_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Affiche ou met à jour la fiche avec sa photo native sans bouton de bascule texte."""
@@ -82,6 +39,7 @@ class PhotosManager:
                 return
 
         viewer_id = update.effective_user.id
+        is_admin_or_owner = self.config.is_admin(viewer_id) or self.config.is_owner(viewer_id)
 
         try:
             with self.db_manager.get_cursor() as cursor:
@@ -100,51 +58,8 @@ class PhotosManager:
                 await query.answer("❌ Aucune photo associée à cette demande.", show_alert=True)
                 return
 
-            priorite_icon = "💎" if demande.get("prioritaire") else "📝"
-            type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-            montant_val = float(demande.get("montant") or 0.0)
-            montant_str = f" ({montant_val:.2f} €)" if demande.get("prioritaire") else ""
-
-            prenom_esc = html.escape(str(demande.get("prenom") or ""))
-            nom_esc = html.escape(str(demande.get("nom") or ""))
-            nom_complet = f"{prenom_esc} {nom_esc}".strip()
-            loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-
-            statut_display = self.db_manager.format_statut_display(
-                demande.get("statut", "📥 Reçue"),
-                demande.get("is_difficile", False),
-                demande.get("reussie_substatus")
-            )
-            statut_esc = html.escape(statut_display)
-            req_num = html.escape(str(demande.get("request_number", demande["id"])))
-
-            if demande.get("username"):
-                user_display = f"@{html.escape(demande['username'])}"
-            elif demande.get("user_first_name"):
-                user_display = html.escape(demande["user_first_name"])
-            else:
-                user_display = f"User {demande['user_id']}"
-
-            date_str = str(demande.get("date_creation", ""))[:16]
-
-            caption_lines = [
-                f"📷 <b>Photo de la demande #{req_num}</b>\n",
-                f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
-                f"📍 <b>Localisation :</b> {loc_esc}",
-                f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-                f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
-                f"🙋 <b>Demandeur :</b> {user_display}"
-            ]
-
-            if demande.get("details"):
-                det = str(demande["details"])
-                det_court = (det[:100] + "...") if len(det) > 100 else det
-                caption_lines.append(f"💬 <b>Détails :</b> <i>{html.escape(det_court)}</i>")
-
-            caption_lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
-            caption = "\n".join(caption_lines)
-
-            keyboard = self._build_keyboard_for_viewer(demande, viewer_id, custom_back)
+            caption = ui.format_demande_card(demande, self.db_manager, is_photo=True)
+            keyboard = ui.build_keyboard_for_viewer(demande, viewer_id, custom_back, is_admin_or_owner=is_admin_or_owner)
             chat_id = query.message.chat_id if query.message else None
 
             if query.message and query.message.photo:
@@ -195,6 +110,7 @@ class PhotosManager:
                 return
 
         viewer_id = update.effective_user.id
+        is_admin_or_owner = self.config.is_admin(viewer_id) or self.config.is_owner(viewer_id)
 
         try:
             with self.db_manager.get_cursor() as cursor:
@@ -213,66 +129,15 @@ class PhotosManager:
                 await query.answer("❌ Demande introuvable.", show_alert=True)
                 return
 
-            # Si une photo existe et qu'aucun retour texte explicite n'est imposé, affichage photo native
             if demande.get("photo_id") and not custom_back:
                 await self.voir_photo_demande(update, context)
                 return
 
-            priorite_icon = "💎" if demande.get("prioritaire") else "📝"
-            type_str = "Prioritaire" if demande.get("prioritaire") else "Standard"
-            montant_val = float(demande.get("montant") or 0.0)
-            montant_str = f" ({montant_val:.2f} €)" if demande.get("prioritaire") else ""
-
-            prenom_esc = html.escape(str(demande.get("prenom") or ""))
-            nom_esc = html.escape(str(demande.get("nom") or ""))
-            nom_complet = f"{prenom_esc} {nom_esc}".strip()
-            loc_esc = html.escape(str(demande.get("localisation") or "Non précisée"))
-
-            statut_display = self.db_manager.format_statut_display(
-                demande.get("statut", "📥 Reçue"),
-                demande.get("is_difficile", False),
-                demande.get("reussie_substatus")
-            )
-            statut_esc = html.escape(statut_display)
-            req_num = html.escape(str(demande.get("request_number", demande["id"])))
-
-            if demande.get("username"):
-                user_display = f"@{html.escape(demande['username'])}"
-            elif demande.get("user_first_name"):
-                user_display = html.escape(demande["user_first_name"])
-            else:
-                user_display = f"User {demande['user_id']}"
-
             admin_en_charge = demande.get("admin_en_charge")
             admin_alias = self.db_manager.get_staff_alias(admin_en_charge) if admin_en_charge else "Non assigné"
-            date_str = str(demande.get("date_creation", ""))[:16]
 
-            lines = [
-                f"💌 <b>Demande #{req_num}</b>\n",
-                f"👤 <b>Identité :</b> {nom_complet} ({demande.get('age', '?')} ans)",
-                f"📍 <b>Localisation :</b> {loc_esc}",
-                f"🎯 <b>Type :</b> {priorite_icon} {type_str}{montant_str}",
-                f"📊 <b>Statut :</b> <code>{statut_esc}</code>",
-                f"🦈 <b>Référent :</b> {html.escape(str(admin_alias))}",
-                f"🙋 <b>Demandeur :</b> {user_display}"
-            ]
-
-            reseaux = []
-            if demande.get("instagram"):
-                ig = html.escape(str(demande["instagram"]))
-                reseaux.append(f"📷 <a href='https://instagram.com/{ig}'>@{ig}</a>")
-            if demande.get("snapchat"):
-                snap = html.escape(str(demande["snapchat"]))
-                reseaux.append(f"👻 <a href='https://snapchat.com/add/{snap}'>{snap}</a>")
-            if reseaux:
-                lines.append(f"🌐 <b>Réseaux :</b> {' | '.join(reseaux)}")
-
-            if demande.get("details"):
-                lines.append(f"💬 <b>Détails :</b> <i>{html.escape(str(demande['details']))}</i>")
-
-            lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
-
-            keyboard = self._build_keyboard_for_viewer(demande, viewer_id, custom_back)
+            text = ui.format_demande_card(demande, self.db_manager, is_photo=False, admin_alias=admin_alias)
+            keyboard = ui.build_keyboard_for_viewer(demande, viewer_id, custom_back, is_admin_or_owner=is_admin_or_owner)
             chat_id = query.message.chat_id if query.message else None
 
             if query.message and query.message.photo:
@@ -283,14 +148,14 @@ class PhotosManager:
                 if chat_id:
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text="\n".join(lines),
+                        text=text,
                         parse_mode="HTML",
                         reply_markup=keyboard,
                         disable_web_page_preview=True
                     )
             else:
                 await query.edit_message_text(
-                    text="\n".join(lines),
+                    text=text,
                     parse_mode="HTML",
                     reply_markup=keyboard,
                     disable_web_page_preview=True
