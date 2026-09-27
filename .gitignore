@@ -2,11 +2,24 @@
 .env
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Données locales et persistance
+data_sessions.json*
+bot_conversations.pickle*
+*.sqlite3
+*.db
 
 # Logs locaux
 logs/
 *.log
 *.log.*
 
-# Base locale
-*.sqlite3
+# Fichiers temporaires système et éditeurs
+*.tmp
+*.tmp_*
+.vscode/
+.idea/
+*.swp
+*~

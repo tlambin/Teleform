@@ -13,13 +13,16 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
-    """Gère le pool de connexions MySQL et le cache applicatif."""
+    """Gère le pool de connexions MySQL et le cache applicatif avec résilience uWSGI."""
 
     def __init__(self, config, pool_size: int = 2):
         self.config = config
         self.pool_size = pool_size
         self._pool: Optional[pooling.MySQLConnectionPool] = None
         self._pool_pid: Optional[int] = None
+        self._pool_created_at: float = 0.0
+        self._pool_recycle_seconds = 280.0  # Recyclage avant le timeout de 300 s de PythonAnywhere
+
         self._cache: Dict[str, Any] = {}
         self._cache_timestamp: Dict[str, float] = {}
         self._cache_ttl = 300.0
@@ -85,6 +88,7 @@ class ConnectionManager:
                 **db_config,
             )
             self._pool_pid = current_pid
+            self._pool_created_at = time.time()
             logger.info("Pool MySQL établi sur %s (base : %s) [PID: %d]", db_config["host"], self.database_name, current_pid)
         except Error as exc:
             if getattr(exc, "errno", None) == 1226:
@@ -112,8 +116,12 @@ class ConnectionManager:
         return conn
 
     def _get_connection(self):
-        """Récupère une connexion saine avec détection post-fork."""
-        if self._pool_pid != os.getpid():
+        """Récupère une connexion saine avec détection post-fork et auto-reconnexion."""
+        current_pid = os.getpid()
+        pool_age = time.time() - self._pool_created_at
+
+        # Réinitialisation si changement de worker (fork) ou si le pool dépasse le temps de survie max
+        if self._pool_pid != current_pid or pool_age > self._pool_recycle_seconds:
             self._init_connection_pool()
 
         conn = None
@@ -127,19 +135,16 @@ class ConnectionManager:
         if conn is None:
             conn = self._create_direct_connection()
 
+        # Validation de la connexion vivante avant utilisation
         try:
             conn.ping(reconnect=True, attempts=3, delay=1)
-            if not conn.is_connected():
-                conn.reconnect(attempts=3, delay=1)
-        except Exception as ping_err:
-            logger.warning("Connexion perdue (%s), recréation...", ping_err)
+        except Exception:
             try:
                 conn.close()
             except Exception:
                 pass
             conn = self._create_direct_connection()
 
-        self._apply_session_settings(conn)
         return conn
 
     @contextmanager

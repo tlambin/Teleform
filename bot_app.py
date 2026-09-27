@@ -14,17 +14,29 @@ def create_telegram_app():
     """Initialise la configuration, la base de données et configure l'application Telegram."""
     config = Config()
 
-    # Détection du proxy obligatoire pour PythonAnywhere
+    # Détection fiable du proxy sortant PythonAnywhere (comptes gratuits)
     proxy_url = os.getenv("HTTP_PROXY") or os.getenv("http_proxy")
-    if not proxy_url and "pythonanywhere" in os.getenv("PYTHONANYWHERE_SITE", ""):
-        proxy_url = "http://proxy.server:3128"
+    if not proxy_url:
+        is_pa = any("pythonanywhere" in os.getenv(var, "").lower() for var in ("PYTHONANYWHERE_SITE", "PYTHONANYWHERE_DOMAIN"))
+        if is_pa:
+            proxy_url = "http://proxy.server:3128"
 
-    request = HTTPXRequest(proxy=proxy_url) if proxy_url else None
+    # Configuration HTTPX avec marges de timeout confortables
+    request_kwargs = {
+        "connect_timeout": 10.0,
+        "read_timeout": 20.0,
+        "write_timeout": 20.0,
+        "pool_timeout": 10.0,
+    }
+    if proxy_url:
+        request_kwargs["proxy"] = proxy_url
 
-    # Maintient un pool réduit pour respecter la limite MySQL
+    request = HTTPXRequest(**request_kwargs)
+
+    # Maintient un pool réduit pour respecter le quota max_user_connections
     db_manager = DatabaseManager(config, pool_size=2)
 
-    # Initialisation des tables et application des migrations DDL
+    # Création des tables et index initiaux
     db_manager.init_db()
 
     config.set_db_manager(db_manager)
@@ -32,7 +44,9 @@ def create_telegram_app():
     bot = TelegramBot(config, db_manager, request=request)
     app = bot.setup_application()
 
-    # Injection dans bot_data pour les tâches d'arrière-plan/cron
+    # Injection partagée pour les jobs de fond et le cron horaire
     app.bot_data["db_manager"] = db_manager
+    app.bot_data["config"] = config
 
+    logger.info("Application Telegram initialisée avec succès.")
     return app

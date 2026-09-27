@@ -8,6 +8,7 @@ import pytz
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import Forbidden
 from telegram.ext import ContextTypes
+from utils.session import session_manager
 
 logger = logging.getLogger(__name__)
 PARIS_TZ = pytz.timezone("Europe/Paris")
@@ -16,6 +17,9 @@ PARIS_TZ = pytz.timezone("Europe/Paris")
 # ==================== RAPPELS ADMIN / STAFF ====================
 
 async def _send_single_admin_reminder(context: ContextTypes.DEFAULT_TYPE, db_manager, user_id: int, active_demandes: list, is_silent: bool):
+    if hasattr(db_manager, "is_bot_blocked") and db_manager.is_bot_blocked(user_id):
+        return
+
     count = len(active_demandes)
     lines = [
         f"⏰ <b>Rappel de vos demandes suivies ({count})</b>\n",
@@ -49,6 +53,8 @@ async def _send_single_admin_reminder(context: ContextTypes.DEFAULT_TYPE, db_man
         logger.info("Rappel automatique envoyé au staff %s (silencieux: %s)", user_id, is_silent)
     except Forbidden:
         logger.warning("Rappel staff non remis : l'opérateur %s a bloqué le bot.", user_id)
+        if hasattr(db_manager, "mark_bot_blocked"):
+            db_manager.mark_bot_blocked(user_id, is_blocked=True)
     except Exception as err:
         logger.warning("Erreur envoi rappel programmé au staff %s : %s", user_id, err)
 
@@ -117,15 +123,27 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-# ==================== AUTO-ARCHIVAGE ====================
+# ==================== AUTO-ARCHIVAGE & MAINTENANCE DISQUE ====================
 
 async def check_and_auto_archive_demandes(context: ContextTypes.DEFAULT_TYPE):
     db_manager = context.application.bot_data.get("db_manager")
     if not db_manager:
         return
 
+    # Maintenance disque et nettoyage des sessions orphelines / temporaires
     try:
-        hours = db_manager.get_auto_archive_hours()
+        session_manager.cleanup_disk()
+    except Exception as sess_err:
+        logger.debug("Erreur maintenance disque sessions : %s", sess_err)
+
+    try:
+        if hasattr(db_manager, "get_auto_archive_hours"):
+            hours = db_manager.get_auto_archive_hours()
+        elif hasattr(db_manager, "get_config_value"):
+            hours = int(db_manager.get_config_value("auto_archive_hours", 72) or 72)
+        else:
+            hours = 72
+
         expired_demandes = db_manager.get_expired_delivered_demandes(hours=hours)
         for dem in expired_demandes:
             dem_id = dem["id"]
@@ -140,6 +158,9 @@ async def check_and_auto_archive_demandes(context: ContextTypes.DEFAULT_TYPE):
 
 async def _send_single_delivery_reminder(context: ContextTypes.DEFAULT_TYPE, db_manager, dem: dict, days: int):
     admin_id = dem["admin_id"]
+    if hasattr(db_manager, "is_bot_blocked") and db_manager.is_bot_blocked(admin_id):
+        return
+
     dem_id = dem["id"]
     req_num = html.escape(str(dem.get("request_number") or dem_id))
     prenom = html.escape(str(dem.get("prenom") or "la cible"))
@@ -166,6 +187,8 @@ async def _send_single_delivery_reminder(context: ContextTypes.DEFAULT_TYPE, db_
         logger.info("Rappel de livraison (%sj) envoyé au staff %s pour la demande #%s", days, admin_id, req_num)
     except Forbidden:
         logger.warning("Rappel livraison non remis : le staff %s a bloqué le bot.", admin_id)
+        if hasattr(db_manager, "mark_bot_blocked"):
+            db_manager.mark_bot_blocked(admin_id, is_blocked=True)
     except Exception as notif_err:
         logger.warning("Impossible d'envoyer le rappel de livraison à %s : %s", admin_id, notif_err)
 
@@ -176,7 +199,13 @@ async def check_and_send_delivery_reminders(context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        days = db_manager.get_delivery_reminder_days()
+        if hasattr(db_manager, "get_delivery_reminder_days"):
+            days = db_manager.get_delivery_reminder_days()
+        elif hasattr(db_manager, "get_config_value"):
+            days = int(db_manager.get_config_value("delai_livraison_jours", 3) or 3)
+        else:
+            days = 3
+
         undelivered = db_manager.get_undelivered_terminee_demandes_for_reminder(days=days)
         tasks = [_send_single_delivery_reminder(context, db_manager, dem, days) for dem in undelivered]
         if tasks:
@@ -189,6 +218,9 @@ async def check_and_send_delivery_reminders(context: ContextTypes.DEFAULT_TYPE):
 
 async def _send_single_paid_delivery_reminder(context: ContextTypes.DEFAULT_TYPE, db_manager, dem: dict):
     admin_id = dem["admin_id"]
+    if hasattr(db_manager, "is_bot_blocked") and db_manager.is_bot_blocked(admin_id):
+        return
+
     dem_id = dem["id"]
     req_num = html.escape(str(dem.get("request_number") or dem_id))
     prenom = html.escape(str(dem.get("prenom") or "la cible"))
@@ -216,6 +248,8 @@ async def _send_single_paid_delivery_reminder(context: ContextTypes.DEFAULT_TYPE
         logger.info("Relance quotidienne livraison post-paiement envoyée à %s pour #%s", admin_id, req_num)
     except Forbidden:
         logger.warning("Relance livraison payée non remise : le staff %s a bloqué le bot.", admin_id)
+        if hasattr(db_manager, "mark_bot_blocked"):
+            db_manager.mark_bot_blocked(admin_id, is_blocked=True)
     except Exception as err:
         logger.warning("Erreur relance livraison payée à %s : %s", admin_id, err)
 
@@ -238,6 +272,9 @@ async def check_and_send_paid_delivery_reminders(context: ContextTypes.DEFAULT_T
 
 async def _send_single_unpaid_demande_reminder(context: ContextTypes.DEFAULT_TYPE, db_manager, dem: dict):
     user_id = dem["user_id"]
+    if hasattr(db_manager, "is_bot_blocked") and db_manager.is_bot_blocked(user_id):
+        return
+
     dem_id = dem["id"]
     req_num = html.escape(str(dem.get("request_number") or dem_id))
     prenom = html.escape(str(dem.get("prenom") or "votre contact"))
@@ -267,6 +304,8 @@ async def _send_single_unpaid_demande_reminder(context: ContextTypes.DEFAULT_TYP
         logger.info("Rappel d'impayé envoyé au demandeur %s pour le dossier #%s", user_id, req_num)
     except Forbidden:
         logger.warning("Rappel impayé non remis : le demandeur %s a bloqué le bot.", user_id)
+        if hasattr(db_manager, "mark_bot_blocked"):
+            db_manager.mark_bot_blocked(user_id, is_blocked=True)
     except Exception as notif_err:
         logger.warning("Impossible d'envoyer le rappel d'impayé au client %s : %s", user_id, notif_err)
 
@@ -300,27 +339,30 @@ async def _process_single_remun_abandon(context: ContextTypes.DEFAULT_TYPE, db_m
     if archived:
         logger.info("❌ Demande #%s abandonnée automatiquement pour délai de rémunération expiré (%sj).", req_num, days)
 
-        try:
-            msg_client = (
-                f"❌ <b>Dossier #{req_num} abandonné et clôturé</b>\n\n"
-                f"Votre demande concernant <b>{prenom}</b> a été clôturée automatiquement suite à l'absence de réponse "
-                f"à la proposition de rémunération sous un délai de {days} jours.\n\n"
-                "Votre quota de demandes actives a été libéré."
-            )
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=msg_client,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")
-                ]])
-            )
-        except Forbidden:
-            logger.warning("Notification abandon non remise au client %s (bot bloqué).", user_id)
-        except Exception as notif_user_err:
-            logger.warning("Impossible de notifier le client %s de l'abandon de rémunération : %s", user_id, notif_user_err)
+        if not (hasattr(db_manager, "is_bot_blocked") and db_manager.is_bot_blocked(user_id)):
+            try:
+                msg_client = (
+                    f"❌ <b>Dossier #{req_num} abandonné et clôturé</b>\n\n"
+                    f"Votre demande concernant <b>{prenom}</b> a été clôturée automatiquement suite à l'absence de réponse "
+                    f"à la proposition de rémunération sous un délai de {days} jours.\n\n"
+                    "Votre quota de demandes actives a été libéré."
+                )
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=msg_client,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")
+                    ]])
+                )
+            except Forbidden:
+                logger.warning("Notification abandon non remise au client %s (bot bloqué).", user_id)
+                if hasattr(db_manager, "mark_bot_blocked"):
+                    db_manager.mark_bot_blocked(user_id, is_blocked=True)
+            except Exception as notif_user_err:
+                logger.warning("Impossible de notifier le client %s de l'abandon de rémunération : %s", user_id, notif_user_err)
 
-        if staff_id:
+        if staff_id and not (hasattr(db_manager, "is_bot_blocked") and db_manager.is_bot_blocked(staff_id)):
             try:
                 msg_staff = (
                     f"ℹ️ <b>Dossier #{req_num} clôturé pour expiration ({days}j)</b>\n\n"
@@ -334,6 +376,8 @@ async def _process_single_remun_abandon(context: ContextTypes.DEFAULT_TYPE, db_m
                 )
             except Forbidden:
                 logger.warning("Notification abandon non remise au staff %s (bot bloqué).", staff_id)
+                if hasattr(db_manager, "mark_bot_blocked"):
+                    db_manager.mark_bot_blocked(staff_id, is_blocked=True)
             except Exception as notif_staff_err:
                 logger.warning("Impossible de notifier le staff %s de l'abandon de rémunération : %s", staff_id, notif_staff_err)
 
@@ -344,7 +388,13 @@ async def check_and_auto_abandon_expired_remun_demandes(context: ContextTypes.DE
         return
 
     try:
-        days = db_manager.get_remun_expiration_days()
+        if hasattr(db_manager, "get_remun_expiration_days"):
+            days = db_manager.get_remun_expiration_days()
+        elif hasattr(db_manager, "get_config_value"):
+            days = int(db_manager.get_config_value("delai_remun_expire_jours", 2) or 2)
+        else:
+            days = 2
+
         expired = db_manager.get_expired_remun_demandes_for_abandon(days=days)
         tasks = [_process_single_remun_abandon(context, db_manager, dem, days) for dem in expired]
         if tasks:

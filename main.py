@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point d'entrée principal de l'application Telegram avec architecture RBAC."""
+"""Point d'entrée principal de l'application Telegram avec architecture RBAC et persistance."""
 
 import asyncio
 from datetime import datetime
@@ -36,6 +36,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    PicklePersistence,
     PreCheckoutQueryHandler,
     filters,
 )
@@ -54,7 +55,7 @@ from jobs.scheduled_tasks import (
     check_and_send_unpaid_demande_reminders,
 )
 from utils.interface_manager import InterfaceManager
-from utils.session import clear_transient_user_data
+from utils.session import clear_transient_user_data, session_manager
 
 # ==================== CONFIGURATION DES LOGS ====================
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
@@ -66,6 +67,7 @@ rotating_handler = RotatingFileHandler(
     maxBytes=2 * 1024 * 1024,
     backupCount=4,
     encoding="utf-8",
+    delay=True,
 )
 stream_handler = logging.StreamHandler(sys.stdout)
 
@@ -151,11 +153,12 @@ class TelegramBot:
         if self.db_manager.is_user_banned(user_id):
             await update.message.reply_text("🚫 <b>Votre compte a été banni par l'administration.</b>", parse_mode="HTML")
             return
-        clear_transient_user_data(context)
+        clear_transient_user_data(context, user_id=user_id)
         return await self.user_handlers.start(update, context)
 
     async def wrapped_stop_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        clear_transient_user_data(context)
+        user_id = update.effective_user.id if update.effective_user else None
+        clear_transient_user_data(context, user_id=user_id)
         msg = (
             "🛑 <b>Opération interrompue</b>\n\n"
             "Toutes vos saisies temporaires en cours ont été annulées.\n"
@@ -167,14 +170,16 @@ class TelegramBot:
 
     async def wrapped_interface_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
+        user_id = update.effective_user.id if update.effective_user else None
         if query and query.data in ("start_menu", "parametres", "gerer_demandes", "menu_membres", "menu_mon_profil"):
-            clear_transient_user_data(context)
+            clear_transient_user_data(context, user_id=user_id)
         return await self.user_handlers.handle_interface_callbacks(update, context)
 
     async def wrapped_user_callbacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
+        user_id = update.effective_user.id if update.effective_user else None
         if query and query.data in ("form_cancel", "cancel_edit", "cancel_user_reply"):
-            clear_transient_user_data(context)
+            clear_transient_user_data(context, user_id=user_id)
         return await self.user_handlers.handle_callbacks(update, context)
 
     async def setup_bot_commands(self, app: Application):
@@ -223,6 +228,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.staff_handlers.alias.cancel_alias_change, pattern="^cancel_alias_change$"),
                 CommandHandler("stop", self.staff_handlers.alias.cancel_alias_change),
             ],
+            name="modify_alias_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -242,6 +249,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.staff_handlers.contact.cancel_contact_owner, pattern="^cancel_contact_owner$"),
                 CommandHandler("stop", self.staff_handlers.contact.cancel_contact_owner),
             ],
+            name="contact_owner_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -258,6 +267,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.staff_handlers.contact.cancel_owner_reply, pattern="^cancel_owner_reply$"),
                 CommandHandler("stop", self.staff_handlers.contact.cancel_owner_reply),
             ],
+            name="owner_reply_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -277,6 +288,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.admin_handlers.cancel_staff_add, pattern="^cancel_staff_add$"),
                 CommandHandler("stop", self.admin_handlers.cancel_staff_add),
             ],
+            name="add_staff_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -296,6 +309,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.admin_handlers.cancel_staff_remove, pattern="^cancel_staff_remove$"),
                 CommandHandler("stop", self.admin_handlers.cancel_staff_remove),
             ],
+            name="remove_staff_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -312,6 +327,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.admin_handlers.cancel_admin_add, pattern="^cancel_admin_add$"),
                 CommandHandler("stop", self.admin_handlers.cancel_admin_add),
             ],
+            name="add_admin_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -331,6 +348,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.admin_handlers.cancel_admin_remove, pattern="^cancel_admin_remove$"),
                 CommandHandler("stop", self.admin_handlers.cancel_admin_remove),
             ],
+            name="remove_admin_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -351,6 +370,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.admin_handlers.cancel_vip_action, pattern="^cancel_vip_action$"),
                 CommandHandler("stop", self.admin_handlers.cancel_vip_action),
             ],
+            name="add_vip_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -367,6 +388,8 @@ class TelegramBot:
                 CallbackQueryHandler(self.admin_handlers.cancel_vip_action, pattern="^cancel_vip_action$"),
                 CommandHandler("stop", self.admin_handlers.cancel_vip_action),
             ],
+            name="remove_vip_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,
@@ -440,7 +463,18 @@ class TelegramBot:
             logger.warning("Erreur rafraîchissement préférences staff : %s", err)
 
     def setup_application(self) -> Application:
-        builder = Application.builder().token(self.config.BOT_TOKEN)
+        persistence_file = os.path.join(os.path.dirname(__file__), "bot_conversations.pickle")
+        persistence = PicklePersistence(
+            filepath=persistence_file,
+            store_data=None,
+            update_interval=5,
+        )
+
+        builder = (
+            Application.builder()
+            .token(self.config.BOT_TOKEN)
+            .persistence(persistence)
+        )
         if self.request:
             builder = builder.request(self.request)
 
@@ -452,7 +486,7 @@ class TelegramBot:
         for handler in self.create_conversation_handlers():
             app.add_handler(handler)
 
-        # Enregistrement direct des écouteurs de paiement sur user_handlers.paiement
+        # Enregistrement direct des écouteurs de paiement
         app.add_handler(PreCheckoutQueryHandler(self.user_handlers.paiement.precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, self.user_handlers.paiement.successful_payment_callback))
 
@@ -528,26 +562,31 @@ class TelegramBot:
             )
             return
 
-        if context.user_data.get("waiting_danger_confirmation"):
+        # 1. Zone de danger (purge) : vérification RAM + disque
+        if context.user_data.get("waiting_danger_confirmation") or session_manager.get_state(user_id, "danger_purge"):
             handled = await self.admin_handlers.handle_danger_text_input(update, context)
             if handled:
                 return
 
-        if context.user_data.get("waiting_ban_reason"):
+        # 2. Motif de ban : vérification RAM + disque
+        if context.user_data.get("waiting_ban_reason") or session_manager.get_state(user_id, "ban_process"):
             handled = await self.admin_handlers.handle_ban_reason_input(update, context)
             if handled:
                 return
 
-        if context.user_data.get("waiting_member_search"):
+        # 3. Recherche membre : vérification RAM + disque
+        if context.user_data.get("waiting_member_search") or session_manager.get_state(user_id, "waiting_member_search"):
             handled = await self.admin_handlers.handle_member_search_input(update, context)
             if handled:
                 return
 
+        # 4. Session de contact staff
         if context.user_data.get("contact_session"):
             handled = await self.staff_handlers.handle_collect_admin_media(update, context)
             if handled:
                 return
 
+        # 5. Flux textuels usagers
         await self.user_handlers.handle_text_messages(update, context)
 
     def run(self):

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class FormulaireManager:
-    """Gestionnaire du formulaire guidé de création de demande."""
+    """Gestionnaire du formulaire guidé de création de demande avec persistance."""
 
     ACTIVE_STATUSES = ("📥 Reçue", "🎯 Assignée (VIP)", "⏳ En attente", "🔄 En cours")
 
@@ -67,7 +67,7 @@ class FormulaireManager:
         logger.info("FormulaireManager initialisé avec support VIP Assignée & Auto-Assign")
 
     def get_conversation_handler(self):
-        """Retourne le ConversationHandler complet du formulaire."""
+        """Retourne le ConversationHandler complet du formulaire configuré pour la persistance."""
         nav_pattern = "^form_(back|skip|cancel)($|_.*)"
         return ConversationHandler(
             entry_points=[
@@ -134,8 +134,8 @@ class FormulaireManager:
                 CommandHandler("cancel", self.cancel),
                 CommandHandler("stop", self.cancel),
             ],
-            name="demande_creation",
-            persistent=False,
+            name="demande_creation_conv",
+            persistent=True,
             allow_reentry=True,
             per_user=True,
             per_message=False,

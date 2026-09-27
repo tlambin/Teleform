@@ -9,6 +9,7 @@ from flask import Flask, jsonify, request
 from telegram import Update
 from config import Config
 from bot_app import create_telegram_app
+from jobs import scheduled_tasks
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,8 +60,8 @@ def index():
 @flask_app.route(f'/{config.BOT_TOKEN}', methods=['POST'])
 def webhook():
     if TELEGRAM_WEBHOOK_SECRET:
-        secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        if secret_header != TELEGRAM_WEBHOOK_SECRET:
+        secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not hmac.compare_digest(secret_header, TELEGRAM_WEBHOOK_SECRET):
             return jsonify(status="forbidden"), 403
 
     json_data = request.get_json(force=True, silent=True)
@@ -115,8 +116,6 @@ def trigger_hourly_reminders():
             from database import DatabaseManager
             db_manager = DatabaseManager(config)
 
-        import main as bot_main
-
         class DummyJob:
             data = {"db_manager": db_manager}
 
@@ -132,12 +131,12 @@ def trigger_hourly_reminders():
             logger.info("🚀 Démarrage des tâches périodiques en arrière-plan...")
             try:
                 await asyncio.gather(
-                    bot_main.check_and_send_admin_reminders(ctx),
-                    bot_main.check_and_auto_archive_demandes(ctx),
-                    bot_main.check_and_send_delivery_reminders(ctx),
-                    bot_main.check_and_send_paid_delivery_reminders(ctx),
-                    bot_main.check_and_send_unpaid_demande_reminders(ctx),
-                    bot_main.check_and_auto_abandon_expired_remun_demandes(ctx),
+                    scheduled_tasks.check_and_send_admin_reminders(ctx),
+                    scheduled_tasks.check_and_auto_archive_demandes(ctx),
+                    scheduled_tasks.check_and_send_delivery_reminders(ctx),
+                    scheduled_tasks.check_and_send_paid_delivery_reminders(ctx),
+                    scheduled_tasks.check_and_send_unpaid_demande_reminders(ctx),
+                    scheduled_tasks.check_and_auto_abandon_expired_remun_demandes(ctx),
                     return_exceptions=True
                 )
                 logger.info("🏁 Fin de l'exécution des tâches périodiques.")

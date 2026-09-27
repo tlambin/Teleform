@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class DemandeRepository:
-    """Méthodes opérationnelles relatives aux dossiers de demandes."""
+    """Méthodes opérationnelles relatives aux dossiers de demandes avec transactions sécurisées."""
 
     @staticmethod
     def format_statut_display(statut: str, is_difficile: bool = False, reussie_substatus: Optional[str] = None) -> str:
@@ -143,10 +143,18 @@ class DemandeRepository:
     def toggle_demande_difficile(self, demande_id: int) -> bool:
         try:
             with self.transaction() as cursor:
-                cursor.execute("UPDATE demandes SET is_difficile = NOT is_difficile, date_modification = NOW() WHERE id = %s", (int(demande_id),))
+                cursor.execute(
+                    "UPDATE demandes SET is_difficile = NOT is_difficile, date_modification = NOW() WHERE id = %s",
+                    (int(demande_id),)
+                )
                 cursor.execute("SELECT is_difficile FROM demandes WHERE id = %s", (int(demande_id),))
                 row = cursor.fetchone()
-                return bool(row["is_difficile"]) if row else False
+                res = bool(row["is_difficile"]) if row else False
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
+            return res
         except Exception as exc:
             logger.error("Erreur bascule statut difficile pour demande %s : %s", demande_id, exc)
             return False
@@ -154,10 +162,13 @@ class DemandeRepository:
     def update_demande_statut(self, demande_id: int, nouveau_statut: str, reussie_substatus: Optional[str] = None) -> bool:
         try:
             with self.transaction() as cursor:
-                cursor.execute("SELECT prioritaire, montant FROM demandes WHERE id = %s", (int(demande_id),))
+                cursor.execute("SELECT prioritaire, montant FROM demandes WHERE id = %s FOR UPDATE", (int(demande_id),))
                 current_d = cursor.fetchone()
-                is_prio = bool(current_d.get("prioritaire")) if current_d else False
-                montant = float(current_d.get("montant") or 0.0) if current_d else 0.0
+                if not current_d:
+                    return False
+
+                is_prio = bool(current_d.get("prioritaire"))
+                montant = float(current_d.get("montant") or 0.0)
 
                 if nouveau_statut == "✅ Réussie":
                     sub = reussie_substatus if reussie_substatus in ("active", "terminee") else "active"
@@ -200,6 +211,10 @@ class DemandeRepository:
                         """,
                         (nouveau_statut, int(demande_id))
                     )
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
             return True
         except Exception as exc:
             logger.error("Erreur mise à jour statut demande %s : %s", demande_id, exc)
@@ -218,6 +233,9 @@ class DemandeRepository:
                     """,
                     (int(demande_id),)
                 )
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
         except Exception as exc:
             logger.error("Erreur marquage livraison demande %s : %s", demande_id, exc)
 
@@ -239,6 +257,10 @@ class DemandeRepository:
                     """,
                     (val_montant, p_by, int(demande_id))
                 )
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
             return True
         except Exception as exc:
             logger.error("Erreur enregistrement proposition de prix demande %s : %s", demande_id, exc)
@@ -258,6 +280,10 @@ class DemandeRepository:
                     """,
                     (int(demande_id),)
                 )
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
             return True
         except Exception as exc:
             logger.error("Erreur effacement proposition de prix demande %s : %s", demande_id, exc)
@@ -267,7 +293,11 @@ class DemandeRepository:
         try:
             with self.transaction() as cursor:
                 cursor.execute(
-                    "SELECT id, request_number, user_id, prenom, montant, proposed_price, proposed_by FROM demandes WHERE id = %s FOR UPDATE",
+                    """
+                    SELECT id, request_number, user_id, prenom, montant, proposed_price, proposed_by
+                    FROM demandes
+                    WHERE id = %s FOR UPDATE
+                    """,
                     (int(demande_id),)
                 )
                 dem = cursor.fetchone()
@@ -295,24 +325,20 @@ class DemandeRepository:
 
                 cursor.execute(
                     """
-                    UPDATE demandes_suivi
-                    SET admin_id = %s, derniere_action = NOW(), statut_suivi = 'active'
-                    WHERE demande_id = %s
+                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                    VALUES (%s, %s, NOW(), NOW(), 'active')
+                    ON DUPLICATE KEY UPDATE admin_id = VALUES(admin_id), derniere_action = NOW(), statut_suivi = 'active'
                     """,
-                    (staff_id, int(demande_id))
+                    (int(demande_id), staff_id)
                 )
-                if cursor.rowcount == 0:
-                    cursor.execute(
-                        """
-                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                        VALUES (%s, %s, NOW(), NOW(), 'active')
-                        """,
-                        (int(demande_id), staff_id)
-                    )
 
                 dem["nouveau_montant"] = nouveau_prix
                 dem["staff_id"] = staff_id
-                return dem
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
+            return dem
         except Exception as exc:
             logger.error("Erreur acceptation et assignation offre prix demande %s : %s", demande_id, exc)
             return None
@@ -329,6 +355,10 @@ class DemandeRepository:
                     "UPDATE demandes SET paiement_statut = %s, date_modification = NOW() WHERE id = %s",
                     (statut_paiement, int(demande_id))
                 )
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
             logger.info("Statut paiement demande #%s défini à '%s'", demande_id, statut_paiement)
             return True
         except Exception as exc:
@@ -356,7 +386,7 @@ class DemandeRepository:
                 return False, "Le montant doit être strictement supérieur à 0."
 
             with self.transaction() as cursor:
-                cursor.execute("SELECT prioritaire, montant, statut FROM demandes WHERE id = %s", (int(demande_id),))
+                cursor.execute("SELECT prioritaire, montant, statut FROM demandes WHERE id = %s FOR UPDATE", (int(demande_id),))
                 dem = cursor.fetchone()
                 if not dem:
                     return False, "Demande introuvable."
@@ -373,7 +403,14 @@ class DemandeRepository:
                 if statut_actuel in ("⏳ En attente", "🔄 En cours") and nouveau_montant <= montant_actuel:
                     return False, f"La demande est déjà prise en charge : vous ne pouvez qu'augmenter le tarif (minimum : {montant_actuel:.2f} €)."
 
-                cursor.execute("UPDATE demandes SET montant = %s, date_modification = NOW() WHERE id = %s", (nouveau_montant, int(demande_id)))
+                cursor.execute(
+                    "UPDATE demandes SET montant = %s, date_modification = NOW() WHERE id = %s",
+                    (nouveau_montant, int(demande_id))
+                )
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
             return True, f"Montant mis à jour à {nouveau_montant:.2f} €."
         except Exception as exc:
             logger.error("Erreur modification montant demande %s : %s", demande_id, exc)
@@ -386,13 +423,20 @@ class DemandeRepository:
                 return False, "Le montant doit être supérieur à 0 €."
 
             uid = int(user_id)
-            is_management = self.is_owner(uid) or self.is_admin(uid) or self.is_staff(uid)
+            is_management = (
+                (hasattr(self, "is_owner") and self.is_owner(uid))
+                or (hasattr(self, "is_admin") and self.is_admin(uid))
+                or (hasattr(self, "is_staff") and self.is_staff(uid))
+            )
 
             with self.transaction() as cursor:
                 if is_management:
-                    cursor.execute("SELECT id, user_id, statut, prioritaire FROM demandes WHERE id = %s", (int(demande_id),))
+                    cursor.execute("SELECT id, user_id, statut, prioritaire FROM demandes WHERE id = %s FOR UPDATE", (int(demande_id),))
                 else:
-                    cursor.execute("SELECT id, user_id, statut, prioritaire FROM demandes WHERE id = %s AND user_id = %s", (int(demande_id), uid))
+                    cursor.execute(
+                        "SELECT id, user_id, statut, prioritaire FROM demandes WHERE id = %s AND user_id = %s FOR UPDATE",
+                        (int(demande_id), uid)
+                    )
 
                 dem = cursor.fetchone()
                 if not dem:
@@ -418,6 +462,10 @@ class DemandeRepository:
                     """,
                     (val_montant, int(demande_id))
                 )
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
             return True, f"Demande convertie en prioritaire ({val_montant:.2f} €)."
         except Exception as exc:
             logger.error("Erreur conversion demande prioritaire %s : %s", demande_id, exc)
@@ -428,31 +476,38 @@ class DemandeRepository:
             with self.transaction() as cursor:
                 cursor.execute(
                     """
+                    SELECT id FROM demandes
+                    WHERE id = %s AND (statut = '🎯 Assignée (VIP)' OR statut = '📥 Reçue')
+                    FOR UPDATE
+                    """,
+                    (int(demande_id),)
+                )
+                if not cursor.fetchone():
+                    return False
+
+                cursor.execute(
+                    """
                     UPDATE demandes
                     SET statut = '⏳ En attente',
                         admin_en_charge = %s,
                         date_modification = NOW()
-                    WHERE id = %s AND (statut = '🎯 Assignée (VIP)' OR statut = '📥 Reçue')
+                    WHERE id = %s
                     """,
                     (int(staff_id), int(demande_id))
                 )
 
                 cursor.execute(
                     """
-                    UPDATE demandes_suivi
-                    SET admin_id = %s, derniere_action = NOW(), statut_suivi = 'active'
-                    WHERE demande_id = %s
+                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                    VALUES (%s, %s, NOW(), NOW(), 'active')
+                    ON DUPLICATE KEY UPDATE admin_id = VALUES(admin_id), derniere_action = NOW(), statut_suivi = 'active'
                     """,
-                    (int(staff_id), int(demande_id))
+                    (int(demande_id), int(staff_id))
                 )
-                if cursor.rowcount == 0:
-                    cursor.execute(
-                        """
-                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                        VALUES (%s, %s, NOW(), NOW(), 'active')
-                        """,
-                        (int(demande_id), int(staff_id))
-                    )
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
             return True
         except Exception as exc:
             logger.error("Erreur acceptation demande assignée VIP #%s par staff %s : %s", demande_id, staff_id, exc)
@@ -466,6 +521,10 @@ class DemandeRepository:
                     (int(demande_id),)
                 )
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (int(demande_id),))
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
             return True
         except Exception as exc:
             logger.error("Erreur refus demande assignée VIP #%s : %s", demande_id, exc)
@@ -504,7 +563,15 @@ class DemandeRepository:
             logger.error("Erreur horodatage rappel livraison post-paiement demande %s : %s", demande_id, exc)
 
     def get_unpaid_reussie_demandes_for_reminder(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
-        effective_days = days if days is not None else self.get_payment_reminder_days()
+        if days is not None:
+            effective_days = days
+        elif hasattr(self, "get_payment_reminder_days"):
+            effective_days = self.get_payment_reminder_days()
+        elif hasattr(self, "get_config_value"):
+            effective_days = int(self.get_config_value("delai_paiement_jours", 2) or 2)
+        else:
+            effective_days = 2
+
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -534,7 +601,15 @@ class DemandeRepository:
             logger.error("Erreur horodatage last_payment_reminder demande %s : %s", demande_id, exc)
 
     def get_expired_remun_demandes_for_abandon(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
-        effective_days = days if days is not None else self.get_remun_expiration_days()
+        if days is not None:
+            effective_days = days
+        elif hasattr(self, "get_remun_expiration_days"):
+            effective_days = self.get_remun_expiration_days()
+        elif hasattr(self, "get_config_value"):
+            effective_days = int(self.get_config_value("delai_remun_expire_jours", 2) or 2)
+        else:
+            effective_days = 2
+
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -554,7 +629,15 @@ class DemandeRepository:
             return []
 
     def get_undelivered_terminee_demandes_for_reminder(self, days: Optional[int] = None) -> List[Dict[str, Any]]:
-        effective_days = days if days is not None else self.get_delivery_reminder_days()
+        if days is not None:
+            effective_days = days
+        elif hasattr(self, "get_delivery_reminder_days"):
+            effective_days = self.get_delivery_reminder_days()
+        elif hasattr(self, "get_config_value"):
+            effective_days = int(self.get_config_value("delai_livraison_jours", 3) or 3)
+        else:
+            effective_days = 3
+
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(

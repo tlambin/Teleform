@@ -2,14 +2,16 @@
 
 import logging
 from telegram import Update
+from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes
+from utils.session import session_manager
 from . import membres_ui as ui
 
 logger = logging.getLogger(__name__)
 
 
 class MembresManager:
-    """Gère l'affichage de l'annuaire des bannis, les révocations et la recherche textuelle/ID."""
+    """Gère l'affichage de l'annuaire des bannis, les révocations et la recherche textuelle/ID avec résilience uWSGI."""
 
     def __init__(self, db_manager, config):
         self.db_manager = db_manager
@@ -51,7 +53,10 @@ class MembresManager:
     async def prompt_search(self, query, context: ContextTypes.DEFAULT_TYPE):
         """Déclenche la saisie du terme de recherche."""
         await query.answer()
+        user_id = query.from_user.id
         context.user_data["waiting_member_search"] = True
+        session_manager.set_state(user_id, "waiting_member_search", True, ttl=600.0)
+
         text_search, kb = ui.get_search_prompt_content()
         await self._safe_edit_or_send(query, context, text_search, reply_markup=kb)
 
@@ -60,9 +65,12 @@ class MembresManager:
         if not update.message or not update.message.text:
             return False
 
-        if not context.user_data.pop("waiting_member_search", False):
+        user_id = update.effective_user.id
+        is_waiting = context.user_data.pop("waiting_member_search", False) or session_manager.get_state(user_id, "waiting_member_search")
+        if not is_waiting:
             return False
 
+        session_manager.clear_state(user_id, "waiting_member_search")
         saisie = update.message.text.strip().replace("@", "")
 
         with self.db_manager.get_cursor() as cursor:
@@ -132,12 +140,15 @@ class MembresManager:
 
     async def prompt_ban_reason(self, query, context: ContextTypes.DEFAULT_TYPE, target_id: int, is_staff: bool, origin_demande_id: int = 0):
         """Demande le motif du bannissement au clavier."""
-        context.user_data["pending_ban_data"] = {
+        user_id = query.from_user.id
+        ban_payload = {
             "target_id": target_id,
             "is_staff": is_staff,
             "origin_demande_id": origin_demande_id,
         }
+        context.user_data["pending_ban_data"] = ban_payload
         context.user_data["waiting_ban_reason"] = True
+        session_manager.set_state(user_id, "ban_process", ban_payload, ttl=900.0)
 
         text, kb = ui.get_ban_reason_prompt_content(target_id, is_staff, origin_demande_id)
         await self._safe_edit_or_send(query, context, text, reply_markup=kb)
@@ -147,8 +158,11 @@ class MembresManager:
         if not update.message or not update.message.text:
             return False
 
-        ban_data = context.user_data.pop("pending_ban_data", None)
+        admin_id = update.effective_user.id
+        ban_data = context.user_data.pop("pending_ban_data", None) or session_manager.get_state(admin_id, "ban_process")
         context.user_data.pop("waiting_ban_reason", None)
+        session_manager.clear_state(admin_id, "ban_process")
+
         if not ban_data:
             return False
 
@@ -158,7 +172,6 @@ class MembresManager:
 
         target_id = ban_data["target_id"]
         is_staff = ban_data["is_staff"]
-        admin_id = update.effective_user.id
 
         self.db_manager.ban_user(target_id, banned_by=admin_id, reason=reason)
 
@@ -169,8 +182,15 @@ class MembresManager:
         try:
             msg_banni = ui.get_ban_notification_message(reason)
             await context.bot.send_message(chat_id=target_id, text=msg_banni, parse_mode="HTML")
-        except Exception:
-            pass
+        except Forbidden:
+            logger.info("L'utilisateur %s a déjà bloqué le bot lors de son bannissement.", target_id)
+            try:
+                with self.db_manager.get_cursor() as cursor:
+                    cursor.execute("UPDATE users SET is_bot_blocked = 1 WHERE user_id = %s", (target_id,))
+            except Exception as block_err:
+                logger.debug("Impossible d'actualiser le flag bloqué pour %s : %s", target_id, block_err)
+        except TelegramError as tg_err:
+            logger.warning("Échec notification bannissement à %s : %s", target_id, tg_err)
 
         success_msg, kb = ui.build_ban_success_content(target_id, reason, is_staff)
         await update.message.reply_text(success_msg, parse_mode="HTML", reply_markup=kb)

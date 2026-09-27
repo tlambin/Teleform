@@ -1,9 +1,16 @@
-"""Module de gestion des états de session en mémoire vive."""
+"""Module de gestion des états de session en mémoire vive et persistance sur disque."""
 
+import json
 import logging
+import os
+import time
+from typing import Any, Optional
 from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
+
+# Fichier de persistance stocké à la racine du projet
+SESSION_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_sessions.json")
 
 # Clés temporaires à éliminer lors d'un retour au menu ou reset (/stop, /start, etc.)
 TRANSIENT_USER_DATA_KEYS = {
@@ -49,20 +56,140 @@ TRANSIENT_USER_DATA_KEYS = {
 }
 
 
-def clear_transient_user_data(context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Purge les clés de saisie temporaires orphelines dans context.user_data tout en préservant les filtres et caches."""
-    if not context or not hasattr(context, "user_data") or not isinstance(context.user_data, dict):
-        return 0
+# ==================== PERSISTANCE DISQUE (ANTI-RELOAD UWSGI) ====================
 
+class StateSessionManager:
+    """Stocke temporairement les états sensibles (purges, saisies admin) sur disque."""
+
+    def __init__(self, filepath: str = SESSION_FILE_PATH, default_ttl: float = 900.0):
+        self.filepath = os.path.abspath(filepath)
+        self.default_ttl = default_ttl  # 15 minutes par défaut
+        self._data: dict = {}
+
+    def _load(self):
+        """Charge les sessions actives depuis le disque."""
+        if not os.path.exists(self.filepath):
+            self._data = {}
+            return
+
+        try:
+            with open(self.filepath, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                self._data = json.loads(content) if content else {}
+            self._purge_expired()
+        except Exception as exc:
+            logger.warning("Échec lecture sessions disque (%s), réinitialisation.", exc)
+            self._data = {}
+
+    def _save(self):
+        """Sauvegarde atomique sur disque pour éviter toute corruption concurrente."""
+        self._purge_expired()
+        tmp_file = f"{self.filepath}.tmp_{os.getpid()}"
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, self.filepath)
+        except Exception as exc:
+            logger.error("Erreur écriture sessions persistantes : %s", exc)
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
+
+    def _purge_expired(self):
+        """Nettoie les états dont le délai de validation est écoulé."""
+        now = time.time()
+        expired_keys = [k for k, val in self._data.items() if val.get("expires_at", 0) < now]
+        for k in expired_keys:
+            del self._data[k]
+
+    def set_state(self, user_id: int, action_key: str, payload: Any, ttl: Optional[float] = None):
+        """Enregistre un état sensible sur disque."""
+        self._load()
+        key = f"{user_id}:{action_key}"
+        expires_at = time.time() + (ttl or self.default_ttl)
+        self._data[key] = {
+            "payload": payload,
+            "expires_at": expires_at,
+        }
+        self._save()
+
+    def get_state(self, user_id: int, action_key: str) -> Optional[Any]:
+        """Récupère l'état si le délai est toujours valide."""
+        self._load()
+        key = f"{user_id}:{action_key}"
+        record = self._data.get(key)
+        if not record:
+            return None
+        if record.get("expires_at", 0) < time.time():
+            self.clear_state(user_id, action_key)
+            return None
+        return record.get("payload")
+
+    def clear_state(self, user_id: int, action_key: Optional[str] = None):
+        """Supprime un état spécifique ou tous les états d'un utilisateur."""
+        self._load()
+        if action_key:
+            key = f"{user_id}:{action_key}"
+            self._data.pop(key, None)
+        else:
+            prefix = f"{user_id}:"
+            keys_to_del = [k for k in self._data if k.startswith(prefix)]
+            for k in keys_to_del:
+                del self._data[k]
+        self._save()
+
+    def cleanup_disk(self):
+        """Purge les entrées expirées et supprime les résidus atomiques temporaires orphelins."""
+        self._load()
+        self._save()
+
+        base_dir = os.path.dirname(self.filepath)
+        filename = os.path.basename(self.filepath)
+        now = time.time()
+
+        try:
+            if os.path.exists(base_dir):
+                for entry in os.listdir(base_dir):
+                    if entry.startswith(f"{filename}.tmp_"):
+                        full_path = os.path.join(base_dir, entry)
+                        try:
+                            # Fichier temporaire vieux de plus d'une heure supprimé
+                            if now - os.path.getmtime(full_path) > 3600:
+                                os.remove(full_path)
+                                logger.debug("Fichier temporaire orphelin supprimé : %s", entry)
+                        except OSError:
+                            pass
+        except Exception as exc:
+            logger.debug("Erreur lors du nettoyage des temporaires de session : %s", exc)
+
+
+session_manager = StateSessionManager()
+
+
+# ==================== NETTOYAGE RAM (CONTEXT.USER_DATA) ====================
+
+def clear_transient_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: Optional[int] = None) -> int:
+    """Purge les clés de saisie temporaires orphelines dans context.user_data et sur disque."""
     purged_count = 0
 
-    # 1. Suppression par liste blanche exacte
+    # 1. Purge du fichier persistant si user_id fourni
+    if user_id:
+        try:
+            session_manager.clear_state(user_id)
+        except Exception as exc:
+            logger.debug("Erreur purge sessions disque utilisateur %s : %s", user_id, exc)
+
+    # 2. Purge de la mémoire vive
+    if not context or not hasattr(context, "user_data") or not isinstance(context.user_data, dict):
+        return purged_count
+
     for key in TRANSIENT_USER_DATA_KEYS:
         if key in context.user_data:
             context.user_data.pop(key, None)
             purged_count += 1
 
-    # 2. Suppression préventive par motifs dynamiques (waiting_* et cancel_reason_*)
     dynamic_prefixes = ("waiting_", "cancel_reason_")
     keys_to_delete = [
         k for k in context.user_data.keys()

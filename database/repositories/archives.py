@@ -8,12 +8,13 @@ logger = logging.getLogger(__name__)
 
 
 class ArchiveRepository:
-    """Méthodes de gestion de la table archives."""
+    """Méthodes de gestion de la table archives avec transactions atomiques strictes."""
 
     def archiver_demande_reussie(self, demande_id: int) -> bool:
         try:
             with self.transaction() as cursor:
-                cursor.execute("SELECT * FROM demandes WHERE id = %s", (int(demande_id),))
+                # Verrouillage exclusif de la ligne pour éviter tout archivage concurrent (ex: cron vs clic staff)
+                cursor.execute("SELECT * FROM demandes WHERE id = %s FOR UPDATE", (int(demande_id),))
                 demande = cursor.fetchone()
                 if not demande:
                     return False
@@ -50,13 +51,17 @@ class ArchiveRepository:
                         demande.get("paiement_statut", "non_requis"),
                         demande.get("has_delivered_content", False),
                         demande.get("date_livraison"),
-                        demande.get("date_creation")
-                    )
+                        demande.get("date_creation"),
+                    ),
                 )
 
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (int(demande_id),))
                 cursor.execute("DELETE FROM demandes WHERE id = %s", (int(demande_id),))
-                return True
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
+            return True
         except Exception as exc:
             logger.error("Erreur archivage demande réussie %s : %s", demande_id, exc)
             return False
@@ -65,7 +70,7 @@ class ArchiveRepository:
         clean_raison = str(raison or "Non précisée").strip()
         try:
             with self.transaction() as cursor:
-                cursor.execute("SELECT * FROM demandes WHERE id = %s", (int(demande_id),))
+                cursor.execute("SELECT * FROM demandes WHERE id = %s FOR UPDATE", (int(demande_id),))
                 demande = cursor.fetchone()
                 if not demande:
                     return None
@@ -106,12 +111,16 @@ class ArchiveRepository:
                         False,
                         None,
                         demande.get("date_creation"),
-                    )
+                    ),
                 )
 
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (int(demande_id),))
                 cursor.execute("DELETE FROM demandes WHERE id = %s", (int(demande_id),))
-                return demande
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
+            return demande
         except Exception as exc:
             logger.error("Erreur archivage annulation demande %s : %s", demande_id, exc)
             return None
@@ -120,7 +129,7 @@ class ArchiveRepository:
         clean_raison = str(raison or "Non précisée").strip()
         try:
             with self.transaction() as cursor:
-                cursor.execute("SELECT * FROM demandes WHERE id = %s", (int(demande_id),))
+                cursor.execute("SELECT * FROM demandes WHERE id = %s FOR UPDATE", (int(demande_id),))
                 demande = cursor.fetchone()
                 if not demande:
                     return None
@@ -161,12 +170,16 @@ class ArchiveRepository:
                         False,
                         None,
                         demande.get("date_creation"),
-                    )
+                    ),
                 )
 
                 cursor.execute("DELETE FROM demandes_suivi WHERE demande_id = %s", (int(demande_id),))
                 cursor.execute("DELETE FROM demandes WHERE id = %s", (int(demande_id),))
-                return demande
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
+            return demande
         except Exception as exc:
             logger.error("Erreur archivage suppression demande %s : %s", demande_id, exc)
             return None
@@ -209,11 +222,10 @@ class ArchiveRepository:
 
                     if existing:
                         admin_id = existing.get("admin_en_charge")
+                        alias_charge = self.get_staff_alias(admin_id) if (admin_id and hasattr(self, "get_staff_alias")) else "un autre staff"
                         if admin_id:
-                            alias_charge = self.get_staff_alias(admin_id)
                             return False, f"Impossible de désarchiver : ce dossier est déjà actif et pris en charge par {alias_charge} (Dossier #{existing.get('request_number') or existing['id']}).", None
-                        else:
-                            return False, f"Ce dossier existe déjà dans les demandes disponibles (#{existing.get('request_number') or existing['id']}).", None
+                        return False, f"Ce dossier existe déjà dans les demandes disponibles (#{existing.get('request_number') or existing['id']}).", None
 
                 req_num = orig_id or arch["id"]
                 prio = bool(arch.get("prioritaire", False))
@@ -252,39 +264,44 @@ class ArchiveRepository:
                         arch.get("paiement_statut", "non_requis"),
                         int(operator_id),
                         arch.get("date_creation") or datetime.now(),
-                    )
+                    ),
                 )
                 nouvelle_demande_id = cursor.lastrowid
 
+                # Assignation directe dans demandes_suivi
                 cursor.execute(
                     """
-                    UPDATE demandes_suivi
-                    SET admin_id = %s, derniere_action = NOW(), statut_suivi = 'active'
-                    WHERE demande_id = %s
+                    INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
+                    VALUES (%s, %s, NOW(), NOW(), 'active')
+                    ON DUPLICATE KEY UPDATE admin_id = VALUES(admin_id), derniere_action = NOW(), statut_suivi = 'active'
                     """,
-                    (int(operator_id), int(nouvelle_demande_id))
+                    (int(nouvelle_demande_id), int(operator_id)),
                 )
-                if cursor.rowcount == 0:
-                    cursor.execute(
-                        """
-                        INSERT INTO demandes_suivi (demande_id, admin_id, date_suivi, derniere_action, statut_suivi)
-                        VALUES (%s, %s, NOW(), NOW(), 'active')
-                        """,
-                        (int(nouvelle_demande_id), int(operator_id))
-                    )
 
                 cursor.execute("DELETE FROM archives WHERE id = %s", (int(archive_id),))
 
                 arch["new_demande_id"] = nouvelle_demande_id
                 logger.info("Archive abandonnée #%s désarchivée et assignée à l'opérateur %s (nouvelle demande #%s).", archive_id, operator_id, nouvelle_demande_id)
-                return True, "Dossier restauré avec succès !", arch
+
+            if hasattr(self, "clear_cache"):
+                self.clear_cache()
+
+            return True, "Dossier restauré avec succès !", arch
 
         except Exception as exc:
             logger.error("Erreur lors du désarchivage de l'archive abandonnée %s : %s", archive_id, exc, exc_info=True)
             return False, "Erreur technique lors du désarchivage.", None
 
     def get_expired_delivered_demandes(self, hours: Optional[int] = None) -> List[Dict[str, Any]]:
-        effective_hours = hours if hours is not None else self.get_auto_archive_hours()
+        if hours is not None:
+            effective_hours = hours
+        elif hasattr(self, "get_auto_archive_hours"):
+            effective_hours = self.get_auto_archive_hours()
+        elif hasattr(self, "get_config_value"):
+            effective_hours = int(self.get_config_value("auto_archive_hours", 72) or 72)
+        else:
+            effective_hours = 72
+
         try:
             with self.get_cursor() as cursor:
                 cursor.execute(
@@ -297,7 +314,7 @@ class ArchiveRepository:
                       AND date_livraison IS NOT NULL
                       AND TIMESTAMPDIFF(HOUR, date_livraison, NOW()) >= %s
                     """,
-                    (effective_hours,)
+                    (effective_hours,),
                 )
                 return cursor.fetchall()
         except Exception as exc:

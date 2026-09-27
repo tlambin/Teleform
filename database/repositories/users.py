@@ -9,7 +9,93 @@ logger = logging.getLogger(__name__)
 
 
 class UserRepository:
-    """Méthodes CRUD relatives aux utilisateurs, VIPs et bannissements."""
+    """Méthodes CRUD relatives aux utilisateurs, VIPs, bannissements et état de blocage bot."""
+
+    # ==================== GESTION DU BLOCAGE BOT ====================
+
+    def mark_bot_blocked(self, user_id: int, is_blocked: bool = True) -> bool:
+        """Enregistre le statut de blocage du bot par l'utilisateur."""
+        try:
+            uid = int(user_id)
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET is_bot_blocked = %s,
+                        date_blocked = CASE WHEN %s THEN NOW() ELSE NULL END
+                    WHERE user_id = %s
+                    """,
+                    (is_blocked, is_blocked, uid)
+                )
+            self.clear_cache(f"is_bot_blocked_{uid}")
+            logger.info("Utilisateur %s marqué comme bot_blocked=%s.", uid, is_blocked)
+            return True
+        except Exception as exc:
+            logger.error("Erreur enregistrement blocage bot pour %s : %s", user_id, exc)
+            return False
+
+    def is_bot_blocked(self, user_id: int) -> bool:
+        """Indique si l'utilisateur a bloqué le bot."""
+        try:
+            uid = int(user_id)
+        except (ValueError, TypeError):
+            return False
+
+        cache_key = f"is_bot_blocked_{uid}"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("SELECT is_bot_blocked FROM users WHERE user_id = %s", (uid,))
+                row = cursor.fetchone()
+                val = bool(row.get("is_bot_blocked")) if row else False
+                self._set_cached_value(cache_key, val)
+                return val
+        except Exception as exc:
+            logger.error("Erreur vérification blocage bot pour %s : %s", uid, exc)
+            return False
+
+    def touch_user_activity(self, user_id: int, username: Optional[str] = None, first_name: Optional[str] = None):
+        """Met à jour l'activité et lève le statut bloqué lors d'une interaction usager."""
+        try:
+            uid = int(user_id)
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET derniere_activite = NOW(),
+                        is_bot_blocked = 0,
+                        date_blocked = NULL,
+                        username = COALESCE(%s, username),
+                        first_name = COALESCE(%s, first_name)
+                    WHERE user_id = %s
+                    """,
+                    (username, first_name, uid)
+                )
+            self.clear_cache(f"is_bot_blocked_{uid}")
+        except Exception as exc:
+            logger.debug("Erreur mise à jour activité utilisateur %s : %s", user_id, exc)
+
+    def get_active_broadcast_users(self) -> List[int]:
+        """Retourne la liste des user_id éligibles à une diffusion (non bannis et n'ayant pas bloqué le bot)."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT u.user_id
+                    FROM users u
+                    LEFT JOIN banned_users b ON u.user_id = b.user_id
+                    WHERE (u.is_bot_blocked = 0 OR u.is_bot_blocked IS NULL)
+                      AND b.user_id IS NULL
+                    """
+                )
+                rows = cursor.fetchall()
+                return [int(r["user_id"]) for r in rows if r.get("user_id")]
+        except Exception as exc:
+            logger.error("Erreur extraction liste broadcast users : %s", exc)
+            return []
 
     # ==================== BANNISSEMENTS ====================
 
@@ -164,7 +250,7 @@ class UserRepository:
         except (ValueError, TypeError):
             return False
 
-        if self.is_owner(uid):
+        if hasattr(self, "is_owner") and self.is_owner(uid):
             return True
 
         cache_key = f"vip_{uid}"
