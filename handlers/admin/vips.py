@@ -3,7 +3,7 @@
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
-from . import vip_ui as ui
+from . import vips_ui as ui
 
 logger = logging.getLogger(__name__)
 
