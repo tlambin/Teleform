@@ -3,7 +3,7 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from . import config_ui as ui
+from ui.admin import system as ui
 
 logger = logging.getLogger(__name__)
 

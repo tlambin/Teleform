@@ -15,7 +15,7 @@ from .admin.staff import StaffManager
 from .admin.purge import PurgeManager
 from .admin.membres import MembresManager
 from .admin.vips import VipManager
-from . import admin_handlers_ui as ui
+from ui.admin import users as users_ui, system as system_ui
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ class AdminHandlers:
                 cursor.execute("SELECT COUNT(*) AS count FROM archives")
                 archives_count = cursor.fetchone()["count"]
 
-            message, keyboard = ui.format_maintenance_summary(storage_before, storage_after, demandes_count, archives_count)
+            message, keyboard = system_ui.format_maintenance_summary(storage_before, storage_after, demandes_count, archives_count)
 
             if update.callback_query:
                 await self._safe_edit_or_send(update.callback_query, context, message, reply_markup=keyboard)
@@ -148,7 +148,7 @@ class AdminHandlers:
         if not query or not self.config.is_owner(update.effective_user.id):
             return
         await query.answer()
-        text, keyboard = ui.get_bot_off_confirmation_content()
+        text, keyboard = system_ui.get_bot_off_confirmation_content()
         await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def confirmer_bot_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -508,7 +508,7 @@ class AdminHandlers:
             dossiers = []
 
         if not dossiers:
-            msg, kb = ui.get_staff_no_dossiers_content(alias, staff_id)
+            msg, kb = users_ui.get_staff_no_dossiers_content(alias, staff_id)
             await self._safe_edit_or_send(query, context, msg, reply_markup=kb)
             return
 
@@ -522,7 +522,7 @@ class AdminHandlers:
             demande.get("reussie_substatus"),
         )
 
-        text, keyboard = ui.format_staff_dossier_card(demande, alias, page, total, staff_id, statut_fmt)
+        text, keyboard = users_ui.format_staff_dossier_card(demande, alias, page, total, staff_id, statut_fmt)
         await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def handle_admin_remind_staff_demande(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
@@ -548,7 +548,7 @@ class AdminHandlers:
 
         req_num = dem["id"]
         prenom = html.escape(str(dem.get("prenom") or "la cible"))
-        msg_staff, kb_staff = ui.format_admin_reminder_message(admin_alias, req_num, prenom, demande_id)
+        msg_staff, kb_staff = users_ui.format_admin_reminder_message(admin_alias, req_num, prenom, demande_id)
 
         try:
             await context.bot.send_message(chat_id=staff_id, text=msg_staff, parse_mode="HTML", reply_markup=kb_staff)
@@ -568,7 +568,7 @@ class AdminHandlers:
 
         alias = self.db_manager.get_staff_alias(staff_id)
         perms = self.db_manager.get_staff_permissions(staff_id)
-        text, keyboard = ui.build_staff_permissions_menu_content(staff_id, alias, perms)
+        text, keyboard = users_ui.build_staff_permissions_menu_content(staff_id, alias, perms)
         await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def handle_set_staff_permission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
@@ -615,7 +615,7 @@ class AdminHandlers:
         primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
         is_primary_owner = (int(admin_id) == int(primary_owner_id))
 
-        text, keyboard = ui.build_admin_permissions_menu_content(admin_id, alias, privs, is_primary_owner)
+        text, keyboard = users_ui.build_admin_permissions_menu_content(admin_id, alias, privs, is_primary_owner)
         await self._safe_edit_or_send(query, context, text, reply_markup=keyboard)
 
     async def handle_set_admin_permission(self, update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
@@ -678,7 +678,7 @@ class AdminHandlers:
             return ConversationHandler.END
         await query.answer()
 
-        text, kb = ui.get_admin_add_prompt_content()
+        text, kb = users_ui.get_admin_add_prompt_content()
         await self._safe_edit_or_send(query, context, text, reply_markup=kb)
         return self.WAITING_ADMIN_ID
 
@@ -717,8 +717,8 @@ class AdminHandlers:
                 cursor.execute(
                     """
                     INSERT INTO admins (
-                        user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips, 
-                        can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff, 
+                        user_id, alias, is_owner, is_vip, can_manage_staff, can_manage_vips,
+                        can_view_stats, can_manage_delais, can_view_archives, can_monitor_staff,
                         can_ban_users, can_edit_others_demandes, added_by, date_added
                     ) VALUES (%s, %s, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, %s, NOW())
                     """,
@@ -726,7 +726,7 @@ class AdminHandlers:
                 )
 
             self.config.add_admin(target_id)
-            text, kb = ui.build_admin_add_success_content(alias, target_id)
+            text, kb = users_ui.build_admin_add_success_content(alias, target_id)
             await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
             return ConversationHandler.END
         except Exception as exc:
@@ -757,7 +757,7 @@ class AdminHandlers:
                 )
                 admins = cursor.fetchall()
 
-            text, kb = ui.build_admin_remove_list_content(admins)
+            text, kb = users_ui.build_admin_remove_list_content(admins)
             if not admins:
                 await self._safe_edit_or_send(query, context, text, reply_markup=kb)
                 return ConversationHandler.END
@@ -782,7 +782,7 @@ class AdminHandlers:
 
         selected = admins[int(choix) - 1]
         context.user_data["target_admin_to_remove"] = selected
-        text, kb = ui.get_admin_remove_confirmation_content(selected.get("alias") or selected["user_id"])
+        text, kb = users_ui.get_admin_remove_confirmation_content(selected.get("alias") or selected["user_id"])
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
         return self.WAITING_ADMIN_CONFIRMATION
 

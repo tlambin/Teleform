@@ -9,7 +9,7 @@ from telegram import (
     Update,
 )
 from telegram.ext import ContextTypes
-from . import suivi_ui as ui
+from ui.staff import demandes as ui
 
 logger = logging.getLogger(__name__)
 

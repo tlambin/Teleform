@@ -1,11 +1,16 @@
-"""Composants visuels, textes et claviers pour le compte utilisateur et les préférences VIP."""
+"""ui/user/compte.py
+Composants visuels, textes et claviers pour le compte utilisateur et les préférences VIP.
+"""
 
 import html
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def build_vip_settings_content(current_pref: str, target_staff_alias: str = None) -> tuple[str, InlineKeyboardMarkup]:
+def build_vip_settings_content(
+    current_pref: str,
+    target_staff_alias: Optional[str] = None
+) -> tuple[str, InlineKeyboardMarkup]:
     """Construit le texte descriptif et le clavier du menu des réglages d'attribution VIP."""
     is_prompt = (current_pref == "prompt")
     is_none = (current_pref == "none")
@@ -39,7 +44,10 @@ def build_vip_settings_content(current_pref: str, target_staff_alias: str = None
     return text, InlineKeyboardMarkup(keyboard)
 
 
-def build_vip_staff_picker_content(equipe: List[Dict[str, Any]], current_user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+def build_vip_staff_picker_content(
+    equipe: List[Dict[str, Any]],
+    current_user_id: int
+) -> tuple[str, InlineKeyboardMarkup]:
     """Construit l'invite et la liste des boutons pour sélectionner un piégeur par défaut."""
     kb_rows = []
 

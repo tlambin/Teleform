@@ -1,10 +1,12 @@
-"""Composants visuels, gabarits textuels et claviers pour les paiements et conversions tarifaires."""
+"""ui/user/paiement.py
+Composants visuels, gabarits textuels et claviers pour les paiements, conversions tarifaires et négociations.
+"""
 
 import html
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-# ==================== TELEGRAM STARS INVOICE TEMPLATES ====================
+# ==================== TELEGRAM STARS (FACTURES) ====================
 
 def get_vip_invoice_details(user_id: int) -> dict:
     """Paramètres de facturation Stars pour l'abonnement VIP 30 jours."""
@@ -12,18 +14,24 @@ def get_vip_invoice_details(user_id: int) -> dict:
         "title": "Abonnement VIP 30 Jours",
         "description": "Accès VIP pendant 30 jours : demandes illimitées, choix du référent et contact direct.",
         "payload": f"vip_sub_{user_id}_30d",
-        "stars_price": 250
+        "stars_price": 250,
     }
 
 
-def get_prio_invoice_details(demande_id: int, req_num: int, prenom: str, montant: float, user_id: int) -> dict:
+def get_prio_invoice_details(
+    demande_id: int,
+    req_num: int,
+    prenom: str,
+    montant: float,
+    user_id: int,
+) -> dict:
     """Paramètres de facturation Stars pour le règlement d'une demande prioritaire."""
     return {
         "title": f"Règlement Demande #{req_num}",
         "description": f"Paiement de la prestation prioritaire pour {prenom} ({montant:.2f} €).",
         "payload": f"prio_pay_{demande_id}_{user_id}",
         "label": f"Prestation prioritaire #{req_num}",
-        "stars_amount": max(1, int(montant * 50))
+        "stars_amount": max(1, int(montant * 50)),
     }
 
 
@@ -34,11 +42,11 @@ def get_paid_reminder_invoice_details(demande_id: int, user_id: int) -> dict:
         "description": "Relance prioritaire hebdomadaire envoyée directement à votre référent.",
         "payload": f"remind_pay_{demande_id}_{user_id}",
         "label": "Relance prioritaire (1 €)",
-        "stars_amount": 50
+        "stars_amount": 50,
     }
 
 
-# ==================== RETOURS ET ENCAISSEMENTS STARS ====================
+# ==================== CONFIRMATIONS D'ENCAISSEMENT STARS ====================
 
 def get_vip_success_content() -> tuple[str, InlineKeyboardMarkup]:
     """Message et clavier de confirmation d'abonnement VIP 30 jours validé."""
@@ -53,7 +61,7 @@ def get_vip_success_content() -> tuple[str, InlineKeyboardMarkup]:
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗳️ CRÉER UNE DEMANDE VIP 🗳️", callback_data="new_demande")],
-        [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")]
+        [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")],
     ])
     return merci_msg, kb
 
@@ -75,7 +83,7 @@ def build_prio_paid_admin_alert(
     req_num: str,
     prenom_cible: str,
     montant: float,
-    demande_id: int
+    demande_id: int,
 ) -> tuple[str, InlineKeyboardMarkup]:
     """Alerte remise au piégeur en charge suite à l'encaissement Stars."""
     admin_alert = (
@@ -85,14 +93,20 @@ def build_prio_paid_admin_alert(
     )
     alert_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💬 TRANSMETTRE LE CONTENU MAINTENANT 💬", callback_data=f"contacter_{demande_id}")],
-        [InlineKeyboardButton("💌 OUVRIR MES SUIVIS 💌", callback_data="demandes_suivies")]
+        [InlineKeyboardButton("💌 OUVRIR MES SUIVIS 💌", callback_data="demandes_suivies")],
     ])
     return admin_alert, alert_kb
 
 
 # ==================== PAIEMENT DIRECT ====================
 
-def build_direct_payment_alert_for_admin(req_num: int, u_label: str, prenom: str, montant: float, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+def build_direct_payment_alert_for_admin(
+    req_num: int,
+    u_label: str,
+    prenom: str,
+    montant: float,
+    demande_id: int,
+) -> tuple[str, InlineKeyboardMarkup]:
     """Alerte envoyée au piégeur quand le client sollicite un paiement alternatif."""
     text = (
         f"💳 <b>Paiement direct demandé (Dossier #{req_num})</b>\n\n"
@@ -106,8 +120,12 @@ def build_direct_payment_alert_for_admin(req_num: int, u_label: str, prenom: str
     return text, kb
 
 
-def build_direct_payment_client_prompt(alias: str, req_num: int, montant: float) -> tuple[str, InlineKeyboardMarkup]:
-    """Invite de saisie envoyée au client pour engager la discussion de paiement avec le staff."""
+def build_direct_payment_client_prompt(
+    alias: str,
+    req_num: int,
+    montant: float,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Invite de saisie envoyée au client pour engager la discussion de paiement direct avec le staff."""
     text = (
         f"💬 <b>Paiement avec votre référent ({html.escape(str(alias))}) — Dossier #{req_num}</b>\n\n"
         f"Montant convenu : <b>{montant:.2f} €</b>\n\n"
@@ -118,10 +136,15 @@ def build_direct_payment_client_prompt(alias: str, req_num: int, montant: float)
     return text, kb
 
 
-# ==================== REVALORISATION STAFF ====================
+# ==================== REVALORISATION DU PRIX PAR LE STAFF ====================
 
-def build_accept_remun_prio_content(req_num: int, nouveau_montant: float, staff_alias: str, prenom: str) -> tuple[str, InlineKeyboardMarkup]:
-    """Message au client confirmant son acceptation du prix proposé."""
+def build_accept_remun_prio_content(
+    req_num: int,
+    nouveau_montant: float,
+    staff_alias: str,
+    prenom: str,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Message au client confirmant son acceptation de la contre-proposition de prix."""
     text = (
         f"🎉 <b>Tarif accepté ({nouveau_montant:.2f} €) !</b>\n\n"
         f"Votre dossier #{req_num} concernant <b>{prenom}</b> a été pris en charge immédiatement par <b>{html.escape(str(staff_alias))}</b>.\n"
@@ -133,7 +156,12 @@ def build_accept_remun_prio_content(req_num: int, nouveau_montant: float, staff_
     return text, kb
 
 
-def build_accept_remun_staff_alert(req_num: int, nouveau_montant: float, prenom: str, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+def build_accept_remun_staff_alert(
+    req_num: int,
+    nouveau_montant: float,
+    prenom: str,
+    demande_id: int,
+) -> tuple[str, InlineKeyboardMarkup]:
     """Alerte au staff notifiant que le client accepte son nouveau prix."""
     text = (
         f"🎉 <b>PROPOSITION DE PRIX ACCEPTÉE ! (Dossier #{req_num})</b>\n\n"
@@ -147,7 +175,10 @@ def build_accept_remun_staff_alert(req_num: int, nouveau_montant: float, prenom:
     return text, kb
 
 
-def build_refuse_remun_prio_content(req_num: int, montant_initial: float) -> tuple[str, InlineKeyboardMarkup]:
+def build_refuse_remun_prio_content(
+    req_num: int,
+    montant_initial: float,
+) -> tuple[str, InlineKeyboardMarkup]:
     """Message au client actant le refus de la revalorisation proposée."""
     text = (
         f"ℹ️ <b>Proposition refusée.</b>\n\n"
@@ -159,7 +190,11 @@ def build_refuse_remun_prio_content(req_num: int, montant_initial: float) -> tup
     return text, kb
 
 
-def build_refuse_remun_staff_alert(req_num: int, prenom: str, montant_initial: float) -> tuple[str, InlineKeyboardMarkup]:
+def build_refuse_remun_staff_alert(
+    req_num: int,
+    prenom: str,
+    montant_initial: float,
+) -> tuple[str, InlineKeyboardMarkup]:
     """Alerte au staff notifiant le refus de sa proposition de prix."""
     text = (
         f"ℹ️ <b>Proposition de prix refusée (Dossier #{req_num})</b>\n\n"
@@ -172,7 +207,7 @@ def build_refuse_remun_staff_alert(req_num: int, prenom: str, montant_initial: f
     return text, kb
 
 
-# ==================== UPGRADE PRIORITAIRE ====================
+# ==================== UPGRADE STANDARD ➔ PRIORITAIRE ====================
 
 def get_upgrade_prio_prompt_content(demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
     """Invite de saisie pour convertir une demande en prioritaire."""
@@ -195,7 +230,12 @@ def build_upgrade_prio_success_content(demande_id: int, montant: float) -> tuple
     return text, kb
 
 
-def build_upgrade_referent_alert(req_num: int, prenom: str, montant: float, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+def build_upgrade_referent_alert(
+    req_num: int,
+    prenom: str,
+    montant: float,
+    demande_id: int,
+) -> tuple[str, InlineKeyboardMarkup]:
     """Alerte au référent déjà assigné suite au boost prioritaire du client."""
     text = (
         f"💎 <b>DEMANDE BOOSTÉE EN PRIORITAIRE !</b>\n\n"
@@ -208,7 +248,12 @@ def build_upgrade_referent_alert(req_num: int, prenom: str, montant: float, dema
     return text, kb
 
 
-def build_upgrade_broadcast_alert(req_num: int, prenom: str, montant: float, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+def build_upgrade_broadcast_alert(
+    req_num: int,
+    prenom: str,
+    montant: float,
+    demande_id: int,
+) -> tuple[str, InlineKeyboardMarkup]:
     """Alerte diffusée à la file générale des piégeurs après passage en prioritaire."""
     text = (
         f"💎 <b>DEMANDE DEVENUE PRIORITAIRE ! (File d'attente)</b>\n\n"

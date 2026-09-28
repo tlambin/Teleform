@@ -5,7 +5,7 @@ from typing import Optional
 from telegram import InlineKeyboardMarkup, Update
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes
-from . import notifs_ui as ui
+from ui.staff import notifs as ui
 
 logger = logging.getLogger(__name__)
 

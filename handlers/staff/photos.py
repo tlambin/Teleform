@@ -3,7 +3,7 @@
 import logging
 from telegram import InputMediaPhoto, Update
 from telegram.ext import ContextTypes
-from . import photos_ui as ui
+from ui.staff import demandes as ui
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class PhotosManager:
                 await query.answer("❌ Aucune photo associée à cette demande.", show_alert=True)
                 return
 
-            caption = ui.format_demande_card(demande, self.db_manager, is_photo=True)
+            caption = ui.format_photo_demande_card(demande, self.db_manager, is_photo=True)
             keyboard = ui.build_keyboard_for_viewer(demande, viewer_id, custom_back, is_admin_or_owner=is_admin_or_owner)
             chat_id = query.message.chat_id if query.message else None
 
@@ -136,7 +136,7 @@ class PhotosManager:
             admin_en_charge = demande.get("admin_en_charge")
             admin_alias = self.db_manager.get_staff_alias(admin_en_charge) if admin_en_charge else "Non assigné"
 
-            text = ui.format_demande_card(demande, self.db_manager, is_photo=False, admin_alias=admin_alias)
+            text = ui.format_photo_demande_card(demande, self.db_manager, is_photo=False, admin_alias=admin_alias)
             keyboard = ui.build_keyboard_for_viewer(demande, viewer_id, custom_back, is_admin_or_owner=is_admin_or_owner)
             chat_id = query.message.chat_id if query.message else None
 

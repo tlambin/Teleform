@@ -5,7 +5,7 @@ import logging
 from telegram import Update
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes, ConversationHandler
-from . import alias_ui as ui
+from ui.staff import profil as ui
 
 logger = logging.getLogger(__name__)
 

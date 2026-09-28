@@ -3,7 +3,7 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
-from . import demande_ui as ui
+from ui.user import demandes as ui
 
 logger = logging.getLogger(__name__)
 

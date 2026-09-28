@@ -4,7 +4,7 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from utils.maintenance import check_storage_usage
-from . import stats_ui as ui
+from ui.admin import system as ui
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 from .notifs import NotifsManager
-from . import dispo_ui as ui
+from ui.staff import demandes as ui
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ import html
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
-from . import staff_ui as ui
+from ui.admin import users as ui
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ import logging
 from telegram import LabeledPrice, Update
 from telegram.error import Forbidden
 from telegram.ext import ContextTypes
-from . import paiement_ui as ui
+from ui.user import paiement as ui
 
 logger = logging.getLogger(__name__)
 

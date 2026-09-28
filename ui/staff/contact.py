@@ -1,4 +1,6 @@
-"""Composants visuels, gabarits de messages et claviers pour la messagerie Staff / Direction."""
+"""ui/staff/contact.py
+Composants visuels, gabarits de messages et claviers pour la messagerie interne Staff / Direction.
+"""
 
 import html
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup

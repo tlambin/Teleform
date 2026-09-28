@@ -5,7 +5,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes, ConversationHandler
-from . import contact_ui as ui
+from ui.staff import contact as ui
 
 logger = logging.getLogger(__name__)
 

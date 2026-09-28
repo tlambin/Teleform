@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 from utils.validators import ValidationError, Validators
 from .navigation import NavigationManager
-from . import formulaire_ui as ui
+from ui.user import creation as ui
 
 logger = logging.getLogger(__name__)
 

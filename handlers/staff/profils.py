@@ -4,7 +4,7 @@ import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from . import profils_ui as ui
+from ui.staff import profil as ui
 
 logger = logging.getLogger(__name__)
 
@@ -429,7 +429,7 @@ class ProfilsManager:
             if is_admin:
                 cursor.execute(
                     """
-                    SELECT COUNT(*) as cnt FROM demandes 
+                    SELECT COUNT(*) as cnt FROM demandes
                     WHERE user_id = %s AND (statut = '📥 Reçue' OR statut = '🎯 Assignée (VIP)')
                     """,
                     (target_user_id,)
@@ -437,8 +437,8 @@ class ProfilsManager:
             else:
                 cursor.execute(
                     """
-                    SELECT COUNT(*) as cnt FROM demandes 
-                    WHERE user_id = %s 
+                    SELECT COUNT(*) as cnt FROM demandes
+                    WHERE user_id = %s
                       AND (statut = '📥 Reçue' OR (statut = '🎯 Assignée (VIP)' AND admin_en_charge = %s))
                     """,
                     (target_user_id, viewer_id)
@@ -452,8 +452,8 @@ class ProfilsManager:
             if is_admin:
                 cursor.execute(
                     """
-                    SELECT COUNT(*) as cnt FROM demandes 
-                    WHERE user_id = %s 
+                    SELECT COUNT(*) as cnt FROM demandes
+                    WHERE user_id = %s
                       AND statut IN ('⏳ En attente', '🔄 En cours', '🎯 Assignée (VIP)', '✅ Réussie')
                     """,
                     (target_user_id,)
@@ -538,7 +538,7 @@ class ProfilsManager:
                 if is_admin:
                     cursor.execute(
                         """
-                        SELECT COUNT(*) as cnt FROM demandes 
+                        SELECT COUNT(*) as cnt FROM demandes
                         WHERE user_id = %s AND (statut = '📥 Reçue' OR statut = '🎯 Assignée (VIP)')
                         """,
                         (target_user_id,)
@@ -548,7 +548,7 @@ class ProfilsManager:
                     cursor.execute(
                         """
                         SELECT id, prenom, nom, statut, prioritaire, is_difficile, reussie_substatus, admin_en_charge
-                        FROM demandes 
+                        FROM demandes
                         WHERE user_id = %s AND (statut = '📥 Reçue' OR statut = '🎯 Assignée (VIP)')
                         ORDER BY date_creation DESC
                         LIMIT %s OFFSET %s
@@ -559,8 +559,8 @@ class ProfilsManager:
                 else:
                     cursor.execute(
                         """
-                        SELECT COUNT(*) as cnt FROM demandes 
-                        WHERE user_id = %s 
+                        SELECT COUNT(*) as cnt FROM demandes
+                        WHERE user_id = %s
                           AND (statut = '📥 Reçue' OR (statut = '🎯 Assignée (VIP)' AND admin_en_charge = %s))
                         """,
                         (target_user_id, viewer_id)
@@ -570,8 +570,8 @@ class ProfilsManager:
                     cursor.execute(
                         """
                         SELECT id, prenom, nom, statut, prioritaire, is_difficile, reussie_substatus, admin_en_charge
-                        FROM demandes 
-                        WHERE user_id = %s 
+                        FROM demandes
+                        WHERE user_id = %s
                           AND (statut = '📥 Reçue' OR (statut = '🎯 Assignée (VIP)' AND admin_en_charge = %s))
                         ORDER BY date_creation DESC
                         LIMIT %s OFFSET %s
@@ -583,8 +583,8 @@ class ProfilsManager:
             elif category == "traitees":
                 cursor.execute(
                     """
-                    SELECT COUNT(*) as cnt FROM demandes 
-                    WHERE user_id = %s 
+                    SELECT COUNT(*) as cnt FROM demandes
+                    WHERE user_id = %s
                       AND statut IN ('⏳ En attente', '🔄 En cours', '🎯 Assignée (VIP)', '✅ Réussie')
                     """,
                     (target_user_id,)
@@ -594,8 +594,8 @@ class ProfilsManager:
                 cursor.execute(
                     """
                     SELECT id, prenom, nom, statut, prioritaire, is_difficile, reussie_substatus, admin_en_charge
-                    FROM demandes 
-                    WHERE user_id = %s 
+                    FROM demandes
+                    WHERE user_id = %s
                       AND statut IN ('⏳ En attente', '🔄 En cours', '🎯 Assignée (VIP)', '✅ Réussie')
                     ORDER BY date_modification DESC
                     LIMIT %s OFFSET %s

@@ -6,7 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 from telegram.ext import ContextTypes
 from utils.session import session_manager
-from . import bot_ui as ui
+from ui.admin import system as ui
 
 logger = logging.getLogger(__name__)
 

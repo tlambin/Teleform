@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes
 from utils.session import session_manager
-from . import membres_ui as ui
+from ui.admin import users as ui
 
 logger = logging.getLogger(__name__)
 

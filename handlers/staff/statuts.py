@@ -5,7 +5,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from .notifs import NotifsManager
-from . import statuts_ui as ui
+from ui.staff import demandes as ui
 
 logger = logging.getLogger(__name__)
 

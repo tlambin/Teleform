@@ -4,7 +4,7 @@ import html
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
-from . import archives_ui as ui
+from ui.staff import demandes as ui
 
 logger = logging.getLogger(__name__)
 

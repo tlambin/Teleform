@@ -2,7 +2,7 @@
 
 import logging
 from telegram.ext import ConversationHandler
-from . import navigation_ui as ui
+from ui.user import creation as ui
 
 logger = logging.getLogger(__name__)
 
