@@ -266,3 +266,45 @@ def build_upgrade_broadcast_alert(
         InlineKeyboardButton("📮 DEMANDES DISPO", callback_data="demandes_disponibles"),
     ]])
     return text, kb
+
+# ==================== NÉGOCIATION & ALLOCATION FINANCIÈRE ====================
+
+def format_client_revalorisation_proposal(
+    req_num: int,
+    prenom: str,
+    alias_staff: str,
+    nouveau_prix: float,
+    current_montant: float,
+    demande_id: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Alerte remise au client avec proposition de revalorisation par le piégeur."""
+    client_alert = (
+        f"💰 <b>Proposition de revalorisation (Dossier #{req_num})</b>\n\n"
+        f"L'opérateur <b>{html.escape(str(alias_staff))}</b> souhaite prendre en charge votre dossier concernant <b>{prenom}</b> !\n\n"
+        f"Il vous propose de réaliser la prestation pour <b>{nouveau_prix:.2f} €</b> (au lieu de <code>{current_montant:.2f} €</code>).\n\n"
+        "• <b>Accepter :</b> Le dossier sera immédiatement pris en charge sous le statut ⏳ En attente.\n"
+        "• <b>Refuser :</b> Votre demande reste active au tarif de base dans les disponibles."
+    )
+    client_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"✅ ACCEPTER ({nouveau_prix:.2f} €)", callback_data=f"user_accept_remun_prio_{demande_id}"),
+        InlineKeyboardButton("❌ REFUSER", callback_data=f"user_refuse_remun_prio_{demande_id}"),
+    ]])
+    return client_alert, client_kb
+
+
+def get_std_remun_allocation_prompt(demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Invite au client pour allouer un tarif à une demande standard."""
+    prompt_text = (
+        f"💰 <b>Allocation d'un montant (Dossier #{demande_id})</b>\n\n"
+        "Indiquez au clavier le <b>montant</b> que vous êtes prêt à allouer pour cette demande (en €) :\n\n"
+        "<i>Votre dossier sera automatiquement converti en priorité et proposé aux piégeurs.</i>"
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data="voir_demandes")]])
+    return prompt_text, kb
+
+
+def get_std_remun_refused_content(req_num: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Message actant le refus de rémunérer et l'abandon du dossier standard."""
+    text = f"❌ <b>Dossier #{req_num} abandonné et clôturé.</b>\n\nVotre quota de demandes actives a été libéré."
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗂️ MES DEMANDES 🗂️", callback_data="voir_demandes")]])
+    return text, kb

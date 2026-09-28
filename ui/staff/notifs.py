@@ -2,6 +2,7 @@
 Composants visuels, gabarits textuels et claviers pour les alertes staff, rappels et surveillance.
 """
 
+import html
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 JOURS_SEMAINE = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
@@ -250,3 +251,127 @@ def build_monthday_picker_keyboard(current_md: int) -> InlineKeyboardMarkup:
 
     grid.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_notifs")])
     return InlineKeyboardMarkup(grid)
+
+# ==================== ALERTES & NOTIFICATIONS OPÉRATEUR ====================
+
+def format_admin_reminder_alert(
+    req_num: str,
+    user_label_esc: str,
+    prenom_esc: str,
+    tag: str,
+    demande_id: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Notification formelle de relance adressée au piégeur en charge."""
+    remind_msg = (
+        f"🔔 <b>RAPPEL DEMANDE #{req_num} [{tag}]</b>\n\n"
+        f"Le demandeur <b>{user_label_esc}</b> vous relance concernant sa demande pour <b>{prenom_esc}</b>.\n"
+        "Merci de consulter vos suivis ou de lui apporter une réponse."
+    )
+    admin_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💌 OUVRIR MES SUIVIS 💌", callback_data="demandes_suivies")],
+        [InlineKeyboardButton("💬 CONTACTER LE DEMANDEUR 💬", callback_data=f"contacter_{demande_id}")],
+    ])
+    return remind_msg, admin_kb
+
+
+def build_staff_cancel_decision_alert(req_num: int, prenom: str, raison: str, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Alerte remise au piégeur pour décider d'accepter ou refuser l'annulation client."""
+    prenom_esc = html.escape(str(prenom or ""))
+    raison_esc = html.escape(raison)
+    text = (
+        f"⚠️ <b>Demande d'annulation (Dossier #{req_num})</b>\n\n"
+        f"Le client souhaite annuler pour <b>{prenom_esc}</b>.\n"
+        f"<b>Motif :</b> « {raison_esc} »"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ ACCEPTER L'ANNULATION", callback_data=f"accept_cancel_{demande_id}"),
+        InlineKeyboardButton("❌ REFUSER L'ANNULATION", callback_data=f"refuse_cancel_{demande_id}"),
+    ]])
+    return text, kb
+
+
+def build_staff_report_alert(staff_alias: str, staff_id: int, req_num: int, prenom: str, motif: str, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Alerte envoyée aux superviseurs lorsqu'un opérateur signale une demande disponible."""
+    admin_alert = (
+        f"🚨 <b>SIGNALEMENT D'UNE DEMANDE DISPONIBLE</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Opérateur :</b> {html.escape(str(staff_alias))} (<code>{staff_id}</code>)\n"
+        f"• <b>Dossier :</b> #{req_num} ({prenom})\n"
+        f"• <b>Motif :</b>\n« <i>{html.escape(motif)}</i> »"
+    )
+    admin_kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("💰 RÉMUNÉRATION", callback_data=f"dispo_ask_remun_std_{demande_id}"),
+            InlineKeyboardButton("🗑️ SUPPRIMER", callback_data=f"admin_del_dispo_{demande_id}")
+        ],
+        [InlineKeyboardButton("📄 VOIR LE DOSSIER 📄", callback_data=f"retour_texte_{demande_id}")],
+    ])
+    return admin_alert, admin_kb
+
+# ==================== NOTIFICATIONS CYCLE DE VIE & MISSIONS ====================
+
+def format_demission_owner_notification(alias: str, user_id: int, resume_roles: str) -> str:
+    """Notification envoyée au propriétaire lors de la démission d'un membre."""
+    alias_esc = html.escape(str(alias))
+    return (
+        "🚪 <b>DÉMISSION D'UN MEMBRE DE L'ÉQUIPE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Membre :</b> {alias_esc} (<code>{user_id}</code>)\n"
+        f"• <b>Fonction(s) quittée(s) :</b> {html.escape(resume_roles)}\n\n"
+        "<i>Les autorisations ont été révoquées et les dossiers actifs ont été replacés dans les disponibles.</i>"
+    )
+
+
+def format_demission_user_confirmation(resume_roles: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Message de confirmation remis au membre qui démissionne."""
+    text = (
+        "✅ <b>Démission prise en compte</b>\n\n"
+        f"Vous avez démissionné avec succès de vos fonctions : <b>{html.escape(resume_roles)}</b>.\n\n"
+        "Merci pour votre contribution au service !"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🏠 RETOUR À L'ACCUEIL", callback_data="start_menu")
+    ]])
+    return text, kb
+
+
+def format_pause_abandon_client_notification(req_num: int, alias_esc: str, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Notification envoyée au demandeur lorsque son référent abandonne son dossier pour pause."""
+    msg = (
+        f"⚠️ <b>Demande #{req_num} — Référent indisponible</b>\n\n"
+        f"Votre référent (<b>{alias_esc}</b>) est actuellement en pause.\n"
+        "Sa prise en charge sur votre dossier a donc été interrompue.\n\n"
+        "Vous pouvez remettre votre demande dans la file d'attente ou la classer sans suite :"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 REPRENDRE MA DEMANDE", callback_data=f"reprendre_demande_{demande_id}")],
+        [InlineKeyboardButton("🗑️ ARCHIVER LA DEMANDE", callback_data=f"archiver_demande_{demande_id}")]
+    ])
+    return msg, kb
+
+
+def format_vip_accept_client_notification(req_num: int, alias: str, prenom_cible: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Notification remise au client VIP confirmant l'acceptation de sa demande."""
+    text = (
+        f"🌟 <b>Votre demande #{req_num} a été acceptée !</b>\n\n"
+        f"Votre référent <b>{html.escape(str(alias))}</b> a validé la prise en charge de votre dossier "
+        f"pour <b>{html.escape(str(prenom_cible))}</b>.\n\n"
+        "Le statut passe en <b>⏳ En attente</b> (premier contact en cours)."
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 SUIVRE MA DEMANDE", callback_data="voir_demandes")
+    ]])
+    return text, kb
+
+
+def format_vip_decline_client_notification(req_num: int, alias: str, prenom_cible: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Notification remise au client VIP indiquant le désistement du référent sollicité."""
+    text = (
+        f"ℹ️ <b>Mise à jour de votre demande VIP #{req_num}</b>\n\n"
+        f"Votre référent sollicité ({html.escape(str(alias))}) n'est malheureusement pas disponible actuellement "
+        f"pour prendre en charge le dossier de <b>{html.escape(str(prenom_cible))}</b>.\n\n"
+        "Votre demande a été immédiatement transmise à l'ensemble de l'équipe avec priorité absolue !"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 SUIVRE MA DEMANDE", callback_data="voir_demandes")
+    ]])
+    return text, kb

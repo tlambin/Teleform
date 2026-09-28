@@ -6273,3 +6273,92 @@ TypeError: float() argument must be a string or a real number, not 'coroutine'
 2026-09-28 23:57:19,581 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-29 03:57:19 UTC)" executed successfully
 2026-09-28 23:57:34,579 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-29 03:57:34 UTC)" (scheduled at 2026-09-28 21:57:34.573568+00:00)
 2026-09-28 23:57:34,579 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-29 03:57:34 UTC)" executed successfully
+2026-09-29 00:01:01,041 - database.connection - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base : paraworld$telegramDB) [PID: 2]
+2026-09-29 00:01:01,043 - database.connection - INFO - ConnectionManager initialisé avec pool de 2 connexions.
+2026-09-29 00:01:01,045 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-29 00:01:01,047 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 00:01:01,047 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-29 00:31:45,234 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-29 00:37:37,293 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-29 00:39:08,983 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-29 00:47:37,322 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-29 00:53:39,586 - webhook_app - INFO - ⚡ Initialisation post-fork du Bot et de l'Event Loop (PID: 2)
+2026-09-29 00:53:39,591 - config - INFO - Toutes les variables d'environnement requises sont présentes
+2026-09-29 00:53:40,159 - database.connection - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base : paraworld$telegramDB) [PID: 2]
+2026-09-29 00:53:40,159 - database.connection - INFO - ConnectionManager initialisé avec pool de 2 connexions.
+2026-09-29 00:53:40,329 - database.schema - INFO - Vérification et création des tables terminées avec succès.
+2026-09-29 00:53:40,331 - config - INFO - Cache rôles chargé : 2 owners, 3 admins (managers) et 2 staff (opérateurs)
+2026-09-29 00:53:40,345 - handlers.user.compte - INFO - CompteManager initialisé avec support réglages VIP
+2026-09-29 00:53:40,345 - handlers.user.navigation - INFO - NavigationManager initialisé avec support Orientation & Staff
+2026-09-29 00:53:40,345 - handlers.user.formulaire - INFO - FormulaireManager initialisé avec support VIP Assignée & Auto-Assign
+2026-09-29 00:53:40,345 - handlers.user.demande - INFO - DemandeManager initialisé avec charte graphique unifiée et support RBAC
+2026-09-29 00:53:40,346 - handlers.user.edition - INFO - EditionManager initialisé avec support du prix plancher prioritaire et requêtes précompilées
+2026-09-29 00:53:40,346 - handlers.staff.suivi - INFO - SuiviManager initialisé avec charte graphique unifiée, confirmation de paiement et surveillance
+2026-09-29 00:53:40,346 - handlers.staff.notifs - INFO - NotifsManager initialisé avec support Staff/Admin, Surveillance & Paiement Prio
+2026-09-29 00:53:40,346 - handlers.staff.statuts - INFO - StatutsManager initialisé avec support Staff/Admin, Surveillance et Dénouement Période d'essai
+2026-09-29 00:53:40,347 - handlers.staff.photos - INFO - PhotosManager initialisé avec supervision hiérarchique
+2026-09-29 00:53:40,347 - handlers.staff.notifs - INFO - NotifsManager initialisé avec support Staff/Admin, Surveillance & Paiement Prio
+2026-09-29 00:53:40,347 - handlers.staff.dispo - INFO - DispoManager initialisé avec disposition conforme et indicateur de rémunération
+2026-09-29 00:53:40,347 - handlers.staff.alias - INFO - AliasManager initialisé avec support Staff/Admin
+2026-09-29 00:53:40,351 - handlers.staff.notifs - INFO - NotifsManager initialisé avec support Staff/Admin, Surveillance & Paiement Prio
+2026-09-29 00:53:40,351 - handlers.staff.contact - INFO - ContactManager initialisé avec support Multi-Owner
+2026-09-29 00:53:40,351 - handlers.staff.profils - INFO - ProfilsManager initialisé avec supervision hiérarchique et contrôle des bannissements
+2026-09-29 00:53:40,352 - handlers.staff.archives - INFO - ArchivesManager initialisé avec support double vue (personnelle & générale)
+2026-09-29 00:53:40,352 - handlers.staff.alias - INFO - AliasManager initialisé avec support Staff/Admin
+2026-09-29 00:53:40,352 - handlers.staff.archives - INFO - ArchivesManager initialisé avec support double vue (personnelle & générale)
+2026-09-29 00:53:40,352 - handlers.admin.config - INFO - ConfigManager initialisé avec support Délais, Quotas, Rappels & Rémunération
+2026-09-29 00:53:40,353 - handlers.admin.stats - INFO - StatsManager initialisé avec support RBAC
+2026-09-29 00:53:40,354 - handlers.admin.bot - INFO - BotManager initialisé avec support Multi-Owner et broadcast résilient.
+2026-09-29 00:53:40,354 - handlers.admin.staff - INFO - StaffManager initialisé avec pré-configuration avant validation
+2026-09-29 00:53:40,354 - handlers.admin_handlers - INFO - AdminHandlers initialisé avec architecture allégée (Purge, Membres, VIPs isolés).
+2026-09-29 00:53:40,717 - root - ERROR - /home/paraworld/teleform/handlers/user/formulaire.py:72: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,717 - root - ERROR -   return ConversationHandler(
+2026-09-29 00:53:40,721 - root - ERROR - /home/paraworld/teleform/main.py:220: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,721 - root - ERROR -   modify_alias_conv = ConversationHandler(
+2026-09-29 00:53:40,722 - root - ERROR - /home/paraworld/teleform/main.py:238: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,722 - root - ERROR -   contact_owner_conv = ConversationHandler(
+2026-09-29 00:53:40,722 - root - ERROR - /home/paraworld/teleform/main.py:259: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,724 - root - ERROR -   owner_reply_conv = ConversationHandler(
+2026-09-29 00:53:40,725 - root - ERROR - /home/paraworld/teleform/main.py:277: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,725 - root - ERROR -   add_staff_conv = ConversationHandler(
+2026-09-29 00:53:40,725 - root - ERROR - /home/paraworld/teleform/main.py:298: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,726 - root - ERROR -   remove_staff_conv = ConversationHandler(
+2026-09-29 00:53:40,729 - root - ERROR - /home/paraworld/teleform/main.py:319: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,729 - root - ERROR -   add_admin_conv = ConversationHandler(
+2026-09-29 00:53:40,730 - root - ERROR - /home/paraworld/teleform/main.py:337: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,730 - root - ERROR -   remove_admin_conv = ConversationHandler(
+2026-09-29 00:53:40,731 - root - ERROR - /home/paraworld/teleform/main.py:358: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,731 - root - ERROR -   add_vip_conv = ConversationHandler(
+2026-09-29 00:53:40,731 - root - ERROR - /home/paraworld/teleform/main.py:380: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+2026-09-29 00:53:40,739 - root - ERROR -   remove_vip_conv = ConversationHandler(
+2026-09-29 00:53:40,770 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-29 00:53:40,771 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-29 00:53:40,771 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-29 00:53:40,771 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-29 00:53:40,772 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-29 00:53:40,773 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-29 00:53:40,773 - main - INFO - ⏰ Tâches JobQueue configurées et actives.
+2026-09-29 00:53:40,773 - bot_app - INFO - Application Telegram initialisée avec succès.
+2026-09-29 00:53:40,837 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot7580250572:AAHmXuKZGap_jrmDRcgPIK3DhOq1mQ2eb9c/getMe "HTTP/1.1 200 OK"
+2026-09-29 00:53:40,853 - apscheduler.scheduler - INFO - Added job "check_and_send_admin_reminders" to job store "default"
+2026-09-29 00:53:40,853 - apscheduler.scheduler - INFO - Added job "check_and_auto_archive_demandes" to job store "default"
+2026-09-29 00:53:40,854 - apscheduler.scheduler - INFO - Added job "check_and_send_delivery_reminders" to job store "default"
+2026-09-29 00:53:40,854 - apscheduler.scheduler - INFO - Added job "check_and_send_paid_delivery_reminders" to job store "default"
+2026-09-29 00:53:40,854 - apscheduler.scheduler - INFO - Added job "check_and_send_unpaid_demande_reminders" to job store "default"
+2026-09-29 00:53:40,855 - apscheduler.scheduler - INFO - Added job "check_and_auto_abandon_expired_remun_demandes" to job store "default"
+2026-09-29 00:53:40,855 - apscheduler.scheduler - INFO - Scheduler started
+2026-09-29 00:53:40,855 - telegram.ext.Application - INFO - Application started
+2026-09-29 00:53:40,856 - webhook_app - INFO - ✅ Bot Telegram opérationnel dans le worker PID 2
+2026-09-29 00:53:55,771 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-28 23:53:55 UTC)" (scheduled at 2026-09-28 22:53:55.763868+00:00)
+2026-09-29 00:53:55,772 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 00:53:55,772 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-28 23:53:55 UTC)" executed successfully
+2026-09-29 00:54:10,776 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-28 23:54:10 UTC)" (scheduled at 2026-09-28 22:54:10.770850+00:00)
+2026-09-29 00:54:10,777 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-28 23:54:10 UTC)" executed successfully
+2026-09-29 00:54:25,776 - apscheduler.executors.default - INFO - Running job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-29 04:54:25 UTC)" (scheduled at 2026-09-28 22:54:25.771325+00:00)
+2026-09-29 00:54:25,777 - apscheduler.executors.default - INFO - Job "check_and_send_delivery_reminders (trigger: interval[6:00:00], next run at: 2026-09-29 04:54:25 UTC)" executed successfully
+2026-09-29 00:54:40,777 - apscheduler.executors.default - INFO - Running job "check_and_send_paid_delivery_reminders (trigger: interval[1 day, 0:00:00], next run at: 2026-09-29 22:54:40 UTC)" (scheduled at 2026-09-28 22:54:40.771695+00:00)
+2026-09-29 00:54:40,777 - apscheduler.executors.default - INFO - Job "check_and_send_paid_delivery_reminders (trigger: interval[1 day, 0:00:00], next run at: 2026-09-29 22:54:40 UTC)" executed successfully
+2026-09-29 00:54:55,777 - apscheduler.executors.default - INFO - Running job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-29 04:54:55 UTC)" (scheduled at 2026-09-28 22:54:55.772139+00:00)
+2026-09-29 00:54:55,777 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-29 04:54:55 UTC)" executed successfully
+2026-09-29 00:55:10,778 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-29 04:55:10 UTC)" (scheduled at 2026-09-28 22:55:10.772853+00:00)
+2026-09-29 00:55:10,779 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-29 04:55:10 UTC)" executed successfully

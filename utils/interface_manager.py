@@ -1,10 +1,11 @@
 """Interface Manager - Gestionnaire centralisé des claviers et menus du bot selon la hiérarchie RBAC."""
 
 import logging
-from .keyboards.helpers import format_datetime_fr
-from .keyboards.client import ClientKeyboards
-from .keyboards.staff import StaffKeyboards
-from .keyboards.admin import AdminKeyboards
+from ui.user import compte as user_compte_ui
+from ui.staff import demandes as staff_demandes_ui
+from ui.staff import profil as staff_profil_ui
+from ui.admin import system as admin_system_ui
+from ui.admin import users as admin_users_ui
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +16,6 @@ class InterfaceManager:
     def __init__(self, config, db_manager):
         self.config = config
         self.db_manager = db_manager
-
-        self.client_ui = ClientKeyboards(config, db_manager, self._get_user_role)
-        self.staff_ui = StaffKeyboards(config, db_manager, self._get_user_role)
-        self.admin_ui = AdminKeyboards(config, db_manager, self._get_user_role)
 
     def _get_user_role(self, user_id: int) -> str:
         """Détermine le rôle précis selon la hiérarchie RBAC."""
@@ -35,76 +32,152 @@ class InterfaceManager:
             return "staff"
         return "user"
 
-    # ========== DÉLÉGATION CLIENT ==========
+    # ==================== DÉLÉGATION CLIENT ====================
 
     def get_start_interface(self, user_id: int, first_name: str):
-        return self.client_ui.get_start_interface(user_id, first_name)
+        role = self._get_user_role(user_id)
+        is_vip = self.db_manager.is_user_vip(user_id)
+        return user_compte_ui.build_start_interface(user_id, first_name, role, is_vip)
 
     def get_vip_shop_menu(self, is_vip: bool = False):
-        return self.client_ui.get_vip_shop_menu(is_vip=is_vip)
+        return user_compte_ui.build_vip_shop_menu(is_vip=is_vip)
 
-    # ========== DÉLÉGATION STAFF ==========
+    def get_client_parametres_menu(self, user_id: int):
+        is_vip = self.db_manager.is_user_vip(user_id)
+        support_contact = self.db_manager.get_support_contact()
+        return user_compte_ui.build_client_parametres_menu(user_id, is_vip, support_contact)
+
+    # ==================== DÉLÉGATION STAFF ====================
 
     def get_gerer_demandes_menu(self, user_id: int):
-        return self.staff_ui.get_gerer_demandes_menu(user_id)
+        counts = self.db_manager.get_staff_demandes_counts(user_id)
+        nb_dispo = counts.get("dispo", 0)
+        nb_suivies = counts.get("suivies", 0)
+        nb_archives = counts.get("archives", 0)
+        return staff_demandes_ui.get_gerer_demandes_menu(nb_dispo, nb_suivies, nb_archives)
 
     def get_mon_profil_menu(self, user_id: int):
-        return self.staff_ui.get_mon_profil_menu(user_id)
+        user_role = self._get_user_role(user_id)
+        is_paused = self.db_manager.is_staff_paused(user_id)
+        alias = self.db_manager.get_staff_alias(user_id) or f"Membre_{user_id}"
+
+        primary_owner_id = self.db_manager.get_owner_id() or getattr(self.config, "OWNER_ID", 0)
+        is_primary_owner = (int(user_id) == int(primary_owner_id))
+        can_edit_alias = self.db_manager.can_staff_edit_alias(user_id)
+
+        return staff_profil_ui.get_mon_profil_menu(
+            user_id=user_id,
+            user_role=user_role,
+            is_paused=is_paused,
+            alias=alias,
+            is_primary_owner=is_primary_owner,
+            can_edit_alias=can_edit_alias,
+        )
 
     def get_demission_choice_menu(self):
-        return self.staff_ui.get_demission_choice_menu()
+        return staff_profil_ui.get_demission_choice_menu()
 
     def get_demission_confirm_menu(self, scope: str):
-        return self.staff_ui.get_demission_confirm_menu(scope)
+        return staff_profil_ui.get_demission_confirm_menu(scope)
 
     def get_staff_self_preferences_menu(self, user_id: int):
-        return self.staff_ui.get_staff_self_preferences_menu(user_id)
+        can_edit = self.db_manager.can_staff_edit_preferences(user_id)
+        perms = self.db_manager.get_staff_permissions(user_id)
+        return staff_profil_ui.get_staff_self_preferences_menu(perms, can_edit)
 
     def get_staff_payment_settings_menu(self, staff_id: int):
-        return self.staff_ui.get_staff_payment_settings_menu(staff_id)
+        methods = self.db_manager.get_staff_payment_methods(staff_id)
+        accept_stars = bool(methods.get("accept_stars", True))
+        accept_direct = bool(methods.get("accept_direct", True))
+        return staff_profil_ui.get_staff_payment_settings_menu(accept_stars, accept_direct)
 
-    # ========== DÉLÉGATION ADMIN ==========
+    # ==================== DÉLÉGATION ADMIN ====================
 
     def get_gerer_bot_menu(self):
-        return self.admin_ui.get_gerer_bot_menu()
+        val_demandes = str(self.db_manager.get_config_value("demandes_enabled", "true")).lower()
+        demandes_ouvertes = val_demandes in ("true", "1", "yes")
+        return admin_system_ui.build_gerer_bot_menu(demandes_ouvertes)
 
     def get_danger_zone_menu(self):
-        return self.admin_ui.get_danger_zone_menu()
+        return admin_system_ui.build_danger_zone_menu()
 
     def get_group_subscription_config_menu(self):
-        return self.admin_ui.get_group_subscription_config_menu()
+        is_enabled = self.db_manager.is_required_group_enabled()
+        group_id = self.db_manager.get_required_group_id()
+        link = self.db_manager.get_group_subscription_link()
+        return admin_system_ui.build_group_subscription_config_menu(is_enabled, group_id, link)
 
     def get_support_config_menu(self):
-        return self.admin_ui.get_support_config_menu()
+        contact = self.db_manager.get_support_contact()
+        return admin_system_ui.build_support_config_menu(contact)
 
     def get_channels_menu(self):
-        return self.admin_ui.get_channels_menu()
+        hi = self.db_manager.is_channel_combination_allowed("hetero", "insta")
+        hs = self.db_manager.is_channel_combination_allowed("hetero", "snap")
+        gi = self.db_manager.is_channel_combination_allowed("gay", "insta")
+        gs = self.db_manager.is_channel_combination_allowed("gay", "snap")
+        return admin_system_ui.build_channels_menu(hi, hs, gi, gs)
 
     def get_limits_menu(self):
-        return self.admin_ui.get_limits_menu()
+        max_total = self.config.get_max_total_demandes()
+        max_user = self.config.get_max_demandes_per_user()
+        m_hi = int(self.db_manager.get_config_value("max_hetero_insta", "0") or 0)
+        m_hs = int(self.db_manager.get_config_value("max_hetero_snap", "0") or 0)
+        m_gi = int(self.db_manager.get_config_value("max_gay_insta", "0") or 0)
+        m_gs = int(self.db_manager.get_config_value("max_gay_snap", "0") or 0)
+        return admin_system_ui.build_limits_menu(max_total, max_user, m_hi, m_hs, m_gi, m_gs)
 
     def get_membres_menu(self):
-        return self.admin_ui.get_membres_menu()
+        return admin_users_ui.build_membres_menu()
 
     def get_gerer_staff_menu(self):
-        return self.admin_ui.get_gerer_staff_menu()
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s.user_id, s.alias, s.date_added, s.perm_reseaux, s.perm_type, s.perm_orientation, s.is_paused, s.allow_self_prefs,
+                       u.first_name, u.username,
+                       u_add.first_name AS nom_ajouteur
+                FROM staff s
+                LEFT JOIN users u ON s.user_id = u.user_id
+                LEFT JOIN users u_add ON s.added_by = u_add.user_id
+                ORDER BY s.date_added DESC
+                """
+            )
+            staff_members = cursor.fetchall()
+        return admin_users_ui.build_gerer_staff_menu(staff_members)
 
     def get_gerer_admins_menu(self):
-        return self.admin_ui.get_gerer_admins_menu()
+        with self.db_manager.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.user_id, a.alias, a.is_owner, a.date_added,
+                       a.can_view_archives, a.can_monitor_staff, a.can_ban_users,
+                       u.username, u.first_name
+                FROM admins a
+                LEFT JOIN users u ON a.user_id = u.user_id
+                ORDER BY a.is_owner DESC, a.date_added DESC
+                """
+            )
+            admins = cursor.fetchall()
+        return admin_users_ui.build_gerer_admins_menu(admins)
 
     def get_gerer_vips_menu(self):
-        return self.admin_ui.get_gerer_vips_menu()
+        vips = self.db_manager.get_vip_users_list()
+        return admin_users_ui.build_gerer_vips_menu(vips)
 
-    # ========== MENU PARAMÈTRES (AIGUILLAGE RBAC) ==========
+    # ==================== MENU PARAMÈTRES (AIGUILLAGE RBAC) ====================
 
     def get_parametres_menu(self, user_id: int):
         """Construit le panneau Paramètres selon le rôle (Client vs Staff/Admin)."""
         user_role = self._get_user_role(user_id)
         if user_role not in ["staff", "admin", "owner"]:
-            return self.client_ui.get_client_parametres_menu(user_id)
-        return self.admin_ui.get_admin_parametres_menu(user_id)
+            return self.get_client_parametres_menu(user_id)
 
-    # ========== ROUTEUR CENTRAL DES MENUS ==========
+        is_vip = self.db_manager.is_user_vip(user_id)
+        privs = self.db_manager.get_admin_privileges(user_id)
+        return admin_users_ui.build_admin_parametres_menu(user_id, user_role, is_vip, privs)
+
+    # ==================== ROUTEUR CENTRAL DES MENUS ====================
 
     def route_callback(self, callback_data: str, user_id: int, first_name: str):
         """Aiguillage des callbacks d'interface vers le bon générateur de vue."""

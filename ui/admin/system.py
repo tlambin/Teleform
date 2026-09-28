@@ -1,8 +1,9 @@
 """ui/admin/system.py
 Gabarits visuels, textes et claviers pour la gestion globale et technique :
-Maintenance, statut opérationnel On/Off, statistiques, délais et purges.
+Maintenance, statut opérationnel On/Off, statistiques, délais, purges et menus système.
 """
 
+import html
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 PURGE_LABELS = {
@@ -14,6 +15,181 @@ PURGE_LABELS = {
     "config": "de configuration (config)",
     "totale": "TOTALE (de toute la base de données)",
 }
+
+
+# ==================== MENUS SYSTÈME (GESTION CENTRALE) ====================
+
+def build_gerer_bot_menu(demandes_ouvertes: bool) -> tuple[str, InlineKeyboardMarkup]:
+    """Menu de contrôle du bot système."""
+    etat_badge = "🟢 <b>OUVERTES (Actives)</b>" if demandes_ouvertes else "🔴 <b>SUSPENDUES (Fermées)</b>"
+    label_suspension = (
+        "❌ SUSPENDRE LES DEMANDES ❌" if demandes_ouvertes else "✅ RÉACTIVER LES DEMANDES ✅"
+    )
+
+    message = (
+        "🤖 <b>GESTION DU BOT</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>État des demandes :</b> {etat_badge}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Panneau de contrôle système de la plateforme :"
+    )
+    keyboard = [
+        [InlineKeyboardButton(label_suspension, callback_data="bot_toggle_suspension")],
+        [
+            InlineKeyboardButton("🌡️ QUOTAS", callback_data="menu_limits"),
+            InlineKeyboardButton("🎯 CIBLES", callback_data="menu_channels"),
+        ],
+        [
+            InlineKeyboardButton("⏳ DÉLAIS", callback_data="menu_delais"),
+            InlineKeyboardButton("🛠️ MAINTENANCE", callback_data="maintenance"),
+        ],
+        [
+            InlineKeyboardButton("🔑 ADHÉSION", callback_data="menu_cfg_group"),
+            InlineKeyboardButton("📢 CONTACT", callback_data="menu_cfg_support"),
+        ],
+        [InlineKeyboardButton("⛔ ZONE DE DANGER ⛔", callback_data="menu_danger_zone")],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")],
+    ]
+    return message, InlineKeyboardMarkup(keyboard)
+
+
+def build_danger_zone_menu() -> tuple[str, InlineKeyboardMarkup]:
+    """Affiche le menu de purge de la zone de danger (Owner only)."""
+    text = (
+        "🚨 <b>ZONE DE DANGER — PURGE DES DONNÉES</b> 🚨\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "⚠️ <b>Attention :</b> Les actions lancées ici effacent immédiatement et définitivement les données ciblées dans MySQL.\n\n"
+        "<i>Sélectionnez le lot de données à vider :</i>"
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("📦 VIDER ARCHIVES", callback_data="danger_purge_archives"),
+            InlineKeyboardButton("📋 VIDER DEMANDES", callback_data="danger_purge_demandes"),
+        ],
+        [
+            InlineKeyboardButton("👤 VIDER CLIENTS", callback_data="danger_purge_users"),
+            InlineKeyboardButton("🦈 VIDER STAFF", callback_data="danger_purge_staff"),
+        ],
+        [
+            InlineKeyboardButton("🛡️ VIDER MANAGERS", callback_data="danger_purge_admins"),
+            InlineKeyboardButton("⚙️ VIDER CONFIG", callback_data="danger_purge_config"),
+        ],
+        [InlineKeyboardButton("💥 PURGE TOTALE 💥", callback_data="danger_purge_totale")],
+        [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data="gerer_bot")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_group_subscription_config_menu(is_enabled: bool, group_id: int, link: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Menu de configuration de l'adhésion obligatoire."""
+    statut_badge = "🟢 <b>ACTIVE</b>" if is_enabled else "🔴 <b>DÉSACTIVÉE</b>"
+    toggle_btn_label = "🔴 DÉSACTIVER LE CONTRÔLE" if is_enabled else "🟢 ACTIVER LE CONTRÔLE"
+    gid_str = f"<code>{group_id}</code>" if group_id != 0 else "<i>Non configuré (0)</i>"
+
+    text = (
+        "📢 <b>ADHÉSION OBLIGATOIRE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Si activé, tout utilisateur absent du groupe ne peut pas utiliser le bot.</i>\n\n"
+        f"{statut_badge}\n\n"
+        f"<b>GROUPE :</b> {gid_str}\n"
+        f"<b>LIEN :</b> <code>{html.escape(link)}</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
+    keyboard = [
+        [InlineKeyboardButton(toggle_btn_label, callback_data="toggle_cfg_group_enabled")],
+        [
+            InlineKeyboardButton("🆔 GROUPE", callback_data="set_cfg_group_id"),
+            InlineKeyboardButton("🔗 LIEN", callback_data="set_cfg_group_link"),
+        ],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_support_config_menu(contact: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Menu de configuration du canal support officiel."""
+    text = (
+        "🎧 <b>CANAL DU SUPPORT OFFICIEL</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Contact actuel :</b> <code>{html.escape(contact)}</code>\n\n"
+        "<i>Ce lien/pseudo est communiqué aux demandeurs en cas d'interrogation ou de blocage.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("✏️ MODIFIER", callback_data="set_cfg_support_contact")],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_channels_menu(hi: bool, hs: bool, gi: bool, gs: bool) -> tuple[str, InlineKeyboardMarkup]:
+    """Menu de gestion et d'activation des cibles avec voyants préfixés."""
+    def s_badge(val: bool) -> str:
+        return "🟢" if val else "🔴"
+
+    message = (
+        "🎯 <b>GESTION DES CIBLES</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Activer / Désactiver les demandes par cible :\n\n"
+        f"{s_badge(hi)} HÉTÉRO - INSTA\n"
+        f"{s_badge(hs)} HÉTÉRO - SNAP\n\n"
+        f"{s_badge(gi)} GAY - INSTA\n"
+        f"{s_badge(gs)} GAY - SNAP\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Les Bi s'orientent selon le réseau concerné.</i>"
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton(f"{s_badge(hi)} HÉTÉRO - INSTA", callback_data="toggle_allow_hetero_insta"),
+            InlineKeyboardButton(f"{s_badge(hs)} HÉTÉRO - SNAP", callback_data="toggle_allow_hetero_snap"),
+        ],
+        [
+            InlineKeyboardButton(f"{s_badge(gi)} GAY - INSTA", callback_data="toggle_allow_gay_insta"),
+            InlineKeyboardButton(f"{s_badge(gs)} GAY - SNAP", callback_data="toggle_allow_gay_snap"),
+        ],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")],
+    ]
+    return message, InlineKeyboardMarkup(keyboard)
+
+
+def build_limits_menu(max_total: int, max_user: int, m_hi: int, m_hs: int, m_gi: int, m_gs: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Ajustement des quotas avec contrôle par réseau."""
+    def fmt(val: int) -> str:
+        return f"<b>{val}</b>" if val > 0 else "<i>Illimité</i>"
+
+    message = (
+        "🌡️ <b>GESTION DES QUOTAS :</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🌐 <b>TOTAL :</b> {fmt(max_total)}\n"
+        f"👤 <b>CLIENT :</b> {fmt(max_user)}\n\n"
+        f"🕺 <b>HÉTÉRO :</b> {m_hi} INSTA | {m_hs} SNAP\n"
+        f"🏳️‍🌈 <b>GAY :</b> {m_gi} INSTA | {m_gs} SNAP\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Ajustez via les boutons ou saisissez une valeur précise :</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🌐 TOTAL", callback_data="limit_input_total")],
+        [
+            InlineKeyboardButton("- 5", callback_data="limit_total_sub5"),
+            InlineKeyboardButton("ILLIMITÉ", callback_data="limit_total_0"),
+            InlineKeyboardButton("+ 5", callback_data="limit_total_add5"),
+        ],
+        [InlineKeyboardButton("👤 CLIENT", callback_data="limit_input_user")],
+        [
+            InlineKeyboardButton("- 1", callback_data="limit_user_sub1"),
+            InlineKeyboardButton("DÉFAUT (3)", callback_data="limit_user_3"),
+            InlineKeyboardButton("+ 1", callback_data="limit_user_add1"),
+        ],
+        [
+            InlineKeyboardButton("🕺 INSTA", callback_data="limit_input_hetero_insta"),
+            InlineKeyboardButton("🕺 SNAP", callback_data="limit_input_hetero_snap"),
+        ],
+        [
+            InlineKeyboardButton("🏳️‍🌈 INSTA", callback_data="limit_input_gay_insta"),
+            InlineKeyboardButton("🏳️‍🌈 SNAP", callback_data="limit_input_gay_snap"),
+        ],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_bot")],
+    ]
+    return message, InlineKeyboardMarkup(keyboard)
 
 
 # ==================== STATUT OPÉRATIONNEL & SERVICE ====================

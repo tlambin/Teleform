@@ -1,6 +1,6 @@
 """ui/admin/users.py
 Gabarits visuels, textes et claviers pour la gestion des utilisateurs :
-Staff, Administrateurs, Membres, VIPs et matrices de permissions.
+Staff, Administrateurs, Membres, VIPs, matrices de permissions et menus RBAC.
 """
 
 from datetime import datetime
@@ -20,6 +20,211 @@ def _format_datetime_fr(val) -> str:
         return convert_utc_to_paris(dt).strftime("%d/%m/%Y à %H:%M")
     except Exception:
         return str(val)[:16]
+
+
+# ==================== MENUS GOUVERNANCE RBAC & ADMIN ====================
+
+def build_admin_parametres_menu(user_id: int, user_role: str, is_vip: bool, privs: dict) -> tuple[str, InlineKeyboardMarkup]:
+    """Construit le panneau Paramètres complet pour Staff, Admins et Owners."""
+    is_admin = user_role in ["admin", "owner"]
+
+    message = (
+        "⚙️ <b>PARAMÈTRES</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Sélectionnez une rubrique :"
+    )
+    keyboard = []
+
+    if is_admin:
+        keyboard.append([InlineKeyboardButton("🤖 GESTION DU BOT 🤖", callback_data="gerer_bot")])
+        keyboard.append([
+            InlineKeyboardButton("🧠 ADMINS", callback_data="gerer_admins"),
+            InlineKeyboardButton("🎣 PIÉGEURS", callback_data="gerer_staff"),
+        ])
+
+    keyboard.append([InlineKeyboardButton("👤 MON PROFIL 👤", callback_data="menu_mon_profil")])
+
+    can_see_stats = is_admin and (privs.get("is_owner") or privs.get("can_view_stats"))
+    can_see_archives = is_admin and (privs.get("is_owner") or privs.get("can_view_archives"))
+
+    if can_see_stats or can_see_archives:
+        stats_btn = InlineKeyboardButton(
+            "🧮 STATS",
+            callback_data="bot_stats" if can_see_stats else "stat_access_denied",
+        )
+        archives_btn = InlineKeyboardButton(
+            "📦 ARCHIVES",
+            callback_data="admin_global_archives" if can_see_archives else "arch_access_denied",
+        )
+        keyboard.append([stats_btn, archives_btn])
+
+    if is_admin:
+        keyboard.append([InlineKeyboardButton("👥 MEMBRES 👥", callback_data="menu_membres")])
+
+    if is_vip:
+        keyboard.append([InlineKeyboardButton("✨ PRÉFÉRENCES VIP ✨", callback_data="menu_vip_settings")])
+    else:
+        keyboard.append([InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")])
+
+    if user_role == "staff":
+        keyboard.append([InlineKeyboardButton("💬 CONTACTER UN ADMIN", callback_data="contacter_owner")])
+
+    keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")])
+    return message, InlineKeyboardMarkup(keyboard)
+
+
+def build_membres_menu() -> tuple[str, InlineKeyboardMarkup]:
+    """Sous-menu unifié regroupant la recherche, la gestion VIP et les bannis."""
+    text = (
+        "👥 <b>GESTION DES MEMBRES</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Sélectionnez une catégorie pour gérer les comptes de la plateforme :\n\n"
+        "• <b>Rechercher un membre :</b> Trouver un utilisateur par ID ou pseudo pour consulter sa fiche et le gérer.\n"
+        "• <b>Membres VIP :</b> Gérer les privilèges et abonnements VIP.\n"
+        "• <b>Liste des bannis :</b> Consulter et réhabiliter les comptes révoqués."
+    )
+    keyboard = [
+        [InlineKeyboardButton("🔍 RECHERCHER UN MEMBRE 🔍", callback_data="search_member_prompt")],
+        [InlineKeyboardButton("⭐ MEMBRES VIP ⭐", callback_data="gerer_vips")],
+        [InlineKeyboardButton("🚫 LISTE DES BANNIS 🚫", callback_data="liste_bannis_0")],
+        [InlineKeyboardButton("⬅️ RETOUR ⬅️", callback_data="parametres")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_gerer_staff_menu(staff_members: List[Dict[str, Any]]) -> tuple[str, InlineKeyboardMarkup]:
+    """Menu de gestion des employés/opérateurs (table staff)."""
+    keyboard = [
+        [
+            InlineKeyboardButton("➕ RECRUTER", callback_data="staff_ajouter"),
+            InlineKeyboardButton("➖ VIRER", callback_data="staff_supprimer"),
+        ]
+    ]
+    nb_membres = len(staff_members)
+
+    if not staff_members:
+        message = (
+            f"🎣 <b>GESTION DES PIÉGEURS ({nb_membres})</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📭 Aucun piégeur enregistré dans l'équipe."
+        )
+    else:
+        message = (
+            f"🎣 <b>GESTION DES PIÉGEURS ({nb_membres})</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+        for st in staff_members:
+            raw_pseudo = f"@{st['username']}" if st.get("username") else "Sans pseudo"
+            pseudo = html.escape(str(raw_pseudo))
+            date_str = _format_datetime_fr(st.get("date_added"))
+            par_qui = html.escape(str(st.get("nom_ajouteur") or "Direction"))
+            alias_raw = str(st.get("alias") or f"Piégeur_{st['user_id']}")
+            alias_esc = html.escape(alias_raw)
+
+            res_tag = str(st.get("perm_reseaux") or "all").lower()
+            type_tag = str(st.get("perm_type") or "all").lower()
+            ori_tag = str(st.get("perm_orientation") or "all").lower()
+
+            res_map = {"insta": "sur Insta", "snap": "sur Snap", "all": "sur Insta et Snap"}
+            ori_map = {"hetero": "Hétéro", "gay": "Gay", "bi": "Bi", "all": "Hétéro et Gay"}
+
+            r_txt = res_map.get(res_tag, "sur Insta et Snap")
+            o_txt = ori_map.get(ori_tag, "Hétéro et Gay")
+            perm_readable = f"{o_txt} {r_txt}"
+            if type_tag == "prio_only":
+                perm_readable += ", prioritaire"
+            elif type_tag == "standard_only":
+                perm_readable += ", standard"
+
+            statut_emoji = "⏸️" if st.get("is_paused") else "🟢"
+            statut_texte = "En pause" if st.get("is_paused") else "En service"
+
+            message += (
+                f"{statut_emoji} <b>{alias_esc}</b> (<i>{statut_texte}</i>)\n"
+                f"🆔 <code>{st['user_id']}</code> - {pseudo}\n"
+                f"Recruté le {date_str} par {par_qui}\n"
+                f"🛡️ <i>{html.escape(perm_readable)}</i>\n\n"
+            )
+
+            keyboard.append([
+                InlineKeyboardButton(f"📂 DOSSIERS : {alias_raw.upper()}", callback_data=f"staff_view_demandes_{st['user_id']}_0")
+            ])
+            keyboard.append([
+                InlineKeyboardButton("🛡️ PERMISSIONS", callback_data=f"perm_staff_{st['user_id']}"),
+                InlineKeyboardButton("📊 STATS", callback_data=f"profil_admin_{st['user_id']}"),
+            ])
+
+    keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
+    return message, InlineKeyboardMarkup(keyboard)
+
+
+def build_gerer_admins_menu(admins: List[Dict[str, Any]]) -> tuple[str, InlineKeyboardMarkup]:
+    """Menu de gestion des administrateurs/managers (table admins)."""
+    keyboard = []
+    if not admins:
+        message = "🛡️ <b>CORPS ADMINISTRATIF</b>\n━━━━━━━━━━━━━━━━━━━━\n📭 Aucun administrateur secondaire configuré."
+    else:
+        message = (
+            f"🛡️ <b>CORPS ADMINISTRATIF ({len(admins)})</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+        for admin in admins:
+            raw_pseudo = f"@{admin['username']}" if admin.get("username") else "Sans pseudo"
+            pseudo = html.escape(str(raw_pseudo))
+            alias_esc = html.escape(str(admin.get("alias") or f"Admin_{admin['user_id']}"))
+            role_badge = "👑 <b>[Co-Gérant]</b>" if admin.get("is_owner") else "🛡️ <b>[Manager]</b>"
+            date_str = _format_datetime_fr(admin.get("date_added"))
+
+            arch_badge = "✅" if admin.get("can_view_archives") else "❌"
+            mon_badge = "✅" if admin.get("can_monitor_staff") else "❌"
+            ban_badge = "✅" if admin.get("can_ban_users") else "❌"
+            perm_info = f" | Archives: {arch_badge} | Suivi: {mon_badge} | Ban: {ban_badge}" if not admin.get("is_owner") else ""
+
+            message += (
+                f"• {role_badge} <b>{alias_esc}</b> ({pseudo})\n"
+                f"  🆔 <code>{admin['user_id']}</code> | Depuis le {date_str}{perm_info}\n\n"
+            )
+
+            if not admin.get("is_owner"):
+                keyboard.append([
+                    InlineKeyboardButton(f"⚙️ Droits : {admin.get('alias', admin['user_id'])}", callback_data=f"perm_admin_{admin['user_id']}")
+                ])
+
+    keyboard.append([
+        InlineKeyboardButton("➕ Nommer un manager", callback_data="admin_ajouter"),
+        InlineKeyboardButton("➖ Révoquer un manager", callback_data="admin_supprimer"),
+    ])
+    keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")])
+    return message, InlineKeyboardMarkup(keyboard)
+
+
+def build_gerer_vips_menu(vips: List[Dict[str, Any]]) -> tuple[str, InlineKeyboardMarkup]:
+    """Affiche la liste des membres VIP et les outils d'attribution."""
+    keyboard = []
+    if not vips:
+        message = "⭐ <b>GESTION DU CERCLE VIP</b>\n━━━━━━━━━━━━━━━━━━━━\n📭 Aucun membre VIP actif pour le moment."
+    else:
+        message = (
+            f"⭐ <b>CERCLE DES MEMBRES VIP ({len(vips)})</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+        for v in vips:
+            nom = html.escape(str(v.get("first_name") or "Utilisateur"))
+            pseudo = f"(@{html.escape(str(v['username']))})" if v.get("username") else ""
+            until = v.get("vip_until")
+            status_str = f"Expire le {_format_datetime_fr(until)}" if until else "👑 À vie"
+
+            message += (
+                f"• <b>{nom}</b> {pseudo}\n"
+                f"  🆔 <code>{v['user_id']}</code> | <i>{status_str}</i>\n\n"
+            )
+
+    keyboard.append([
+        InlineKeyboardButton("➕ Promouvoir un membre", callback_data="owner_add_vip"),
+        InlineKeyboardButton("➖ Révoquer un accès VIP", callback_data="owner_remove_vip"),
+    ])
+    keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_membres")])
+    return message, InlineKeyboardMarkup(keyboard)
 
 
 # ==================== STAFF (OPÉRATEURS) ====================

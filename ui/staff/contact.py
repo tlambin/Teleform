@@ -1,10 +1,15 @@
 """ui/staff/contact.py
-Composants visuels, gabarits de messages et claviers pour la messagerie interne Staff / Direction.
+Composants visuels, gabarits de messages et claviers pour la messagerie interne
+Staff / Direction et les échanges directs avec les clients.
 """
 
 import html
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+
+# ==============================================================================
+# 1. MESSAGERIE INTERNE (STAFF <-> DIRECTION)
+# ==============================================================================
 
 def get_start_contact_content(owner_alias: str, staff_alias: str) -> tuple[str, InlineKeyboardMarkup]:
     """Texte d'invite et clavier pour initier un message vers la direction."""
@@ -73,3 +78,165 @@ def get_sent_success_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("🔙 Menu Paramètres", callback_data="parametres")
     ]])
+
+
+# ==============================================================================
+# 2. ÉCHANGES ET ENVOI DE CONTENU (STAFF <-> CLIENT)
+# ==============================================================================
+
+def build_contact_user_menu(
+    req_num: int,
+    cible_str: str,
+    conv_active: bool,
+    is_bundle: bool,
+    demande_id: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Menu interactif de configuration de l'échange avec le client."""
+    badge_bundle = "✅ OUI" if is_bundle else "❌ NON"
+
+    text = (
+        "💬 <b>CONTACTER LE CLIENT</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Demande #{req_num}{cible_str}\n\n"
+        "<i>Choisissez le type d'échange :</i>\n\n"
+        "• <i>Simple : Le client a droit à une seule réponse.</i>\n\n"
+        "• <i>Notification : Sans réponse possible.</i>\n\n"
+        "• <i>Conversation : Discussion fluide ouverte à plusieurs messages.</i>\n\n"
+        "<i>Option Contenu :</i>\n\n"
+        "<i>Activez-la si vous souhaitez envoyer du contenu (photos/vidéos)</i>"
+    )
+
+    buttons = [
+        [
+            InlineKeyboardButton("💬 SIMPLE", callback_data=f"contact_mode_{demande_id}_yes"),
+            InlineKeyboardButton("🔒 NOTIFICATION", callback_data=f"contact_mode_{demande_id}_no")
+        ]
+    ]
+
+    if conv_active:
+        buttons.append([
+            InlineKeyboardButton("🔒 CLÔTURER LA CONVERSATION", callback_data=f"contact_close_conv_{demande_id}")
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton("💬 CONVERSATION", callback_data=f"contact_mode_{demande_id}_conv")
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(f"📦 AVEC DU CONTENU : {badge_bundle}", callback_data=f"toggle_contact_content_{demande_id}")
+    ])
+    buttons.append([
+        InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
+    ])
+
+    return text, InlineKeyboardMarkup(buttons)
+
+
+def format_close_conv_client_notification(req_num: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Notification transmise au client quand l'opérateur ferme la conversation."""
+    text = (
+        f"ℹ️ <b>Conversation clôturée (Demande #{req_num})</b>\n\n"
+        "Votre référent a clôturé la discussion en cours pour ce dossier.\n"
+        "Si besoin, vous pouvez consulter vos demandes ci-dessous :"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🗂️ MES DEMANDES", callback_data="voir_demandes")
+    ]])
+    return text, kb
+
+
+def get_contact_input_prompt(
+    req_num: int,
+    prenom_esc: str,
+    is_content_bundle: bool,
+    demande_id: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Invite de saisie pour amorcer l'envoi direct ou groupé."""
+    if is_content_bundle:
+        text = (
+            "📤 <b>ENVOI DU CONTENU GROUPÉ</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Demande #{req_num} - {prenom_esc}\n\n"
+            "<i>Envoyez vos textes, photos, vidéos ou documents. Un panier se mettra à jour sous chaque envoi.</i>\n\n"
+            "<i>Cliquez sur ENVOYER quand vous aurez tout déposé.</i>"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚀 ENVOYER (0 ÉLÉMENT)", callback_data=f"send_batch_{demande_id}")],
+            [InlineKeyboardButton("⬅️ RETOUR", callback_data=f"cancel_contact_{demande_id}")]
+        ])
+    else:
+        text = (
+            f"💬 <b>Envoi direct (Dossier #{req_num} - {prenom_esc})</b>\n\n"
+            "Tapez votre message ou envoyez votre média : il sera <b>transmis instantanément</b> au client."
+        )
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ RETOUR", callback_data=f"cancel_contact_{demande_id}")
+        ]])
+    return text, keyboard
+
+
+def build_basket_status_content(req_num: int, total: int, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Panneau de mise à jour du panier de médias collectés."""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🚀 ENVOYER ({total})", callback_data=f"send_batch_{demande_id}")],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data=f"cancel_contact_{demande_id}")]
+    ])
+    text = (
+        f"📥 <b>PANIER D'ENVOI : {total} élément{'s' if total > 1 else ''}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Demande #{req_num}\n\n"
+        "<i>Déposez la suite de vos fichiers ou cliquez ci-dessous pour expédier l'ensemble :</i>"
+    )
+    return text, keyboard
+
+
+def build_direct_message_header(req_num: int, alias_esc: str) -> str:
+    """En-tête de message individuel remis au demandeur."""
+    return f"💬 <b>Message de l'équipe (Demande #{req_num})</b>\nDe : <b>{alias_esc}</b>\n\n"
+
+
+def build_batch_message_header(req_num: int, alias_esc: str, corps: str, mode: str, allow_reply: bool) -> str:
+    """En-tête de lot remis au demandeur."""
+    footer = (
+        "\n\n<i>💬 Une conversation directe est ouverte avec votre référent.</i>"
+        if mode == "conv"
+        else ("\n\n<i>Vous pouvez répondre une seule fois ci-dessous.</i>" if allow_reply else "")
+    )
+    return (
+        f"💬 <b>Message de l'équipe (Demande #{req_num})</b>\n"
+        f"De : <b>{alias_esc}</b>"
+        f"{corps}"
+        f"{footer}"
+    )
+
+
+def get_client_reply_keyboard(demande_id: int, admin_id: int) -> InlineKeyboardMarkup:
+    """Bouton permettant au demandeur de répondre à l'opérateur."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("💬 RÉPONDRE", callback_data=f"reply_to_admin_{demande_id}_{admin_id}")
+    ]])
+
+
+def get_staff_conv_open_confirmation(demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Confirmation au staff de l'envoi d'un message avec conversation maintenue ouverte."""
+    text = (
+        "🚀 <b>Message transmis au demandeur !</b>\n"
+        "<i>La conversation reste ouverte. Vous pouvez continuer à écrire ou envoyer des fichiers directement.</i>"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔒 CLÔTURER LA CONVERSATION", callback_data=f"contact_close_conv_{demande_id}")],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")]
+    ])
+    return text, kb
+
+
+def get_batch_sent_success_content(total_items: int, alias_esc: str, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Confirmation d'expédition du lot de fichiers pour le staff."""
+    done_text = (
+        f"✅ <b>Lot de {total_items} élément{'s' if total_items > 1 else ''} envoyé avec succès !</b>\n"
+        f"Transmis sous votre alias : <code>{alias_esc}</code>"
+    )
+    back_keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
+    ]])
+    return done_text, back_keyboard

@@ -7,6 +7,112 @@ from typing import Any, Dict, List, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
+# ==================== ACCUEIL & MENUS PRINCIPAUX ====================
+
+def build_start_interface(user_id: int, first_name: str, user_role: str, is_vip: bool) -> tuple[str, InlineKeyboardMarkup]:
+    """Construit l'interface d'accueil adaptée au statut de l'utilisateur."""
+    first_name_esc = html.escape(str(first_name or "Utilisateur"))
+
+    if user_role == "owner":
+        header = "👑 PARABAIT 👑"
+        subtitle = f"Bienvenue {first_name_esc} - <i>propriétaire</i>"
+    elif user_role == "admin":
+        header = "🧠 PARABAIT 🧠"
+        subtitle = f"Bienvenue {first_name_esc} - <i>administrateur</i>"
+    elif user_role == "staff":
+        header = "🎣 PARABAIT 🎣"
+        subtitle = f"Bienvenue {first_name_esc} - <i>piégeur</i>"
+    elif is_vip:
+        header = "★ PARABAIT ★"
+        subtitle = f"Bienvenue {first_name_esc} - <i>VIP</i>"
+    else:
+        header = "✨ PARABAIT ✨"
+        subtitle = f"Bienvenue {first_name_esc}"
+
+    welcome_msg = (
+        f"<b>{header}</b>\n\n"
+        f"<b>{subtitle}</b>\n\n"
+        "<i>Sélectionnez une option ci-dessous pour continuer :</i>"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🗳️ CRÉER", callback_data="new_demande"),
+            InlineKeyboardButton("🗂️ MES DEMANDES", callback_data="voir_demandes"),
+        ]
+    ]
+
+    if user_role in ["staff", "admin", "owner"]:
+        keyboard.append([
+            InlineKeyboardButton("🚦 GÉRER LES DEMANDES 🚦", callback_data="gerer_demandes")
+        ])
+
+    if not is_vip and user_role == "user":
+        keyboard.append([
+            InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton("⚙️ PARAMÈTRES ⚙️", callback_data="parametres")
+    ])
+
+    return welcome_msg, InlineKeyboardMarkup(keyboard)
+
+
+def build_client_parametres_menu(user_id: int, is_vip: bool, support_contact: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Construit le panneau Paramètres spécifique aux clients / demandeurs."""
+    vip_mention = " <i>(Abonné VIP)</i>" if is_vip else ""
+    message = (
+        f"⚙️ <b>PARAMÈTRES DU COMPTE{vip_mention}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Gérez vos options, abonnements et assistance :"
+    )
+    keyboard = []
+    if is_vip:
+        keyboard.append([InlineKeyboardButton("✨ PRÉFÉRENCES VIP ✨", callback_data="menu_vip_settings")])
+    else:
+        keyboard.append([InlineKeyboardButton("⭐ DEVENIR VIP ⭐", callback_data="menu_vip_shop")])
+
+    if support_contact.startswith("@"):
+        support_url = f"https://t.me/{support_contact.lstrip('@')}"
+    elif support_contact.startswith(("http://", "https://")):
+        support_url = support_contact
+    else:
+        support_url = f"https://t.me/{support_contact}"
+
+    keyboard.append([InlineKeyboardButton("🎧 CONTACTER LE SUPPORT", url=support_url)])
+    keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="start_menu")])
+    return message, InlineKeyboardMarkup(keyboard)
+
+
+def build_vip_shop_menu(is_vip: bool = False) -> tuple[str, InlineKeyboardMarkup]:
+    """Affiche l'offre d'abonnement VIP mensuel payable en Telegram Stars."""
+    message = (
+        "⭐ <b>ADHÉSION AU STATUT VIP</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Débloquez l'ensemble des privilèges premium pour <b>30 jours</b> :\n\n"
+        "• 🚀 <b>Demandes illimitées :</b> Dépassement complet des plafonds habituels.\n"
+        "• 🎯 <b>Choix du référent :</b> Choisissez l'opérateur attitré à vos dossiers.\n"
+        "• 💬 <b>Ligne directe :</b> Canal d'échange instantané avec votre opérateur.\n"
+        "• 🔔 <b>Relances prioritaires :</b> Notification directe en cas d'attente prolongée.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💳 <i>Paiement sécurisé instantané en Telegram Stars.</i>"
+    )
+    keyboard = []
+    if is_vip:
+        keyboard.append([
+            InlineKeyboardButton("✨ PRÉFÉRENCES VIP ✨", callback_data="menu_vip_settings")
+        ])
+
+    keyboard.extend([
+        [InlineKeyboardButton("⭐ S'abonner pour 30 jours (250 ⭐️)", callback_data="buy_vip_month")],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")],
+    ])
+    return message, InlineKeyboardMarkup(keyboard)
+
+
+# ==================== RÉGLAGES ATTRIBUTION VIP ====================
+
 def build_vip_settings_content(
     current_pref: str,
     target_staff_alias: Optional[str] = None
@@ -78,3 +184,39 @@ def get_unrecognized_text_message() -> str:
         "🤖 Je n'ai pas compris votre message.\n"
         "Utilisez la commande /start ou les boutons de navigation pour interagir."
     )
+    
+# ==================== ADHÉSION OBLIGATOIRE & ACCÈS ====================
+
+def get_required_membership_content(sub_url: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Construit l'invite et les boutons pour l'obligation de rejoindre le groupe."""
+    msg_text = (
+        "📢 <b>Adhésion requise</b>\n\n"
+        "Pour accéder aux services du bot et déposer vos demandes, vous devez obligatoirement rejoindre notre groupe.\n\n"
+        "Cliquez sur le bouton ci-dessous pour vous inscrire via le bot dédié, puis cliquez sur <b>Vérifier mon adhésion</b> :"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✍️ S'INSCRIRE AU GROUPE ✍️", url=sub_url)],
+        [InlineKeyboardButton("🔄 VÉRIFIER MON ADHÉSION 🔄", callback_data="check_subscription")],
+    ])
+    return msg_text, keyboard
+
+
+def get_service_disabled_content() -> tuple[str, InlineKeyboardMarkup]:
+    """Message et clavier quand le service de dépôt est désactivé."""
+    text = (
+        "🚫 <b>Service temporairement indisponible</b>\n\n"
+        "La création et la navigation des demandes sont actuellement désactivées par l'administration."
+    )
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")
+    ]])
+    return text, keyboard
+
+
+def get_quota_reached_content(reason_msg: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Clavier proposé lorsque le quota de demandes actives est atteint."""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ PASSER VIP ⭐", callback_data="menu_vip_shop")],
+        [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")],
+    ])
+    return reason_msg, keyboard

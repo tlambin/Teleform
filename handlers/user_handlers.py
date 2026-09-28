@@ -11,7 +11,11 @@ from .user.edition import EditionManager
 from .user.formulaire import FormulaireManager
 from .user.paiement import PaiementManager
 from .user.relais import RelaisManager
-from . import user_handlers_ui as ui
+
+from ui.user import compte as user_compte_ui
+from ui.user import demandes as user_demandes_ui
+from ui.user import paiement as user_paiement_ui
+from ui.staff import notifs as staff_notifs_ui
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +114,7 @@ class UserHandlers:
         else:
             sub_url = f"https://t.me/{raw_link}"
 
-        msg_text, keyboard = ui.get_required_membership_content(sub_url)
+        msg_text, keyboard = user_compte_ui.get_required_membership_content(sub_url)
 
         if update.callback_query:
             try:
@@ -174,7 +178,7 @@ class UserHandlers:
 
         if data.startswith(("form_", "nav_", "new_demande")) and not self.config.are_demandes_enabled():
             await query.answer()
-            text_err, kb_err = ui.get_service_disabled_content()
+            text_err, kb_err = user_compte_ui.get_service_disabled_content()
             await query.edit_message_text(text_err, parse_mode="HTML", reply_markup=kb_err)
             return
 
@@ -189,7 +193,7 @@ class UserHandlers:
                 await query.answer()
                 can_create, reason_msg = self.demande.check_creation_quota(user_id)
                 if not can_create:
-                    text_q, kb_q = ui.get_quota_reached_content(reason_msg)
+                    text_q, kb_q = user_compte_ui.get_quota_reached_content(reason_msg)
                     await query.edit_message_text(text_q, parse_mode="HTML", reply_markup=kb_q)
                     return
                 await self.formulaire.navigation.handle_form_navigation(update, context)
@@ -216,7 +220,7 @@ class UserHandlers:
                 await query.answer()
                 demande_id = int(data.replace("user_accept_remun_std_", ""))
                 context.user_data["waiting_client_std_remun_amount"] = demande_id
-                prompt_text, kb = ui.get_std_remun_allocation_prompt(demande_id)
+                prompt_text, kb = user_paiement_ui.get_std_remun_allocation_prompt(demande_id)
                 await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=kb)
 
             elif data.startswith("user_refuse_remun_std_"):
@@ -225,7 +229,7 @@ class UserHandlers:
                 demande = self.db_manager.archiver_demande_annulee(demande_id, raison="Refus de rémunération formulé par le demandeur")
                 if demande:
                     req_num = demande.get("request_number", demande_id)
-                    text_ref, kb_ref = ui.get_std_remun_refused_content(req_num)
+                    text_ref, kb_ref = user_paiement_ui.get_std_remun_refused_content(req_num)
                     await query.edit_message_text(text_ref, parse_mode="HTML", reply_markup=kb_ref)
                 else:
                     await query.answer("❌ Demande introuvable.", show_alert=True)
@@ -280,7 +284,7 @@ class UserHandlers:
                 demande_id = int(data.replace("archiver_demande_", ""))
                 demande = self.db_manager.archiver_demande_supprimee(demande_id, "Abandonnée par le demandeur")
                 if demande:
-                    text_arch, kb_arch = ui.get_archiver_demande_success_content()
+                    text_arch, kb_arch = user_demandes_ui.get_archiver_demande_success_content()
                     await query.edit_message_text(text_arch, parse_mode="HTML", reply_markup=kb_arch)
                 else:
                     await query.answer("❌ Erreur technique lors de l'archivage.", show_alert=True)
@@ -288,7 +292,7 @@ class UserHandlers:
             elif data.startswith("ask_cancel_demande_"):
                 demande_id = int(data.replace("ask_cancel_demande_", ""))
                 context.user_data["waiting_cancel_reason_demande_id"] = demande_id
-                prompt_text, kb = ui.get_client_cancel_prompt(demande_id)
+                prompt_text, kb = user_demandes_ui.get_client_cancel_prompt(demande_id)
                 await query.edit_message_text(prompt_text, parse_mode="HTML", reply_markup=kb)
 
             elif data.startswith("accept_cancel_"):
@@ -378,7 +382,7 @@ class UserHandlers:
 
         req_num = d_row.get("request_number", demande_id)
         alias = self.db_manager.get_staff_alias(admin_id)
-        contact_text, contact_kb = ui.get_user_reply_contact_prompt(alias, req_num)
+        contact_text, contact_kb = user_demandes_ui.get_user_reply_contact_prompt(alias, req_num)
 
         if query.message and query.message.photo:
             try:
@@ -401,7 +405,7 @@ class UserHandlers:
                     "UPDATE demandes SET statut = '📥 Reçue', admin_en_charge = NULL, date_modification = NOW() WHERE id = %s AND user_id = %s",
                     (demande_id, user_id),
                 )
-            text_rep, kb_rep = ui.get_reprendre_demande_success_content()
+            text_rep, kb_rep = user_demandes_ui.get_reprendre_demande_success_content()
             await query.edit_message_text(text_rep, parse_mode="HTML", reply_markup=kb_rep)
         except Exception as exc:
             logger.error("Erreur remise en dispo demande %s : %s", demande_id, exc)
@@ -471,7 +475,7 @@ class UserHandlers:
         prenom_esc = html.escape(str(row.get("prenom") or ""))
 
         tag = "⭐ VIP" if self.db_manager.is_user_vip(user.id) else ("⚡ Boost 1 €" if is_paid_boost else "💎 Prioritaire")
-        remind_msg, admin_kb = ui.format_admin_reminder_alert(req_num, user_label_esc, prenom_esc, tag, demande_id)
+        remind_msg, admin_kb = staff_notifs_ui.format_admin_reminder_alert(req_num, user_label_esc, prenom_esc, tag, demande_id)
 
         try:
             await context.bot.send_message(chat_id=admin_id, text=remind_msg, parse_mode="HTML", reply_markup=admin_kb)
@@ -684,7 +688,7 @@ class UserHandlers:
             req_num = dem.get("request_number", demande_id)
             prenom = html.escape(str(dem.get("prenom") or "votre contact"))
             alias_staff = self.db_manager.get_staff_alias(staff_id)
-            client_alert, client_kb = ui.format_client_revalorisation_proposal(
+            client_alert, client_kb = user_paiement_ui.format_client_revalorisation_proposal(
                 req_num, prenom, alias_staff, nouveau_prix, current_montant, demande_id
             )
             try:
@@ -708,7 +712,7 @@ class UserHandlers:
 
         req_num = dem.get("request_number", demande_id)
         prenom = html.escape(str(dem.get("prenom") or ""))
-        admin_alert, admin_kb = ui.build_staff_report_alert(
+        admin_alert, admin_kb = staff_notifs_ui.build_staff_report_alert(
             staff_alias, staff_user.id, req_num, prenom, motif, demande_id
         )
 
@@ -786,7 +790,7 @@ class UserHandlers:
 
         if admin_id:
             context.user_data[f"cancel_reason_{demande_id}"] = raison
-            text_cancel, kb_cancel = ui.build_staff_cancel_decision_alert(req_num, d.get("prenom"), raison, demande_id)
+            text_cancel, kb_cancel = staff_notifs_ui.build_staff_cancel_decision_alert(req_num, d.get("prenom"), raison, demande_id)
             try:
                 await context.bot.send_message(
                     chat_id=admin_id,

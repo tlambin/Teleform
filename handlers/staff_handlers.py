@@ -23,7 +23,11 @@ from .staff.photos import PhotosManager
 from .staff.profils import ProfilsManager
 from .staff.statuts import StatutsManager
 from .staff.suivi import SuiviManager
-from . import staff_handlers_ui as ui
+
+from ui.staff import contact as staff_contact_ui
+from ui.staff import demandes as staff_demandes_ui
+from ui.staff import notifs as staff_notifs_ui
+from ui.staff import profil as staff_profil_ui
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +294,7 @@ class StaffHandlers:
 
             if primary_owner_id and int(primary_owner_id) != int(user_id):
                 try:
-                    notif_owner = ui.format_demission_owner_notification(alias, user_id, resume_roles)
+                    notif_owner = staff_notifs_ui.format_demission_owner_notification(alias, user_id, resume_roles)
                     await context.bot.send_message(
                         chat_id=primary_owner_id,
                         text=notif_owner,
@@ -299,7 +303,7 @@ class StaffHandlers:
                 except Exception as err_notif:
                     logger.warning("Échec notification démission à l'Owner : %s", err_notif)
 
-            msg_confirm, kb = ui.format_demission_user_confirmation(resume_roles)
+            msg_confirm, kb = staff_notifs_ui.format_demission_user_confirmation(resume_roles)
             await self._safe_edit_or_reply(query, msg_confirm, reply_markup=kb)
 
         except Exception as exc:
@@ -332,7 +336,7 @@ class StaffHandlers:
             "text_notes": [],
         }
 
-        text, kb = ui.get_admin_contact_staff_prompt(alias_staff, req_num, demande_id)
+        text, kb = staff_demandes_ui.get_admin_contact_staff_prompt(alias_staff, req_num, demande_id)
         await self._safe_edit_or_reply(query, text, reply_markup=kb)
 
     # ==================== GESTION DE L'ACCEPTATION / REFUS VIP ====================
@@ -361,12 +365,12 @@ class StaffHandlers:
 
             await query.answer(f"✅ Demande #{req_num} acceptée !", show_alert=False)
 
-            confirm_msg, kb = ui.build_vip_accept_content(req_num, prenom_cible, demande_id)
+            confirm_msg, kb = staff_demandes_ui.build_vip_accept_content(req_num, prenom_cible, demande_id)
             await self._safe_edit_or_reply(query, confirm_msg, reply_markup=kb)
 
             try:
                 vip_user_id = dem["user_id"]
-                notif_vip, notif_kb = ui.format_vip_accept_client_notification(req_num, alias, prenom_cible)
+                notif_vip, notif_kb = staff_notifs_ui.format_vip_accept_client_notification(req_num, alias, prenom_cible)
                 await context.bot.send_message(
                     chat_id=vip_user_id,
                     text=notif_vip,
@@ -402,12 +406,12 @@ class StaffHandlers:
 
             await query.answer("Demande déclinée.", show_alert=False)
 
-            decline_msg, kb = ui.build_vip_decline_content(req_num)
+            decline_msg, kb = staff_demandes_ui.build_vip_decline_content(req_num)
             await self._safe_edit_or_reply(query, decline_msg, reply_markup=kb)
 
             try:
                 vip_user_id = dem["user_id"]
-                notif_vip, notif_kb = ui.format_vip_decline_client_notification(req_num, alias, prenom_cible)
+                notif_vip, notif_kb = staff_notifs_ui.format_vip_decline_client_notification(req_num, alias, prenom_cible)
                 await context.bot.send_message(
                     chat_id=vip_user_id,
                     text=notif_vip,
@@ -447,17 +451,17 @@ class StaffHandlers:
 
             if nb == 0:
                 self.db_manager.set_staff_pause_status(admin_id, paused=True)
-                text, kb = ui.get_pause_empty_content()
+                text, kb = staff_profil_ui.get_pause_empty_content()
                 await self._safe_edit_or_reply(query, text, reply_markup=kb)
                 return
 
-            text, kb = ui.get_pause_prompt_content(nb)
+            text, kb = staff_profil_ui.get_pause_prompt_menu(nb)
             await self._safe_edit_or_reply(query, text, reply_markup=kb)
             return
 
         elif data == "admin_pause_keep":
             self.db_manager.set_staff_pause_status(admin_id, paused=True)
-            text, kb = ui.get_pause_kept_content()
+            text, kb = staff_profil_ui.get_pause_kept_content()
             await self._safe_edit_or_reply(query, text, reply_markup=kb)
             return
 
@@ -471,18 +475,18 @@ class StaffHandlers:
                 try:
                     c_id = dem["user_id"]
                     req_num = dem["id"]
-                    msg_client, kb_client = ui.format_pause_abandon_client_notification(req_num, alias_esc, dem["id"])
+                    msg_client, kb_client = staff_notifs_ui.format_pause_abandon_client_notification(req_num, alias_esc, dem["id"])
                     await context.bot.send_message(chat_id=c_id, text=msg_client, parse_mode="HTML", reply_markup=kb_client)
                 except Exception as err:
                     logger.warning("Notification abandon pause impossible pour user %s : %s", dem.get("user_id"), err)
 
-            text, kb = ui.get_pause_released_content(len(abandoned))
+            text, kb = staff_profil_ui.get_pause_released_content(len(abandoned))
             await self._safe_edit_or_reply(query, text, reply_markup=kb)
             return
 
         elif data == "admin_resume":
             self.db_manager.set_staff_pause_status(admin_id, paused=False)
-            text, kb = ui.get_resume_service_content()
+            text, kb = staff_profil_ui.get_resume_service_content()
             await self._safe_edit_or_reply(query, text, reply_markup=kb)
             return
 
@@ -520,7 +524,7 @@ class StaffHandlers:
         is_bundle = context.user_data.get(f"contact_with_content_{demande_id}", False)
         conv_active = self._is_conv_open(context, demande_id)
 
-        text, keyboard = ui.build_contact_user_menu(req_num, cible_str, conv_active, is_bundle, demande_id)
+        text, keyboard = staff_contact_ui.build_contact_user_menu(req_num, cible_str, conv_active, is_bundle, demande_id)
 
         try:
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
@@ -539,7 +543,7 @@ class StaffHandlers:
         if dem:
             req_num = dem["id"]
             try:
-                msg_client, kb_client = ui.format_close_conv_client_notification(req_num)
+                msg_client, kb_client = staff_contact_ui.format_close_conv_client_notification(req_num)
                 await context.bot.send_message(chat_id=dem["user_id"], text=msg_client, parse_mode="HTML", reply_markup=kb_client)
             except Exception as e_notif:
                 logger.warning("Notification fermeture conversation impossible pour user %s : %s", dem.get("user_id"), e_notif)
@@ -578,7 +582,7 @@ class StaffHandlers:
             "text_notes": [],
         }
 
-        text, keyboard = ui.get_contact_input_prompt(req_num, prenom_esc, is_content_bundle, demande_id)
+        text, keyboard = staff_contact_ui.get_contact_input_prompt(req_num, prenom_esc, is_content_bundle, demande_id)
         await self._safe_edit_or_reply(query, text, reply_markup=keyboard)
 
     async def handle_collect_admin_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -612,8 +616,8 @@ class StaffHandlers:
                     "user_id": target_user_id,
                 }
 
-            header_text = ui.build_direct_message_header(req_num, alias_esc)
-            client_kb = ui.get_client_reply_keyboard(demande_id, admin_id) if allow_reply else None
+            header_text = staff_contact_ui.build_direct_message_header(req_num, alias_esc)
+            client_kb = staff_contact_ui.get_client_reply_keyboard(demande_id, admin_id) if allow_reply else None
 
             try:
                 if msg.photo or msg.video or msg.document:
@@ -638,7 +642,7 @@ class StaffHandlers:
                 self.db_manager.mark_content_delivered(demande_id)
 
                 if mode == "conv":
-                    staff_confirm_text, staff_confirm_kb = ui.get_staff_conv_open_confirmation(demande_id)
+                    staff_confirm_text, staff_confirm_kb = staff_contact_ui.get_staff_conv_open_confirmation(demande_id)
                     await msg.reply_text(staff_confirm_text, parse_mode="HTML", reply_markup=staff_confirm_kb)
                 else:
                     kb_done = InlineKeyboardMarkup([[
@@ -681,7 +685,7 @@ class StaffHandlers:
         status_msg_ids.clear()
 
         total = len(session["visual_media"]) + len(session["doc_media"]) + len(session["text_notes"])
-        status_text, keyboard = ui.build_basket_status_content(req_num, total, demande_id)
+        status_text, keyboard = staff_contact_ui.build_basket_status_content(req_num, total, demande_id)
 
         new_status_msg = await msg.reply_text(status_text, parse_mode="HTML", reply_markup=keyboard)
         status_msg_ids.append(new_status_msg.message_id)
@@ -722,8 +726,8 @@ class StaffHandlers:
 
         combined_text = "\n".join([html.escape(t) for t in texts])
         corps = f"\n\n« {combined_text} »" if combined_text else ""
-        header_text = ui.build_batch_message_header(req_num, alias_esc, corps, mode, allow_reply)
-        user_keyboard = ui.get_client_reply_keyboard(demande_id, admin_id) if allow_reply else None
+        header_text = staff_contact_ui.build_batch_message_header(req_num, alias_esc, corps, mode, allow_reply)
+        user_keyboard = staff_contact_ui.get_client_reply_keyboard(demande_id, admin_id) if allow_reply else None
 
         try:
             if visuals:
@@ -772,7 +776,7 @@ class StaffHandlers:
             self.db_manager.mark_content_delivered(demande_id)
 
             total_items = len(visuals) + len(docs) + len(texts)
-            done_text, back_keyboard = ui.get_batch_sent_success_content(total_items, alias_esc, demande_id)
+            done_text, back_keyboard = staff_contact_ui.get_batch_sent_success_content(total_items, alias_esc, demande_id)
 
             if query and query.message:
                 await query.message.reply_text(done_text, parse_mode="HTML", reply_markup=back_keyboard)
@@ -786,7 +790,7 @@ class StaffHandlers:
 
     async def _handle_callback_error(self, query):
         try:
-            text, kb = ui.get_staff_callback_error_content()
+            text, kb = staff_demandes_ui.get_staff_callback_error_content()
             await self._safe_edit_or_reply(query, text, reply_markup=kb)
         except Exception as fallback_exc:
             logger.error("Échec notification erreur staff : %s", fallback_exc)

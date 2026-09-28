@@ -546,3 +546,42 @@ def build_surveillance_alert(
         InlineKeyboardButton("📄 VOIR LE DOSSIER 📄", callback_data=f"retour_texte_{demande_id}")
     ]])
     return text, kb
+
+# ==================== CYCLE DE VIE & CONTACT DOSSIER ====================
+
+def get_user_reply_contact_prompt(alias: str, req_num: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Invite de saisie pour un message spontané du client vers son référent."""
+    contact_text = (
+        f"💬 <b>Ligne directe avec votre référent ({html.escape(str(alias))}) — Dossier #{req_num}</b>\n\n"
+        "Tapez votre message ou envoyez vos fichiers ci-dessous. Ils lui seront immédiatement transmis :"
+    )
+    contact_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ANNULER ❌", callback_data="cancel_user_reply")]])
+    return contact_text, contact_kb
+
+
+def get_reprendre_demande_success_content() -> tuple[str, InlineKeyboardMarkup]:
+    """Message et clavier confirmant la remise en file d'attente."""
+    text = "🔄 <b>Votre demande a été remise en file d'attente !</b>\n\nElle est de nouveau disponible pour toute l'équipe opérationnelle."
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("📋 VOIR MES DEMANDES 📋", callback_data="voir_demandes")]])
+    return text, kb
+
+
+def get_archiver_demande_success_content() -> tuple[str, InlineKeyboardMarkup]:
+    """Message et clavier confirmant le classement sans suite d'une demande abandonnée."""
+    text = "🗑️ <b>Demande classée sans suite.</b>\n\nVotre demande a été archivée sous « 🗑️ Supprimée ». Une place vient d'être libérée."
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗳️ NOUVELLE DEMANDE 🗳️", callback_data="new_demande")],
+        [InlineKeyboardButton("🔙 MENU PRINCIPAL 🔙", callback_data="start_menu")],
+    ])
+    return text, kb
+
+
+def get_client_cancel_prompt(demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Invite de saisie de la raison d'annulation client."""
+    prompt_text = (
+        f"✍️ <b>Demande d'annulation (Dossier #{demande_id})</b>\n\n"
+        "Indiquez au clavier la <b>raison</b> de votre annulation :\n"
+        "<i>Elle sera transmise à l'opérateur en charge pour validation.</i>"
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 RETOUR 🔙", callback_data="voir_demandes")]])
+    return prompt_text, kb

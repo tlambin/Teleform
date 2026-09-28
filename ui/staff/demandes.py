@@ -1097,3 +1097,53 @@ def format_photo_demande_card(demande: dict, db_manager, is_photo: bool = False,
 
     lines.append(f"\n📅 <i>Reçue le {date_str}</i>")
     return "\n".join(lines)
+
+# ==================== ASSIGNATION VIP & CONTACT DOSSIER ====================
+
+def build_vip_accept_content(req_num: int, prenom_cible: str, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Confirmation de prise en charge d'une mission VIP pour l'opérateur."""
+    text = (
+        f"✅ <b>Mission VIP acceptée (Dossier #{req_num})</b>\n\n"
+        f"Vous avez pris en charge le dossier de <b>{html.escape(str(prenom_cible))}</b>.\n"
+        "Le dossier est désormais actif sous le statut <b>⏳ En attente</b>."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👁️ VOIR LA DEMANDE", callback_data=f"retour_texte_{demande_id}")],
+        [InlineKeyboardButton("💌 MES SUIVIS", callback_data="demandes_suivies")]
+    ])
+    return text, kb
+
+
+def build_vip_decline_content(req_num: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Confirmation de refus d'une mission VIP pour l'opérateur."""
+    text = (
+        f"ℹ️ <b>Demande #{req_num} déclinée</b>\n\n"
+        "Le dossier a été replacé dans les <b>demandes disponibles</b> pour le reste de l'équipe."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📮 DEMANDES DISPONIBLES", callback_data="demandes_disponibles")],
+        [InlineKeyboardButton("💌 MES SUIVIS", callback_data="demandes_suivies")]
+    ])
+    return text, kb
+
+
+def get_admin_contact_staff_prompt(alias_staff: str, req_num: int, demande_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Invite de saisie pour un message administratif à destination d'un piégeur."""
+    text = (
+        f"🛡️ <b>Message Direction ➔ Piégeur ({html.escape(str(alias_staff))})</b>\n"
+        f"Dossier concerné : <b>#{req_num}</b>\n\n"
+        "Tapez votre message ou envoyez vos fichiers ci-dessous :\n"
+        "<i>Le message lui sera délivré sous votre alias officiel.</i>"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ RETOUR", callback_data=f"retour_texte_{demande_id}")
+    ]])
+    return text, kb
+
+
+def get_staff_callback_error_content() -> tuple[str, InlineKeyboardMarkup]:
+    """Message d'erreur générique lors d'une action staff."""
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ RETOUR", callback_data="gerer_demandes")
+    ]])
+    return "❌ <b>Erreur technique</b> lors du traitement de l'action opérateur.", kb
