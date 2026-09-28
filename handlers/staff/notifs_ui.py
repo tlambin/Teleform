@@ -80,10 +80,10 @@ def build_status_notification_content(
             "Veuillez procéder au règlement pour débloquer l'envoi immédiat de vos contenus par votre référent :\n"
         )
         keyboard_buttons.append([
-            InlineKeyboardButton(f"⭐ Régler en Stars ({stars_amount} ⭐)", callback_data=f"pay_stars_prio_{demande_id}")
+            InlineKeyboardButton(f"⭐ REGLER EN STARS ({stars_amount} ⭐)", callback_data=f"pay_stars_prio_{demande_id}")
         ])
         keyboard_buttons.append([
-            InlineKeyboardButton("💬 Autre moyen (Contacter mon référent)", callback_data=f"pay_contact_prio_{demande_id}")
+            InlineKeyboardButton("💬 AUTRE MOYEN", callback_data=f"pay_contact_prio_{demande_id}")
         ])
 
     if new_status == "❌ Abandonnée" and raison_abandon:
@@ -98,126 +98,176 @@ def build_status_notification_content(
 
 
 def build_menu_content(user_id: int, prefs: dict, can_monitor: bool, raw_alias: str) -> tuple[str, InlineKeyboardMarkup]:
-    """Construit le panneau principal des préférences de notification."""
-    alias_esc = html.escape(str(raw_alias))
+    """Construit l'interface des notifications et rappels conforme à la capture."""
 
-    # 1. Alertes nouvelles demandes
-    mode_new = prefs.get("notif_new_mode", "sound")
-    btn_new_sound = "✅ 🔊 Sonore" if mode_new == "sound" else "🔊 Sonore"
-    btn_new_silent = "✅ 🔇 Silencieux" if mode_new == "silent" else "🔇 Silencieux"
-    btn_new_off = "✅ 🔕 Coupé" if mode_new == "off" else "🔕 Coupé"
+    # 1. Alertes nouvelles demandes (défaut 'off')
+    mode_new = prefs.get("notif_new_mode", "off")
 
-    # 2. Mode rappels de suivis
-    mode_rappel = prefs.get("rappel_mode", "sound")
-    btn_rap_sound = "✅ 🔊 Sonore" if mode_rappel == "sound" else "🔊 Sonore"
-    btn_rap_silent = "✅ 🔇 Silencieux" if mode_rappel == "silent" else "🔇 Silencieux"
-    btn_rap_off = "✅ ❌ Désactivé" if mode_rappel == "off" else "❌ Désactivé"
+    # 2. Rappels de suivis (binaire 'sound' ou 'silent', jamais 'off')
+    mode_rappel = prefs.get("rappel_mode", "silent")
+    if mode_rappel == "off":
+        mode_rappel = "silent"
 
-    # 3. Fréquence et timing
-    freq = prefs.get("rappel_freq", "daily")
-    heure = int(prefs.get("rappel_heure", 18))
+    # 3. Fréquence et horaire (défaut weekly, dimanche, 21h)
+    freq = prefs.get("rappel_freq", "weekly")
+    heure = int(prefs.get("rappel_heure", 21))
     jour_sem = int(prefs.get("rappel_jour_semaine", 6))
     jour_mois = int(prefs.get("rappel_jour_mois", 1))
 
-    btn_freq_daily = "✅ Chaque jour" if freq == "daily" else "Chaque jour"
-    btn_freq_weekly = "✅ 1x / sem" if freq == "weekly" else "1x / sem"
-    btn_freq_monthly = "✅ 1x / mois" if freq == "monthly" else "1x / mois"
+    # --- TEXTES ET ÉMOJIS D'ÉTAT (Émoji au début) ---
+    if mode_new == "sound":
+        txt_new = "🔊 Activées (Sonore)"
+    elif mode_new == "silent":
+        txt_new = "🔇 Activées (Silencieuse)"
+    else:
+        txt_new = "🔕 Désactivées"
 
-    keyboard = [
-        [
-            InlineKeyboardButton(btn_new_sound, callback_data="pref_new_sound"),
-            InlineKeyboardButton(btn_new_silent, callback_data="pref_new_silent"),
-            InlineKeyboardButton(btn_new_off, callback_data="pref_new_off"),
-        ],
-        [
-            InlineKeyboardButton(btn_rap_sound, callback_data="pref_rap_sound"),
-            InlineKeyboardButton(btn_rap_silent, callback_data="pref_rap_silent"),
-            InlineKeyboardButton(btn_rap_off, callback_data="pref_rap_off"),
-        ],
-    ]
+    if mode_rappel == "sound":
+        txt_rap = "🔊 Activés (Sonore)"
+    else:
+        txt_rap = "🔇 Activés (Silencieux)"
 
-    if mode_rappel != "off":
-        keyboard.append([
-            InlineKeyboardButton(btn_freq_daily, callback_data="pref_freq_daily"),
-            InlineKeyboardButton(btn_freq_weekly, callback_data="pref_freq_weekly"),
-            InlineKeyboardButton(btn_freq_monthly, callback_data="pref_freq_monthly"),
-        ])
-
-        timing_row = [
-            InlineKeyboardButton(f"⏰ {heure:02d}h00", callback_data="pref_pick_hour")
-        ]
-        if freq == "weekly" and 0 <= jour_sem < len(JOURS_SEMAINE):
-            timing_row.append(InlineKeyboardButton(f"📅 {JOURS_SEMAINE[jour_sem]}", callback_data="pref_pick_weekday"))
-        elif freq == "monthly":
-            timing_row.append(InlineKeyboardButton(f"📅 Le {jour_mois} du mois", callback_data="pref_pick_monthday"))
-
-        keyboard.append(timing_row)
-
-    if can_monitor:
-        keyboard.append([
-            InlineKeyboardButton("👀 Alertes Surveillance Staff", callback_data="menu_surveillance_notifs")
-        ])
-
-    keyboard.append([InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")])
-
-    mode_new_str = {"sound": "🔊 Sonore", "silent": "🔇 Silencieuse", "off": "🔕 Désactivée"}.get(mode_new, "🔊 Sonore")
-    mode_rap_str = {"sound": "🔊 Sonore", "silent": "🔇 Silencieux", "off": "❌ Désactivé"}.get(mode_rappel, "🔊 Sonore")
-
-    timing_desc = ""
-    if mode_rappel != "off":
-        if freq == "daily":
-            timing_desc = f"• <b>Fréquence :</b> Tous les jours à <b>{heure:02d}h00</b>\n"
-        elif freq == "weekly" and 0 <= jour_sem < len(JOURS_SEMAINE):
-            timing_desc = f"• <b>Fréquence :</b> Chaque <b>{JOURS_SEMAINE[jour_sem]}</b> à <b>{heure:02d}h00</b>\n"
-        elif freq == "monthly":
-            timing_desc = f"• <b>Fréquence :</b> Le <b>{jour_mois}</b> du mois à <b>{heure:02d}h00</b>\n"
+    if freq == "daily":
+        timing_str = f"Tous les jours à {heure:02d}h00"
+    elif freq == "weekly" and 0 <= jour_sem < len(JOURS_SEMAINE):
+        timing_str = f"Tous les {JOURS_SEMAINE[jour_sem].lower()}s à {heure:02d}h00"
+    elif freq == "monthly":
+        timing_str = f"Le {jour_mois} du mois à {heure:02d}h00"
+    else:
+        timing_str = f"À {heure:02d}h00"
 
     text = (
-        f"🔔 <b>Notifications & Rappels</b>\n"
-        f"👤 Profil : <b>{alias_esc}</b>\n\n"
-        f"📩 <b>Nouvelles demandes :</b> {mode_new_str}\n"
-        f"⏰ <b>Rappels des suivis :</b> {mode_rap_str}\n"
-        f"{timing_desc}\n"
-        "<i>Cliquez pour ajuster vos préférences :</i>"
+        "🔔 <b>NOTIFICATIONS ET RAPPELS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Configurez vos alertes et la fréquence de vos rappels.</i>\n\n"
+        f"• <b>Nouvelles demandes :</b>\n{txt_new}\n\n"
+        f"• <b>Rappels de suivi :</b>\n{txt_rap}\n\n"
+        f"• <b>Fréquence :</b>\n⏰ {timing_str}\n\n"
+        "<i>Modifiez vos préférences avec les boutons ci-dessous :</i>"
     )
+
+    # --- LABELS DYNAMIQUES DU CLAVIER (Coche en remplacement d'icône) ---
+    b_new_sound = "✅ SONORE" if mode_new == "sound" else "🔊 SONORE"
+    b_new_silent = "✅ SILENCIEUSE" if mode_new == "silent" else "🔇 SILENCIEUSE"
+    b_new_off = "✅ COUPÉ" if mode_new == "off" else "🚫 COUPÉ"
+
+    b_rap_sound = "✅ SONORE" if mode_rappel == "sound" else "🔊 SONORE"
+    b_rap_silent = "✅ SILENCIEUX" if mode_rappel == "silent" else "🔇 SILENCIEUX"
+
+    b_freq_daily = "✅ 1/JOUR" if freq == "daily" else "1/JOUR"
+    b_freq_weekly = "✅ 1/SEMAINE" if freq == "weekly" else "1/SEMAINE"
+    b_freq_monthly = "✅ 1/MOIS" if freq == "monthly" else "1/MOIS"
+
+    keyboard = []
+
+    # Tout en haut : Surveillance staff (si superviseur / owner)
+    if can_monitor:
+        keyboard.append([
+            InlineKeyboardButton("🛰️ SURVEILLANCE STAFF 🛰️", callback_data="menu_surveillance_notifs")
+        ])
+
+    # Rangée 1 : Choix nouvelles demandes
+    keyboard.append([
+        InlineKeyboardButton(b_new_sound, callback_data="pref_new_sound"),
+        InlineKeyboardButton(b_new_silent, callback_data="pref_new_silent"),
+        InlineKeyboardButton(b_new_off, callback_data="pref_new_off"),
+    ])
+
+    # Rangée 2 : Choix rappels des suivis
+    keyboard.append([
+        InlineKeyboardButton("⏰", callback_data="noop"),
+        InlineKeyboardButton(b_rap_sound, callback_data="pref_rap_sound"),
+        InlineKeyboardButton(b_rap_silent, callback_data="pref_rap_silent"),
+    ])
+
+    # Rangée 3 : Fréquence
+    keyboard.append([
+        InlineKeyboardButton(b_freq_daily, callback_data="pref_freq_daily"),
+        InlineKeyboardButton(b_freq_weekly, callback_data="pref_freq_weekly"),
+        InlineKeyboardButton(b_freq_monthly, callback_data="pref_freq_monthly"),
+    ])
+
+    # Rangée 4 : Heure et Jour
+    timing_row = [
+        InlineKeyboardButton(f"🕒 {heure:02d}H", callback_data="pref_pick_hour")
+    ]
+    if freq == "weekly" and 0 <= jour_sem < len(JOURS_SEMAINE):
+        timing_row.append(
+            InlineKeyboardButton(f"📅 {JOURS_SEMAINE[jour_sem].upper()}", callback_data="pref_pick_weekday")
+        )
+    elif freq == "monthly":
+        timing_row.append(
+            InlineKeyboardButton(f"📅 LE {jour_mois}", callback_data="pref_pick_monthday")
+        )
+    keyboard.append(timing_row)
+
+    # Dernière rangée : Retour vers Mon Profil
+    keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")])
+
     return text, InlineKeyboardMarkup(keyboard)
 
 
 def build_surveillance_menu_content(prefs: dict) -> tuple[str, InlineKeyboardMarkup]:
-    """Construit le texte et le clavier pour les 6 alertes superviseur."""
+    """Construit l'interface de surveillance du staff avec les textes détaillés."""
     p_pec = bool(prefs.get("monitor_prise_en_charge", True))
     p_stat = bool(prefs.get("monitor_changement_statut", True))
-    p_ab = bool(prefs.get("monitor_abandon", True))
     p_reu = bool(prefs.get("monitor_reussite", True))
+    p_ab = bool(prefs.get("monitor_abandon", True))
     p_smsg = bool(prefs.get("monitor_staff_msg", True))
     p_umsg = bool(prefs.get("monitor_user_msg", True))
 
+    def _state_header(emoji_bell: str, label: str, active: bool) -> str:
+        state_txt = "Activé" if active else "Désactivé"
+        return f"{emoji_bell} {label} • {state_txt}"
+
+    bell_pec = "🔔" if p_pec else "🔕"
+    bell_stat = "🔔" if p_stat else "🔕"
+    bell_reu = "🔔" if p_reu else "🔕"
+    bell_ab = "🔔" if p_ab else "🔕"
+    bell_smsg = "🔔" if p_smsg else "🔕"
+    bell_umsg = "🔔" if p_umsg else "🔕"
+
+    hdr_pec = _state_header(bell_pec, "Prise en charge", p_pec)
+    hdr_stat = _state_header(bell_stat, "Changement de statut", p_stat)
+    hdr_reu = _state_header(bell_reu, "Réussite", p_reu)
+    hdr_ab = _state_header(bell_ab, "Abandon", p_ab)
+    hdr_smsg = _state_header(bell_smsg, "Messages de l'équipe", p_smsg)
+    hdr_umsg = _state_header(bell_umsg, "Messages des clients", p_umsg)
+
     text = (
-        "👀 <b>SURVEILLANCE DU STAFF — ALERTES</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Activez ou coupez individuellement chaque type d'alerte :\n\n"
-        f"• <b>Prise en charge :</b> {'🔔 Activé' if p_pec else '🔕 Coupé'}\n"
-        f"• <b>Changement statut :</b> {'🔔 Activé' if p_stat else '🔕 Coupé'}\n"
-        f"• <b>Abandon dossier :</b> {'🔔 Activé' if p_ab else '🔕 Coupé'}\n"
-        f"• <b>Réussite dossier :</b> {'🔔 Activé' if p_reu else '🔕 Coupé'}\n"
-        f"• <b>Messages Staff (Envoyés) :</b> {'🔔 Activé' if p_smsg else '🔕 Coupé'}\n"
-        f"• <b>Messages Demandeur (Reçus) :</b> {'🔔 Activé' if p_umsg else '🔕 Coupé'}"
+        "🛰️ <b>SURVEILLANCE DU STAFF</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Activez / désactivez chaque type d'alerte :\n\n"
+        f"{hdr_pec}\n"
+        "<i>Vous êtes alerté lorsqu'un agent prend en charge une nouvelle demande.</i>\n\n"
+        f"{hdr_stat}\n"
+        "<i>Vous êtes alerté dès qu'un agent modifie le statut d'une demande en cours.</i>\n\n"
+        f"{hdr_reu}\n"
+        "<i>Vous êtes alerté quand un agent termine une demande avec succès.</i>\n\n"
+        f"{hdr_ab}\n"
+        "<i>Vous êtes alerté si un agent abandonne une demande.</i>\n\n"
+        f"{hdr_smsg}\n"
+        "<i>Vous recevez les messages envoyés par les agents.</i>\n\n"
+        f"{hdr_umsg}\n"
+        "<i>Vous recevez les messages envoyés par les clients.</i>"
     )
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"{'🟢' if p_pec else '🔴'} Prise en charge", callback_data="toggle_mon_prise_en_charge"),
-            InlineKeyboardButton(f"{'🟢' if p_stat else '🔴'} Changement statut", callback_data="toggle_mon_changement_statut")
+            InlineKeyboardButton(f"💌 EN CHARGE {bell_pec}", callback_data="toggle_mon_prise_en_charge"),
+            InlineKeyboardButton(f"🔄 STATUT {bell_stat}", callback_data="toggle_mon_changement_statut"),
         ],
         [
-            InlineKeyboardButton(f"{'🟢' if p_ab else '🔴'} Abandons", callback_data="toggle_mon_abandon"),
-            InlineKeyboardButton(f"{'🟢' if p_reu else '🔴'} Réussites", callback_data="toggle_mon_reussite")
+            InlineKeyboardButton(f"✅ RÉUSSITE {bell_reu}", callback_data="toggle_mon_reussite"),
+            InlineKeyboardButton(f"❌ ABANDON {bell_ab}", callback_data="toggle_mon_abandon"),
         ],
         [
-            InlineKeyboardButton(f"{'🟢' if p_smsg else '🔴'} Msg Staff", callback_data="toggle_mon_staff_msg"),
-            InlineKeyboardButton(f"{'🟢' if p_umsg else '🔴'} Msg Demandeur", callback_data="toggle_mon_user_msg")
+            InlineKeyboardButton(f"💬 STAFF {bell_smsg}", callback_data="toggle_mon_staff_msg"),
+            InlineKeyboardButton(f"💬 CLIENTS {bell_umsg}", callback_data="toggle_mon_user_msg"),
         ],
-        [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_notifs")]
+        [
+            InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_notifs")
+        ]
     ])
     return text, keyboard
 
@@ -231,32 +281,50 @@ def build_hour_picker_keyboard(current_h: int) -> InlineKeyboardMarkup:
             label = f"• {h:02d}h •" if h == current_h else f"{h:02d}h"
             row.append(InlineKeyboardButton(label, callback_data=f"pref_set_hour_{h}"))
         grid.append(row)
-    grid.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
+    grid.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_notifs")])
     return InlineKeyboardMarkup(grid)
 
 
 def build_weekday_picker_keyboard(current_d: int) -> InlineKeyboardMarkup:
-    """Clavier de sélection du jour de la semaine."""
-    rows = []
+    """Clavier de sélection du jour de la semaine (en majuscules, 2 par ligne)."""
+    grid = []
+    row = []
+
     for idx, day in enumerate(JOURS_SEMAINE):
-        label = f"✅ {day}" if idx == current_d else day
-        rows.append([InlineKeyboardButton(label, callback_data=f"pref_set_weekday_{idx}")])
-    rows.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
-    return InlineKeyboardMarkup(rows)
+        day_upper = day.upper()
+        label = f"✅ {day_upper}" if idx == current_d else day_upper
+        row.append(InlineKeyboardButton(label, callback_data=f"pref_set_weekday_{idx}"))
+
+        # Organisation en 2 colonnes
+        if len(row) == 2:
+            grid.append(row)
+            row = []
+
+    # Ajoute le dernier jour restant (Dimanche) seul sur sa ligne
+    if row:
+        grid.append(row)
+
+    # Bouton retour
+    grid.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_notifs")])
+
+    return InlineKeyboardMarkup(grid)
 
 
 def build_monthday_picker_keyboard(current_md: int) -> InlineKeyboardMarkup:
-    """Clavier de sélection du jour du mois."""
-    common_days = [1, 5, 10, 15, 20, 25, 28]
+    """Clavier calendrier de sélection du jour du mois (1 à 31)."""
     grid = []
     row = []
-    for d in common_days:
-        label = f"• {d} •" if d == current_md else str(d)
+
+    for d in range(1, 32):
+        label = f"✅ {d}" if d == current_md else str(d)
         row.append(InlineKeyboardButton(label, callback_data=f"pref_set_monthday_{d}"))
-        if len(row) == 4:
+        # Lignes de 7 colonnes pour un rendu calendrier propre
+        if len(row) == 7:
             grid.append(row)
             row = []
+
     if row:
         grid.append(row)
-    grid.append([InlineKeyboardButton("🔙 Retour", callback_data="menu_notifs")])
+
+    grid.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_notifs")])
     return InlineKeyboardMarkup(grid)

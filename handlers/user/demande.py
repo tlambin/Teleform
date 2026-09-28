@@ -127,7 +127,7 @@ class DemandeManager:
                     """
                     SELECT id, request_number, prenom, nom, age, localisation,
                            photo_id, statut, is_difficile, reussie_substatus,
-                           prioritaire, montant, date_creation,
+                           prioritaire, montant, orientation, date_creation,
                            date_modification, instagram, snapchat, details,
                            admin_en_charge, ancien_admin_alias, raison_abandon,
                            last_vip_reminder, paiement_statut

@@ -53,7 +53,7 @@ class StaffKeyboards:
         )
         keyboard = [
             [InlineKeyboardButton("🔔 NOTIFICATIONS 🔔", callback_data="menu_notifs")],
-            [InlineKeyboardButton("🎯 PRÉFÉRENCES 🎯", callback_data="staff_self_prefs")],
+            [InlineKeyboardButton("🎯 MES CRITÈRES 🎯", callback_data="staff_self_prefs")],
         ]
 
         if is_admin or self.db_manager.can_staff_edit_alias(user_id):
@@ -62,7 +62,7 @@ class StaffKeyboards:
             ])
 
         keyboard.append([
-            InlineKeyboardButton("💰 MOYEN DE PAIEMENT 💰", callback_data="staff_payment_settings")
+            InlineKeyboardButton("💰 MOYENS DE PAIEMENT 💰", callback_data="staff_payment_settings")
         ])
 
         if is_paused:
@@ -135,87 +135,120 @@ class StaffKeyboards:
         return text, InlineKeyboardMarkup(keyboard)
 
     def get_staff_self_preferences_menu(self, user_id: int):
-        """Menu interactif de configuration autonome des cibles par l'opérateur."""
+        """Menu interactif de configuration des critères de l'opérateur."""
         can_edit = self.db_manager.can_staff_edit_preferences(user_id)
-        user_role = self._get_user_role(user_id)
-        is_admin = user_role in ["admin", "owner"]
-
         perms = self.db_manager.get_staff_permissions(user_id)
+
         reseau = str(perms.get("perm_reseaux") or "all").lower()
         typ = str(perms.get("perm_type") or "all").lower()
-        ori = str(perms.get("perm_orientation") or "all").lower()
+        ori = str(perms.get("perm_orientation") or "hetero").lower()
 
-        b_res_all = "✅ Tous réseaux" if reseau == "all" else "Tous réseaux"
-        b_res_insta = "✅ Insta seul" if reseau == "insta" else "Insta seul"
-        b_res_snap = "✅ Snap seul" if reseau == "snap" else "Snap seul"
+        # --- TEXTE DU RÉCAPITULATIF ---
+        if reseau == "insta":
+            txt_res = "🌆 Insta"
+        elif reseau == "snap":
+            txt_res = "👻 Snap"
+        else:
+            txt_res = "🌆 Insta + 👻 Snap"
 
-        b_ori_all = "✅ 🔄 Tous / Bi" if ori in ("all", "bi") else "🔄 Tous / Bi"
-        b_ori_h = "✅ Hétéro" if ori == "hetero" else "Hétéro"
-        b_ori_g = "✅ Gay" if ori == "gay" else "Gay"
+        if ori == "hetero":
+            txt_ori = "🫂 Hétéro"
+        elif ori == "gay":
+            txt_ori = "🌈 Gay"
+        else:
+            txt_ori = "🫂 Hétéro + 🌈 Gay"
 
-        b_typ_all = "✅ Tout type" if typ == "all" else "Tout type"
-        b_typ_prio = "✅ 💎 Prio" if typ == "prio_only" else "💎 Prio"
-        b_typ_std = "✅ 📝 Standard" if typ == "standard_only" else "📝 Standard"
+        if typ == "standard_only":
+            txt_typ = "🧾 Standard"
+        elif typ == "prio_only":
+            txt_typ = "💎 Prioritaire"
+        else:
+            txt_typ = "🧾 Standard + 💎 Prioritaire"
 
+        text = (
+            "🎯 <b>CHOIX DE MES CRITÈRES</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Configurez vos critères en un clic.\n\n"
+            f"• <b>Réseaux :</b> {txt_res}\n"
+            f"• <b>Orientation :</b> {txt_ori}\n"
+            f"• <b>Type :</b> {txt_typ}\n\n"
+            "<i>Modifiez votre sélection avec les boutons ci-dessous :</i>"
+        )
+
+        if not can_edit:
+            text += "\n\n🔒 <i>Vos critères sont actuellement verrouillés par l'administration.</i>"
+
+        # --- LABELS DYNAMIQUES DU CLAVIER (Coche en remplacement d'icône) ---
         prefix = "self_pref" if can_edit else "self_pref_locked"
 
+        btn_res_insta = "✅ INSTA" if reseau == "insta" else "🌆 INSTA"
+        btn_res_all = "✅ LES 2" if reseau == "all" else "LES 2"
+        btn_res_snap = "✅ SNAP" if reseau == "snap" else "👻 SNAP"
+
+        btn_ori_h = "✅ HÉTÉRO" if ori == "hetero" else "🫂 HÉTÉRO"
+        btn_ori_all = "✅ LES 2" if ori in ("all", "bi") else "LES 2"
+        btn_ori_g = "✅ GAY" if ori == "gay" else "🌈 GAY"
+
+        btn_typ_std = "✅ STANDARD" if typ == "standard_only" else "🧾 STANDARD"
+        btn_typ_all = "✅ LES 2" if typ == "all" else "LES 2"
+        btn_typ_prio = "✅ PRIORITAIRE" if typ == "prio_only" else "💎 PRIORITAIRE"
+
         keyboard = [
+            # Rangée 1 : Réseaux
             [
-                InlineKeyboardButton(b_res_all, callback_data=f"{prefix}_res_all"),
-                InlineKeyboardButton(b_res_insta, callback_data=f"{prefix}_res_insta"),
-                InlineKeyboardButton(b_res_snap, callback_data=f"{prefix}_res_snap"),
+                InlineKeyboardButton(btn_res_insta, callback_data=f"{prefix}_res_insta"),
+                InlineKeyboardButton(btn_res_all, callback_data=f"{prefix}_res_all"),
+                InlineKeyboardButton(btn_res_snap, callback_data=f"{prefix}_res_snap"),
             ],
+            # Rangée 2 : Orientation
             [
-                InlineKeyboardButton(b_ori_h, callback_data=f"{prefix}_ori_hetero"),
-                InlineKeyboardButton(b_ori_g, callback_data=f"{prefix}_ori_gay"),
-                InlineKeyboardButton(b_ori_all, callback_data=f"{prefix}_ori_all"),
+                InlineKeyboardButton(btn_ori_h, callback_data=f"{prefix}_ori_hetero"),
+                InlineKeyboardButton(btn_ori_all, callback_data=f"{prefix}_ori_all"),
+                InlineKeyboardButton(btn_ori_g, callback_data=f"{prefix}_ori_gay"),
+            ],
+            # Rangée 3 : Formule / Type
+            [
+                InlineKeyboardButton(btn_typ_std, callback_data=f"{prefix}_type_standard_only"),
+                InlineKeyboardButton(btn_typ_all, callback_data=f"{prefix}_type_all"),
+                InlineKeyboardButton(btn_typ_prio, callback_data=f"{prefix}_type_prio_only"),
+            ],
+            # Rangée 4 : Retour vers Mon Profil
+            [
+                InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")
             ],
         ]
 
-        if is_admin:
-            keyboard.append([
-                InlineKeyboardButton(b_typ_all, callback_data=f"{prefix}_type_all"),
-                InlineKeyboardButton(b_typ_prio, callback_data=f"{prefix}_type_prio_only"),
-                InlineKeyboardButton(b_typ_std, callback_data=f"{prefix}_type_standard_only"),
-            ])
-
-        keyboard.append([InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")])
-
-        labels_res = {"all": "Tous les réseaux", "insta": "Instagram uniquement", "snap": "Snapchat uniquement"}
-        labels_ori = {"all": "Toutes (Hétéro, Gay, Bi)", "hetero": "Hétéro & Bi", "gay": "Gay & Bi", "bi": "Bi uniquement"}
-        labels_typ = {"all": "Toutes les demandes", "prio_only": "Prioritaires uniquement", "standard_only": "Standards uniquement"}
-
-        locked_warning = "\n\n🔒 <i>Vos préférences sont actuellement verrouillées par l'administration.</i>" if not can_edit else ""
-        prio_info = f"\n• <b>Formule :</b> {labels_typ.get(typ, typ)}" if not is_admin else ""
-
-        text = (
-            "🎯 <b>MES PRÉFÉRENCES DE CIBLES</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Voici les critères appliqués à vos demandes disponibles :\n\n"
-            f"• <b>Réseaux :</b> {labels_res.get(reseau, reseau)}\n"
-            f"• <b>Orientation :</b> {labels_ori.get(ori, ori)}{prio_info}"
-            f"{locked_warning}\n\n"
-            "<i>Cliquez sur un bouton pour modifier votre sélection :</i>"
-        )
         return text, InlineKeyboardMarkup(keyboard)
 
     def get_staff_payment_settings_menu(self, staff_id: int):
-        """Affiche les bascules de moyens de paiement pour l'opérateur."""
+        """Affiche le menu de configuration des moyens de paiement."""
         methods = self.db_manager.get_staff_payment_methods(staff_id)
-        st_stars = "🟢 Activé" if methods["accept_stars"] else "🔴 Désactivé"
-        st_direct = "🟢 Activé" if methods["accept_direct"] else "🔴 Désactivé"
+        accept_stars = bool(methods.get("accept_stars", True))
+        accept_direct = bool(methods.get("accept_direct", True))
+
+        # --- TEXTE D'ÉTAT DYNAMIQUE ---
+        st_stars = "✅ Activé" if accept_stars else "❌ Désactivé"
+        st_direct = "✅ Activé" if accept_direct else "❌ Désactivé"
 
         text = (
-            "💳 <b>MODES DE PAIEMENT ACCEPTÉS</b>\n"
+            "💰 <b>MOYENS DE PAIEMENT ACCEPTÉS</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Définissez les méthodes de règlement proposées pour les dossiers prioritaires :\n\n"
+            "Définissez vos méthodes de règlement proposées pour les demandes prioritaires :\n\n"
             f"• <b>Telegram Stars :</b> {st_stars}\n"
-            f"• <b>Paiement direct (PayPal, virement, etc.) :</b> {st_direct}\n\n"
-            "⚠️ <i>Vous devez conserver au minimum un mode de paiement actif.</i>"
+            f"• <b>Paiement direct :</b> {st_direct}\n"
+            "(Paypal, unlockt, etc...)\n\n"
+            "⚠️ <i>Vous devez conserver au minimum un moyen de paiement actif.</i>\n\n"
+            "<i>Modifiez votre sélection avec les boutons ci-dessous :</i>"
         )
+
+        # --- ÉTIQUETTES DES BOUTONS ---
+        btn_stars = f"⭐ TELEGRAM STARS {'✅' if accept_stars else '❌'}"
+        btn_direct = f"💸 PAIEMENT DIRECT {'✅' if accept_direct else '❌'}"
+
         keyboard = [
-            [InlineKeyboardButton(f"⭐ Telegram Stars : {st_stars}", callback_data="toggle_pay_staff_accept_stars")],
-            [InlineKeyboardButton(f"💬 Paiement direct : {st_direct}", callback_data="toggle_pay_staff_accept_direct")],
+            [InlineKeyboardButton(btn_stars, callback_data="toggle_pay_staff_accept_stars")],
+            [InlineKeyboardButton(btn_direct, callback_data="toggle_pay_staff_accept_direct")],
             [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")],
         ]
+
         return text, InlineKeyboardMarkup(keyboard)

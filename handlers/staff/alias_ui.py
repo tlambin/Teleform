@@ -11,7 +11,7 @@ def get_alias_locked_content() -> tuple[str, InlineKeyboardMarkup]:
         "Vous avez déjà configuré votre alias officiel. "
         "Seule la direction peut le modifier désormais."
     )
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Paramètres", callback_data="parametres")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")]])
     return text, kb
 
 
@@ -21,34 +21,35 @@ def build_alias_prompt_content(
     user_id: int,
     is_owner: bool
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Construit l'invite de saisie du nouvel alias avec les avertissements appropriés."""
-    target_alias_esc = html.escape(target_alias)
+    """Construit l'invite de saisie du nouvel alias conforme à la maquette."""
+    target_alias_esc = html.escape(str(target_alias))
 
-    if not is_owner and target_id == user_id:
-        avertissement = (
-            "⚠️ <b>Attention :</b> Vous ne disposez que d'<b>une seule modification</b> pour définir votre alias. "
-            "Une fois validé, il sera définitivement verrouillé.\n\n"
+    # Cas 1 : Le propriétaire modifie l'alias d'un autre membre
+    if is_owner and target_id != user_id:
+        text = (
+            "👑 <b>MODIFICATION D'ALIAS (ADMIN)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Modification forcée pour le membre (ID : <code>{target_id}</code>).\n\n"
+            f"• <b>Alias actuel :</b> {target_alias_esc}\n"
+            "• <b>Limite :</b> 30 caractères maximum\n"
+            "• <b>Contrainte :</b> Lettres, chiffres, espaces, tirets et underscores autorisés\n\n"
+            "<i>Envoyez directement le nouvel alias dans le chat :</i>"
         )
-        retour_btn = InlineKeyboardButton("❌ Annuler", callback_data="cancel_alias_change")
-    elif is_owner and target_id != user_id:
-        avertissement = (
-            "👑 <b>Gestion Propriétaire</b>\n"
-            f"Modification forcée de l'alias pour le membre (ID : <code>{target_id}</code>).\n\n"
-        )
-        retour_btn = InlineKeyboardButton("❌ Annuler", callback_data="gerer_staff")
+        retour_btn = InlineKeyboardButton("❌ ANNULER", callback_data="gerer_staff")
+
+    # Cas 2 : Modification de son propre alias
     else:
-        avertissement = ""
-        retour_btn = InlineKeyboardButton("❌ Annuler", callback_data="cancel_alias_change")
+        text = (
+            "🏷️ <b>MODIFIER MON ALIAS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Configurez votre identifiant unique.\n\n"
+            f"<b>Alias actuel :</b> {target_alias_esc}\n\n"
+            "• <b>Limite :</b> 30 caractères maximum\n"
+            "• <b>Contrainte :</b> Lettres, chiffres, espaces, tirets et underscores autorisés\n\n"
+            "<i>Envoyez directement votre nouvel alias dans le chat :</i>"
+        )
+        retour_btn = InlineKeyboardButton("❌ ANNULER", callback_data="menu_mon_profil")
 
-    text = (
-        f"✏️ <b>Configuration de l'alias</b>\n\n"
-        f"Alias actuel : <code>{target_alias_esc}</code>\n\n"
-        f"{avertissement}"
-        "Envoyez le nouveau pseudonyme en réponse à ce message :\n"
-        "• 2 à 30 caractères\n"
-        "• Lettres, chiffres, espaces, tirets et underscores autorisés\n"
-        "• Doit être unique au sein de toute l'équipe"
-    )
     keyboard = InlineKeyboardMarkup([[retour_btn]])
     return text, keyboard
 
@@ -60,7 +61,7 @@ def build_alias_success_content(
     is_owner: bool
 ) -> tuple[str, InlineKeyboardMarkup]:
     """Construit le message de confirmation et le clavier de redirection."""
-    new_alias_esc = html.escape(new_alias)
+    new_alias_esc = html.escape(str(new_alias))
 
     if is_owner and target_id != user_id:
         retour_kb = InlineKeyboardMarkup([
@@ -74,7 +75,7 @@ def build_alias_success_content(
     else:
         verrou_txt = "\n\n🔒 <i>Votre alias est désormais verrouillé et ne peut plus être modifié.</i>"
         retour_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 Menu Paramètres", callback_data="parametres")
+            InlineKeyboardButton("⬅️ MON PROFIL", callback_data="menu_mon_profil")
         ]])
         succes_msg = f"✅ <b>Alias mis à jour :</b> <code>{new_alias_esc}</code>{verrou_txt}"
 
@@ -87,8 +88,8 @@ def get_cancel_alias_content(is_owner: bool, target_id: int, user_id: int) -> tu
         callback_target = "gerer_staff"
         btn_label = "👥 Équipe Staff"
     else:
-        callback_target = "parametres"
-        btn_label = "🔙 Paramètres"
+        callback_target = "menu_mon_profil"
+        btn_label = "⬅️ MON PROFIL"
 
     msg = "❌ <b>Modification d'alias annulée.</b>"
     kb = InlineKeyboardMarkup([[InlineKeyboardButton(btn_label, callback_data=callback_target)]])

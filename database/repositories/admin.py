@@ -205,16 +205,72 @@ class AdminRepository:
             logger.error("Erreur filtrage préférences surveillance (%s) : %s", action, exc)
             return list(admins_eligibles)
 
-    # ==================== PRÉFÉRENCES ADMIN ====================
+    # ==================== PRÉFÉRENCES ADMIN & STAFF ====================
+
+    def add_staff_member(self, user_id: int, alias: Optional[str] = None, added_by: Optional[int] = None) -> bool:
+        """Ajoute un membre du staff avec configuration initiale durcie."""
+        try:
+            uid = int(user_id)
+            by_id = int(added_by) if added_by else None
+            alias_final = str(alias).strip() if alias else f"Staff_{uid}"
+
+            with self.transaction() as cursor:
+                # 1. Insertion staff avec présélection : tous réseaux, tous types, hétéro
+                cursor.execute(
+                    """
+                    INSERT INTO admins (
+                        user_id, role, alias, perm_reseaux, perm_type, perm_orientation,
+                        is_paused, date_ajout, added_by
+                    ) VALUES (%s, 'staff', %s, 'all', 'all', 'hetero', FALSE, NOW(), %s)
+                    ON DUPLICATE KEY UPDATE
+                        role = 'staff',
+                        alias = COALESCE(VALUES(alias), alias),
+                        perm_reseaux = 'all',
+                        perm_type = 'all',
+                        perm_orientation = 'hetero'
+                    """,
+                    (uid, alias_final, by_id)
+                )
+
+                # 2. Insertion préférences par défaut : nouvelle demande coupée, rappels dimanches 21h silencieux
+                cursor.execute(
+                    """
+                    INSERT INTO admin_preferences (
+                        user_id, notif_new_mode, rappel_mode, rappel_freq,
+                        rappel_heure, rappel_jour_semaine, rappel_jour_mois,
+                        monitor_prise_en_charge, monitor_changement_statut,
+                        monitor_abandon, monitor_reussite, monitor_staff_msg, monitor_user_msg
+                    ) VALUES (
+                        %s, 'off', 'silent', 'weekly',
+                        21, 6, 1,
+                        TRUE, TRUE, TRUE, TRUE, TRUE, TRUE
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        notif_new_mode = VALUES(notif_new_mode),
+                        rappel_mode = VALUES(rappel_mode),
+                        rappel_freq = VALUES(rappel_freq),
+                        rappel_heure = VALUES(rappel_heure),
+                        rappel_jour_semaine = VALUES(rappel_jour_semaine)
+                    """,
+                    (uid,)
+                )
+
+            self.clear_cache(f"is_admin_{uid}")
+            self.clear_cache(f"admin_prefs_{uid}")
+            logger.info("Membre staff %s initialisé avec succès (all réseaux, all types, hétéro, rappels dimanches 21h silencieux).", uid)
+            return True
+        except Exception as exc:
+            logger.error("Erreur création profil initial staff %s : %s", user_id, exc)
+            return False
 
     def get_admin_preferences(self, user_id: int) -> Dict[str, Any]:
         default_prefs = {
             "user_id": user_id,
-            "notif_new_mode": "sound",
-            "rappel_mode": "sound",
-            "rappel_freq": "daily",
-            "rappel_heure": 18,
-            "rappel_jour_semaine": 6,
+            "notif_new_mode": "off",        # Coupé par défaut
+            "rappel_mode": "silent",       # Silencieux par défaut (off supprimé)
+            "rappel_freq": "weekly",       # Hebdomadaire
+            "rappel_heure": 21,            # 21h
+            "rappel_jour_semaine": 6,      # Dimanche
             "rappel_jour_mois": 1,
             "last_rappel_date": None,
             "monitor_prise_en_charge": True,
@@ -235,6 +291,9 @@ class AdminRepository:
                 row = cursor.fetchone()
                 if row:
                     default_prefs.update(row)
+                    # Normalisation si un ancien compte était configuré sur 'off'
+                    if default_prefs.get("rappel_mode") == "off":
+                        default_prefs["rappel_mode"] = "silent"
                 else:
                     cursor.execute(
                         """
@@ -246,7 +305,7 @@ class AdminRepository:
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
                         """,
-                        (user_id, "sound", "sound", "daily", 18, 6, 1, True, True, True, True, True, True)
+                        (user_id, "off", "silent", "weekly", 21, 6, 1, True, True, True, True, True, True)
                     )
             self._set_cached_value(cache_key, default_prefs)
             return default_prefs
@@ -262,6 +321,11 @@ class AdminRepository:
             "monitor_abandon", "monitor_reussite", "monitor_staff_msg", "monitor_user_msg"
         }
         if key not in allowed_keys:
+            return False
+
+        # Interdiction stricte de couper les rappels de suivi : seuls 'sound' et 'silent' sont autorisés
+        if key == "rappel_mode" and value not in ("sound", "silent"):
+            logger.warning("Tentative d'assigner une valeur non autorisée à rappel_mode (%s) pour l'utilisateur %s.", value, user_id)
             return False
 
         try:
@@ -289,9 +353,10 @@ class AdminRepository:
             logger.error("Erreur mise à jour last_rappel_date pour %s : %s", user_id, exc)
 
     def get_all_admin_preferences(self) -> List[Dict[str, Any]]:
+        """Retourne toutes les préférences (les arrêts de rappels sont régis par le mode pause)."""
         try:
             with self.get_cursor() as cursor:
-                cursor.execute("SELECT * FROM admin_preferences WHERE rappel_mode != 'off'")
+                cursor.execute("SELECT * FROM admin_preferences")
                 return cursor.fetchall()
         except Exception as exc:
             logger.error("Erreur lecture globale préférences : %s", exc)

@@ -230,38 +230,55 @@ class NotifsManager:
             await self.show_notifs_menu(update, context)
             return
 
-        await query.answer()
-
+        # Gestion des alertes nouvelles demandes
         if data == "pref_new_sound":
+            await query.answer()
             self.db_manager.update_admin_preference(user_id, "notif_new_mode", "sound")
         elif data == "pref_new_silent":
+            await query.answer()
             self.db_manager.update_admin_preference(user_id, "notif_new_mode", "silent")
         elif data == "pref_new_off":
+            await query.answer()
             self.db_manager.update_admin_preference(user_id, "notif_new_mode", "off")
 
+        # Gestion du mode de rappel des suivis (interdiction du mode 'off')
         elif data == "pref_rap_sound":
+            await query.answer()
             self.db_manager.update_admin_preference(user_id, "rappel_mode", "sound")
         elif data == "pref_rap_silent":
+            await query.answer()
             self.db_manager.update_admin_preference(user_id, "rappel_mode", "silent")
         elif data == "pref_rap_off":
-            self.db_manager.update_admin_preference(user_id, "rappel_mode", "off")
+            await query.answer(
+                "⚠️ Le rappel des suivis ne peut pas être coupé.\n"
+                "Pour suspendre vos relances, activez le Mode Pause depuis votre profil.",
+                show_alert=True
+            )
+            return
 
+        # Gestion de la fréquence
         elif data == "pref_freq_daily":
+            await query.answer()
             self.db_manager.update_admin_preference(user_id, "rappel_freq", "daily")
         elif data == "pref_freq_weekly":
+            await query.answer()
             self.db_manager.update_admin_preference(user_id, "rappel_freq", "weekly")
         elif data == "pref_freq_monthly":
+            await query.answer()
             self.db_manager.update_admin_preference(user_id, "rappel_freq", "monthly")
 
+        # Sélecteur d'heure
         elif data == "pref_pick_hour":
+            await query.answer()
             prefs = self.db_manager.get_admin_preferences(user_id)
-            current_h = prefs.get("rappel_heure", 18)
+            current_h = prefs.get("rappel_heure", 21)
             grid = ui.build_hour_picker_keyboard(current_h)
             text = "⏰ <b>Sélectionnez l'heure du rappel :</b>"
             await self._render_clean_menu(query, context, text, grid)
             return
 
         elif data.startswith("pref_set_hour_"):
+            await query.answer()
             try:
                 hour = int(data.replace("pref_set_hour_", ""))
                 if 0 <= hour <= 23:
@@ -269,7 +286,9 @@ class NotifsManager:
             except (ValueError, TypeError):
                 pass
 
+        # Sélecteur de jour de semaine
         elif data == "pref_pick_weekday":
+            await query.answer()
             prefs = self.db_manager.get_admin_preferences(user_id)
             current_d = prefs.get("rappel_jour_semaine", 6)
             rows = ui.build_weekday_picker_keyboard(current_d)
@@ -278,6 +297,7 @@ class NotifsManager:
             return
 
         elif data.startswith("pref_set_weekday_"):
+            await query.answer()
             try:
                 day_idx = int(data.replace("pref_set_weekday_", ""))
                 if 0 <= day_idx < len(ui.JOURS_SEMAINE):
@@ -285,24 +305,30 @@ class NotifsManager:
             except (ValueError, TypeError):
                 pass
 
+        # Sélecteur de jour du mois
         elif data == "pref_pick_monthday":
+            await query.answer()
             prefs = self.db_manager.get_admin_preferences(user_id)
             current_md = prefs.get("rappel_jour_mois", 1)
             grid = ui.build_monthday_picker_keyboard(current_md)
             text = (
-                "📅 <b>Sélectionnez le jour du mois :</b>\n"
-                "<i>(Limité au 28 pour s'adapter à tous les mois)</i>"
+                "📅 <b>Sélectionnez le jour du mois (1 à 31) :</b>\n"
+                "<i>Si le mois compte moins de jours (ex. février ou mois à 30 jours), le rappel partira automatiquement le dernier jour du mois.</i>"
             )
             await self._render_clean_menu(query, context, text, grid)
             return
 
         elif data.startswith("pref_set_monthday_"):
+            await query.answer()
             try:
                 mday = int(data.replace("pref_set_monthday_", ""))
-                if 1 <= mday <= 28:
+                if 1 <= mday <= 31:
                     self.db_manager.update_admin_preference(user_id, "rappel_jour_mois", mday)
             except (ValueError, TypeError):
                 pass
+
+        else:
+            await query.answer()
 
         prefs = self.db_manager.get_admin_preferences(user_id)
         raw_alias = self.db_manager.get_staff_alias(user_id) or f"Staff_{user_id}"

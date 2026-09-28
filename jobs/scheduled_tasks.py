@@ -5,6 +5,7 @@ from datetime import datetime
 import html
 import logging
 import pytz
+import calendar
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import Forbidden
 from telegram.ext import ContextTypes
@@ -67,7 +68,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
 
     now_paris = datetime.now(PARIS_TZ)
     current_hour = now_paris.hour
-    current_weekday = now_paris.weekday()
+    current_weekday = now_paris.weekday()  # 6 = Dimanche
     current_monthday = now_paris.day
     today_date = now_paris.date()
 
@@ -77,16 +78,14 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
     for pref in admin_prefs_list:
         user_id = pref["user_id"]
 
+        # Seule la mise en pause coupe les relances de suivi
         if db_manager.is_staff_paused(user_id):
             continue
 
-        rappel_mode = pref.get("rappel_mode", "sound")
-        freq = pref.get("rappel_freq", "daily")
-        heure = pref.get("rappel_heure", 18)
+        rappel_mode = pref.get("rappel_mode", "silent")
+        freq = pref.get("rappel_freq", "weekly")
+        heure = int(pref.get("rappel_heure", 21))
         last_date = pref.get("last_rappel_date")
-
-        if rappel_mode == "off":
-            continue
 
         if current_hour != heure:
             continue
@@ -94,10 +93,16 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
         if str(last_date) == str(today_date):
             continue
 
-        if freq == "weekly" and current_weekday != pref.get("rappel_jour_semaine", 6):
+        if freq == "weekly" and current_weekday != int(pref.get("rappel_jour_semaine", 6)):
             continue
-        elif freq == "monthly" and current_monthday != pref.get("rappel_jour_mois", 1):
-            continue
+        elif freq == "monthly":
+            target_day = int(pref.get("rappel_jour_mois", 1))
+            # Récupère le dernier jour du mois en cours (ex: 30 en juin, 28/29 en février)
+            _, max_days_in_month = calendar.monthrange(now_paris.year, now_paris.month)
+            effective_day = min(target_day, max_days_in_month)
+
+            if current_monthday != effective_day:
+                continue
 
         try:
             with db_manager.get_cursor() as cursor:
@@ -114,7 +119,7 @@ async def check_and_send_admin_reminders(context: ContextTypes.DEFAULT_TYPE):
                 active_demandes = cursor.fetchall()
 
             if active_demandes:
-                is_silent = (rappel_mode == "silent")
+                is_silent = (rappel_mode != "sound")
                 tasks.append(_send_single_admin_reminder(context, db_manager, user_id, active_demandes, is_silent))
         except Exception as db_err:
             logger.error("Erreur lecture suivis pour rappel staff %s : %s", user_id, db_err)

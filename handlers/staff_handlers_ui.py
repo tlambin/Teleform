@@ -115,21 +115,24 @@ def get_pause_empty_content() -> tuple[str, InlineKeyboardMarkup]:
         "• Vous n'apparaissez plus dans la liste de sélection VIP.\n"
         "• Vous n'avez aucun dossier actif en attente."
     )
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")]])
     return text, kb
 
 
 def get_pause_prompt_content(nb_dossiers: int) -> tuple[str, InlineKeyboardMarkup]:
-    """Invite de décision sur le sort des dossiers lors de la mise en pause."""
+    """Invite de décision sur le sort des dossiers lors de la mise en pause conforme à la maquette."""
     text = (
-        f"⏸️ <b>Passage en mode pause</b>\n\n"
-        f"Vous avez actuellement <b>{nb_dossiers}</b> demande(s) en cours de traitement.\n"
-        "Que souhaitez-vous faire de vos dossiers ?"
+        "⏸️ <b>SE METTRE EN PAUSE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Vous avez actuellement <b>{nb_dossiers} demande(s) en cours de traitement</b>.\n\n"
+        "<i>Que souhaitez-vous faire ?</i>"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📁 CONSERVER MES DOSSIERS EN COURS", callback_data="admin_pause_keep")],
-        [InlineKeyboardButton("❌ LIBÉRER ET ABANDONNER MES DOSSIERS", callback_data="admin_pause_release")],
-        [InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]
+        [
+            InlineKeyboardButton("📥 CONSERVER", callback_data="admin_pause_keep"),
+            InlineKeyboardButton("❌ ABANDONNER", callback_data="admin_pause_release"),
+        ],
+        [InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")]
     ])
     return text, kb
 
@@ -142,7 +145,7 @@ def get_pause_kept_content() -> tuple[str, InlineKeyboardMarkup]:
         "• Aucune nouvelle demande ne vous sera attribuée ni notifiée.\n"
         "• Vous pouvez continuer à traiter vos suivis à votre rythme."
     )
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")]])
     return text, kb
 
 
@@ -153,7 +156,7 @@ def get_pause_released_content(count_abandoned: int) -> tuple[str, InlineKeyboar
         f"• {count_abandoned} dossier(s) libéré(s) et notifiés aux demandeurs.\n"
         "• Vous êtes désormais retiré du service jusqu'à votre reprise."
     )
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")]])
     return text, kb
 
 
@@ -179,7 +182,7 @@ def get_resume_service_content() -> tuple[str, InlineKeyboardMarkup]:
         "• Vous recevrez à nouveau les alertes et notifications.\n"
         "• Vous êtes à nouveau sélectionnable par les clients VIP."
     )
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="parametres")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ RETOUR", callback_data="menu_mon_profil")]])
     return text, kb
 
 
