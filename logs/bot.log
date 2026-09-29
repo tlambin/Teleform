@@ -6362,3 +6362,38 @@ TypeError: float() argument must be a string or a real number, not 'coroutine'
 2026-09-29 00:54:55,777 - apscheduler.executors.default - INFO - Job "check_and_send_unpaid_demande_reminders (trigger: interval[6:00:00], next run at: 2026-09-29 04:54:55 UTC)" executed successfully
 2026-09-29 00:55:10,778 - apscheduler.executors.default - INFO - Running job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-29 04:55:10 UTC)" (scheduled at 2026-09-28 22:55:10.772853+00:00)
 2026-09-29 00:55:10,779 - apscheduler.executors.default - INFO - Job "check_and_auto_abandon_expired_remun_demandes (trigger: interval[6:00:00], next run at: 2026-09-29 04:55:10 UTC)" executed successfully
+2026-09-29 01:00:58,436 - database.connection - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base : paraworld$telegramDB) [PID: 2]
+2026-09-29 01:00:58,447 - database.connection - INFO - ConnectionManager initialisé avec pool de 2 connexions.
+2026-09-29 01:00:58,448 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-29 01:00:58,449 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 01:00:58,449 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-29 01:53:55,765 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-29 00:53:55 UTC)" (scheduled at 2026-09-28 23:53:55.763868+00:00)
+2026-09-29 01:53:55,768 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 01:53:55,768 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-29 00:53:55 UTC)" executed successfully
+2026-09-29 01:54:10,772 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-29 00:54:10 UTC)" (scheduled at 2026-09-28 23:54:10.770850+00:00)
+2026-09-29 01:54:10,773 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-29 00:54:10 UTC)" executed successfully
+2026-09-29 02:01:04,057 - database.connection - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base : paraworld$telegramDB) [PID: 2]
+2026-09-29 02:01:04,058 - database.connection - INFO - ConnectionManager initialisé avec pool de 2 connexions.
+2026-09-29 02:01:04,058 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-29 02:01:04,059 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 02:01:04,059 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-29 02:53:55,766 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-29 01:53:55 UTC)" (scheduled at 2026-09-29 00:53:55.763868+00:00)
+2026-09-29 02:53:55,768 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 02:53:55,768 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-29 01:53:55 UTC)" executed successfully
+2026-09-29 02:54:10,773 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-29 01:54:10 UTC)" (scheduled at 2026-09-29 00:54:10.770850+00:00)
+2026-09-29 02:54:10,774 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-29 01:54:10 UTC)" executed successfully
+2026-09-29 03:01:00,215 - database.connection - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base : paraworld$telegramDB) [PID: 2]
+2026-09-29 03:01:00,215 - database.connection - INFO - ConnectionManager initialisé avec pool de 2 connexions.
+2026-09-29 03:01:00,216 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-29 03:01:00,217 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 03:01:00,217 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
+2026-09-29 03:53:55,767 - apscheduler.executors.default - INFO - Running job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-29 02:53:55 UTC)" (scheduled at 2026-09-29 01:53:55.763868+00:00)
+2026-09-29 03:53:55,769 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 03:53:55,769 - apscheduler.executors.default - INFO - Job "check_and_send_admin_reminders (trigger: interval[1:00:00], next run at: 2026-09-29 02:53:55 UTC)" executed successfully
+2026-09-29 03:54:10,775 - apscheduler.executors.default - INFO - Running job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-29 02:54:10 UTC)" (scheduled at 2026-09-29 01:54:10.770850+00:00)
+2026-09-29 03:54:10,776 - apscheduler.executors.default - INFO - Job "check_and_auto_archive_demandes (trigger: interval[1:00:00], next run at: 2026-09-29 02:54:10 UTC)" executed successfully
+2026-09-29 04:01:00,569 - database.connection - INFO - Pool MySQL établi sur paraworld.mysql.eu.pythonanywhere-services.com (base : paraworld$telegramDB) [PID: 2]
+2026-09-29 04:01:00,570 - database.connection - INFO - ConnectionManager initialisé avec pool de 2 connexions.
+2026-09-29 04:01:00,571 - webhook_app - INFO - 🚀 Démarrage des tâches périodiques en arrière-plan...
+2026-09-29 04:01:00,572 - jobs.scheduled_tasks - WARNING - Vérification des rappels abandonnée : db_manager introuvable.
+2026-09-29 04:01:00,572 - webhook_app - INFO - 🏁 Fin de l'exécution des tâches périodiques.
